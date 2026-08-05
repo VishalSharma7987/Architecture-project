@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "name": "Sample Blueprint (expected)",
+  "savedAt": "2026-07-21T00:00:00.000Z",
+  "settings": { "viewMode": "2d", "floorMaterial": "oak" },
+  "walls": [
+    {
+      "id": "ext-north",
+      "start": { "x": 0, "z": 0 },
+      "end": { "x": 12, "z": 0 },
+      "height": 3,
+      "thickness": 0.16,
+      "openings": [
+        { "id": "w-n1", "type": "window", "position": 1.8, "width": 1.6, "height": 1.2, "sill": 0.9 },
+        { "id": "w-n2", "type": "window", "position": 7.6, "width": 1.6, "height": 1.2, "sill": 0.9 }
+      ]
+    },
+    {
+      "id": "ext-east",
+      "start": { "x": 12, "z": 0 },
+      "end": { "x": 12, "z": 9 },
+      "height": 3,
+      "thickness": 0.16,
+      "openings": [
+        { "id": "w-e1", "type": "window", "position": 2.0, "width": 1.8, "height": 1.2, "sill": 0.9 },
+        { "id": "w-e2", "type": "window", "position": 6.0, "width": 1.8, "height": 1.2, "sill": 0.9 }
+      ]
+    },
+    {
+      "id": "ext-south",
+      "start": { "x": 12, "z": 9 },
+      "end": { "x": 0, "z": 9 },
+      "height": 3,
+      "thickness": 0.16,
+      "openings": [
+        { "id": "w-s1", "type": "window", "position": 2.4, "width": 1.7, "height": 1.2, "sill": 0.9 },
+        { "id": "d-front", "type": "door", "position": 7.0, "width": 1.0, "height": 2.1, "sill": 0 }
+      ]
+    },
+    {
+      "id": "ext-west",
+      "start": { "x": 0, "z": 9 },
+      "end": { "x": 0, "z": 0 },
+      "height": 3,
+      "thickness": 0.16,
+      "openings": [
+        { "id": "w-w1", "type": "window", "position": 3.2, "width": 1.7, "height": 1.2, "sill": 0.9 }
+      ]
+    },
+    {
+      "id": "int-living-kitchen",
+      "start": { "x": 6, "z": 0 },
+      "end": { "x": 6, "z": 5 },
+      "height": 3,
+      "thickness": 0.12,
+      "openings": [
+        { "id": "d-kitchen", "type": "door", "position": 3.0, "width": 0.9, "height": 2.1, "sill": 0 }
+      ]
+    },
+    {
+      "id": "int-corridor",
+      "start": { "x": 0, "z": 5 },
+      "end": { "x": 12, "z": 5 },
+      "height": 3,
+      "thickness": 0.12,
+      "openings": [
+        { "id": "d-bath", "type": "door", "position": 1.5, "width": 0.9, "height": 2.1, "sill": 0 },
+        { "id": "d-bedroom", "type": "door", "position": 7.0, "width": 0.9, "height": 2.1, "sill": 0 }
+      ]
+    },
+    {
+      "id": "int-bath-bedroom",
+      "start": { "x": 3, "z": 5 },
+      "end": { "x": 3, "z": 9 },
+      "height": 3,
+      "thickness": 0.12,
+      "openings": [
+        { "id": "d-bath-inner", "type": "door", "position": 2.5, "width": 0.85, "height": 2.1, "sill": 0 }
+      ]
+    }
+  ],
+  "furniture": []
+}

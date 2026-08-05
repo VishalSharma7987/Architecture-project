@@ -1,0 +1,23 @@
+@import 'tailwindcss';
+
+/* The app is a full-viewport 3D workspace: no document scrolling, ever. */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* OrbitControls sets its own cursors; keep text selection from fighting drags. */
+canvas {
+  display: block;
+  touch-action: none;
+}

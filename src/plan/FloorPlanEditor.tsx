@@ -1,0 +1,751 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useDesignStore, type Point, type Tool } from '../store/useDesignStore'
+import {
+  clearCalibrationPicks,
+  getCalibrationPicks,
+  setCalibrationPicks,
+  subscribeCalibration,
+} from '../blueprint/calibration'
+import { FURNITURE_DRAG_TYPE } from '../components/FurniturePanel'
+import { isFurnitureType } from '../furniture/catalog'
+import { resolveRooms, roomAtPoint, type ResolvedRoom } from '../rooms/resolve'
+import {
+  pickFurniture,
+  pickOpening,
+  pickWall,
+  planBounds,
+  projectOntoWall,
+} from '../scene/wallGeometry'
+import { GRID_STEP } from '../units/length'
+import { vastuZones, type ZoneCell } from '../vastu/zones'
+import { drawPlan, pickStair } from './draw'
+import {
+  createViewport,
+  fitToBounds,
+  screenToWorld,
+  snapToGrid,
+  zoomAt,
+  type Viewport,
+} from './viewport'
+
+/** Click slop for hitting walls and openings, in screen pixels. */
+const HIT_TOLERANCE_PX = 7
+
+/**
+ * Top-down floor plan editor.
+ *
+ * Left-click places points; each one closes a wall against the previous point
+ * and commits it straight to the store, so what you see is always the model
+ * rather than a staged copy. Escape or double-click ends the chain.
+ *
+ * Everything that changes per-frame (cursor, viewport, chain anchor) lives in
+ * refs and is painted imperatively — a React re-render per mousemove would be
+ * wasted work when the output is a canvas.
+ */
+export function FloorPlanEditor() {
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+
+  const viewportRef = useRef<Viewport>(createViewport())
+  const cursorRef = useRef<Point | null>(null)
+  const anchorRef = useRef<Point | null>(null)
+  const sizeRef = useRef({ width: 0, height: 0 })
+  const frameRef = useRef<number | null>(null)
+  const panRef = useRef<{
+    sx: number
+    sy: number
+    cx: number
+    cz: number
+  } | null>(null)
+  /**
+   * The object being dragged. Furniture and stairs drag freely across the floor
+   * (an offset from their centre to the grab point); a door or window instead
+   * slides along its own wall, so it carries the wall it belongs to and the
+   * offset between where it sits on that wall and where it was grabbed.
+   */
+  const dragRef = useRef<
+    | { kind: 'furniture' | 'stair'; id: string; dx: number; dz: number }
+    | { kind: 'opening'; wallId: string; openingId: string; tOffset: number }
+    | null
+  >(null)
+  /** The traced image, once decoded. Null while it loads, or when there is none. */
+  const imageRef = useRef<HTMLImageElement | null>(null)
+  /** Mirrors the memoised resolve, for the imperative paint and the hit test. */
+  const roomsRef = useRef<ResolvedRoom[]>([])
+  /** Mirrors the memoised zone grid, for the imperative paint. */
+  const vastuRef = useRef<ZoneCell[]>([])
+  /** Space held: the universal "pan with any tool" modifier. */
+  const spaceRef = useRef(false)
+
+  // Mirrors `anchorRef` for the hint text only; the canvas never reads it.
+  const [isDrawing, setIsDrawing] = useState(false)
+  // Drives the grab cursor while space-to-pan is armed.
+  const [spacePanning, setSpacePanning] = useState(false)
+
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current
+    const ctx = canvas?.getContext('2d')
+    const { width, height } = sizeRef.current
+    if (!ctx || !width || !height) return
+
+    const { blueprint } = useDesignStore.getState()
+    const image = imageRef.current
+
+    drawPlan(ctx, {
+      width,
+      height,
+      viewport: viewportRef.current,
+      // Read through getState so the paint always sees current state without
+      // this callback needing to be rebuilt on every store change.
+      walls: useDesignStore.getState().walls,
+      furniture: useDesignStore.getState().furniture,
+      stairs: useDesignStore.getState().stairs,
+      rooms: roomsRef.current,
+      vastuCells: vastuRef.current,
+      // The site layer is cheap to derive and is read straight from the store,
+      // so a setback edit repaints the buildable zone with no memo in between.
+      plot: useDesignStore.getState().plot,
+      plotFacing: useDesignStore.getState().plotFacing,
+      northOffset: useDesignStore.getState().northOffset,
+      selection: useDesignStore.getState().selection,
+      units: useDesignStore.getState().units,
+      showDimensions: useDesignStore.getState().showDimensions,
+      anchor: anchorRef.current,
+      cursor: cursorRef.current,
+      // Only the tools that place on the grid want the snap marker; the rest
+      // target walls. Calibration wants it too, since it is an aiming task.
+      showCursor:
+        useDesignStore.getState().tool === 'wall' ||
+        useDesignStore.getState().tool === 'stair' ||
+        useDesignStore.getState().blueprintCalibrating,
+      blueprint:
+        blueprint && image && blueprint.visible
+          ? {
+              image,
+              origin: blueprint.origin,
+              width: blueprint.width,
+              height: blueprint.height,
+              metresPerPixel: blueprint.metresPerPixel,
+              opacity: blueprint.opacity,
+            }
+          : null,
+      calibration: getCalibrationPicks(),
+    })
+  }, [])
+
+  const requestDraw = useCallback(() => {
+    if (frameRef.current !== null) return
+    frameRef.current = requestAnimationFrame(() => {
+      frameRef.current = null
+      draw()
+    })
+  }, [draw])
+
+  const endChain = useCallback(() => {
+    if (!anchorRef.current) return
+    anchorRef.current = null
+    setIsDrawing(false)
+    requestDraw()
+  }, [requestDraw])
+
+  /** Canvas-relative pointer position in world metres, unsnapped. */
+  const worldAt = useCallback((clientX: number, clientY: number): Point => {
+    const rect = canvasRef.current!.getBoundingClientRect()
+    const { width, height } = sizeRef.current
+    return screenToWorld(
+      clientX - rect.left,
+      clientY - rect.top,
+      viewportRef.current,
+      width,
+      height,
+    )
+  }, [])
+
+  /** As `worldAt`, but snapped to the drawing grid. */
+  const snappedAt = useCallback(
+    (clientX: number, clientY: number): Point =>
+      snapToGrid(
+        worldAt(clientX, clientY),
+        GRID_STEP[useDesignStore.getState().units].cell,
+      ),
+    [worldAt],
+  )
+
+  // Wheel handling, Figma-style: two-finger scroll pans the canvas, and pinch
+  // (or Ctrl/Cmd + scroll) zooms about the cursor. This is a NATIVE listener
+  // because React registers `onWheel` as passive, so it cannot `preventDefault`
+  // — which is exactly what stops a pinch from zooming the whole browser page.
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = canvas.getBoundingClientRect()
+      const { width, height } = sizeRef.current
+      const vp = viewportRef.current
+
+      if (e.ctrlKey || e.metaKey) {
+        zoomAt(
+          vp,
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+          Math.exp(-e.deltaY * 0.0015),
+          width,
+          height,
+        )
+      } else {
+        // Scroll moves the world under the cursor: content follows the fingers,
+        // which is what makes it feel like sliding the sheet rather than the map.
+        vp.center.x += e.deltaX / vp.scale
+        vp.center.z += e.deltaY / vp.scale
+      }
+
+      cursorRef.current = snappedAt(e.clientX, e.clientY)
+      requestDraw()
+    }
+
+    canvas.addEventListener('wheel', onWheel, { passive: false })
+    return () => canvas.removeEventListener('wheel', onWheel)
+  }, [snappedAt, requestDraw])
+
+  // Size the backing store to the device pixel ratio, or lines render blurry.
+  useEffect(() => {
+    const wrap = wrapRef.current
+    const canvas = canvasRef.current
+    if (!wrap || !canvas) return
+
+    const resize = () => {
+      const rect = wrap.getBoundingClientRect()
+      const dpr = window.devicePixelRatio || 1
+      const previous = sizeRef.current
+
+      // The viewport is centred on the canvas, so a width change would slide
+      // the whole plan sideways — very visible when the inspector opens and
+      // takes 288px away. Shifting the centre by half the delta keeps the
+      // drawing pinned where it is on screen.
+      if (previous.width > 0 && previous.height > 0) {
+        const vp = viewportRef.current
+        vp.center.x += (rect.width - previous.width) / (2 * vp.scale)
+        vp.center.z += (rect.height - previous.height) / (2 * vp.scale)
+      }
+
+      sizeRef.current = { width: rect.width, height: rect.height }
+      canvas.width = Math.round(rect.width * dpr)
+      canvas.height = Math.round(rect.height * dpr)
+      canvas.style.width = `${rect.width}px`
+      canvas.style.height = `${rect.height}px`
+      canvas.getContext('2d')?.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+      requestDraw()
+    }
+
+    resize()
+    const observer = new ResizeObserver(resize)
+    observer.observe(wrap)
+    return () => observer.disconnect()
+  }, [requestDraw])
+
+  // Repaint whenever the model changes (including edits from elsewhere).
+  useEffect(() => useDesignStore.subscribe(requestDraw), [requestDraw])
+
+  // Rooms are derived from the walls, so they are re-resolved whenever the
+  // walls or the names change and never in between. The resolve walks the
+  // whole wall graph — running it inside the paint would put a graph traversal
+  // on every pointer move.
+  // Named `roomWalls` rather than `walls` on purpose: the click handlers read
+  // their own `walls` out of `getState`, and one name for two bindings is how
+  // a handler ends up quietly working from the previous render.
+  const roomWalls = useDesignStore((s) => s.walls)
+  const roomLabels = useDesignStore((s) => s.roomLabels)
+  const rooms = useMemo(
+    () => resolveRooms(roomWalls, roomLabels),
+    [roomWalls, roomLabels],
+  )
+  useEffect(() => {
+    // The store subscription above has already queued a frame, but it fires
+    // before React re-renders, so that frame can still be holding the previous
+    // resolve. Asking for another one is what guarantees a painted result.
+    roomsRef.current = rooms
+    requestDraw()
+  }, [rooms, requestDraw])
+
+  // The zone grid is derived the same way and for the same reason: it takes the
+  // plan's bounds in a rotated frame, which is a walk of every wall, and that
+  // has no business happening inside a paint. Off means an empty array rather
+  // than a null, so the paint has one shape to handle either way.
+  const vastuGrid = useDesignStore((s) => s.vastuGrid)
+  const northOffset = useDesignStore((s) => s.northOffset)
+  const vastuCells = useMemo(
+    () => (vastuGrid ? vastuZones(roomWalls, northOffset) : []),
+    [vastuGrid, roomWalls, northOffset],
+  )
+  useEffect(() => {
+    vastuRef.current = vastuCells
+    requestDraw()
+  }, [vastuCells, requestDraw])
+
+  // …and whenever the calibration picks change, which the store never sees.
+  useEffect(() => subscribeCalibration(requestDraw), [requestDraw])
+
+  // The traced image is decoded here rather than in the panel because the
+  // canvas paints synchronously and cannot wait on a load event.
+  const blueprintSrc = useDesignStore((s) => s.blueprint?.src ?? null)
+  useEffect(() => {
+    imageRef.current = null
+    requestDraw()
+    if (!blueprintSrc) return
+
+    const image = new Image()
+    let live = true
+    image.onload = () => {
+      if (!live) return
+      imageRef.current = image
+
+      // Frame the image the moment it appears. It is placed around the world
+      // origin, but the viewport may be panned somewhere else entirely, and a
+      // 27 m plan overflows the screen at any normal zoom — so a freshly
+      // uploaded blueprint would land off in a corner with no obvious way back
+      // to it. Fitting to its bounds puts it centred and whole on screen.
+      const bp = useDesignStore.getState().blueprint
+      const { width, height } = sizeRef.current
+      if (bp && width > 0 && height > 0) {
+        const w = bp.width * bp.metresPerPixel
+        const d = bp.height * bp.metresPerPixel
+        fitToBounds(
+          viewportRef.current,
+          { center: { x: bp.origin.x + w / 2, z: bp.origin.z + d / 2 }, width: w, depth: d },
+          width,
+          height,
+        )
+      }
+      requestDraw()
+    }
+    image.src = blueprintSrc
+
+    return () => {
+      // A load that lands after the blueprint changed would otherwise paint
+      // the old image against the new placement.
+      live = false
+    }
+  }, [blueprintSrc, requestDraw])
+
+  // Starting a measurement abandons any half-drawn chain, exactly as switching
+  // tools does — the next click belongs to the calibration, not the wall.
+  const calibrating = useDesignStore((s) => s.blueprintCalibrating)
+  useEffect(() => {
+    if (calibrating) endChain()
+  }, [calibrating, endChain])
+
+  // Switching tools abandons any half-drawn chain, so a pending segment cannot
+  // be completed by a click meant for a different tool.
+  const tool = useDesignStore((s) => s.tool)
+  useEffect(() => {
+    endChain()
+  }, [tool, endChain])
+
+  // When the whole design is replaced (project load, import, new), frame it.
+  // A design drawn far from the origin would otherwise open on empty grid and
+  // look like it failed to load.
+  const viewEpoch = useDesignStore((s) => s.viewEpoch)
+  useEffect(() => {
+    if (viewEpoch === 0) return
+
+    const bounds = planBounds(useDesignStore.getState().walls)
+    const { width, height } = sizeRef.current
+    if (bounds && width > 0 && height > 0) {
+      fitToBounds(viewportRef.current, bounds, width, height)
+    } else {
+      viewportRef.current = createViewport()
+    }
+    requestDraw()
+  }, [viewEpoch, requestDraw])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      const state = useDesignStore.getState()
+      // Escape backs out one step at a time: drop a calibration first, then
+      // finish the chain, and only clear the selection once neither is live.
+      if (state.blueprintCalibrating || getCalibrationPicks().length > 0) {
+        state.setBlueprintCalibrating(false)
+        clearCalibrationPicks()
+      } else if (anchorRef.current) endChain()
+      else state.select(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [endChain])
+
+  // Space held pans with any tool, the way every canvas app does it — the one
+  // gesture that works the same on a mouse and a trackpad. Ignored while typing
+  // in a field so the space bar still types a space.
+  useEffect(() => {
+    const typing = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      return (
+        el?.tagName === 'INPUT' ||
+        el?.tagName === 'TEXTAREA' ||
+        el?.isContentEditable === true
+      )
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code !== 'Space' || typing(e.target) || spaceRef.current) return
+      spaceRef.current = true
+      setSpacePanning(true)
+      // Otherwise the page scrolls under the canvas on every space.
+      e.preventDefault()
+    }
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.code !== 'Space') return
+      spaceRef.current = false
+      setSpacePanning(false)
+    }
+    // A lost focus never delivers keyup, which would wedge pan mode on.
+    const onBlur = () => {
+      spaceRef.current = false
+      setSpacePanning(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (frameRef.current === null) return
+      cancelAnimationFrame(frameRef.current)
+      // Must reset, not just cancel: `requestDraw` treats a non-null ref as
+      // "a frame is already queued". Leaving the stale id here latches that
+      // guard on permanently, and the canvas never paints again after a
+      // remount (StrictMode's double-mount, or any 2D↔3D toggle).
+      frameRef.current = null
+    },
+    [],
+  )
+
+  /** Starts a pan from the current pointer, capturing the viewport centre. */
+  const beginPan = (clientX: number, clientY: number) => {
+    const vp = viewportRef.current
+    panRef.current = { sx: clientX, sy: clientY, cx: vp.center.x, cz: vp.center.z }
+  }
+
+  const onPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    canvasRef.current?.setPointerCapture(e.pointerId)
+
+    // Middle or right button pans, matching the 3D view's right-drag pan.
+    // Space + any button pans too, the universal canvas gesture — the one that
+    // is actually usable on a trackpad, where a right-drag is awkward.
+    if (e.button === 1 || e.button === 2 || spaceRef.current) {
+      beginPan(e.clientX, e.clientY)
+      return
+    }
+    if (e.button !== 0) return
+
+    const { tool, blueprintCalibrating } = useDesignStore.getState()
+
+    if (blueprintCalibrating) {
+      pickCalibrationPoint(e.clientX, e.clientY)
+      return
+    }
+
+    if (tool === 'wall') {
+      const point = snappedAt(e.clientX, e.clientY)
+      const anchor = anchorRef.current
+
+      // A zero-length segment is rejected by the store, which is what makes the
+      // second click of a double-click harmless.
+      if (anchor) useDesignStore.getState().addWall(anchor, point)
+
+      anchorRef.current = point
+      cursorRef.current = point
+      setIsDrawing(true)
+      requestDraw()
+      return
+    }
+
+    // A staircase stands in the room rather than on a wall, so it places on the
+    // grid like a wall does — and on the same grid, or a flight would land
+    // half a step off the walls it is boxed in by.
+    if (tool === 'stair') {
+      const { addStair, select } = useDesignStore.getState()
+      const id = addStair(snappedAt(e.clientX, e.clientY))
+      select({ kind: 'stair', stairId: id })
+      return
+    }
+
+    handleWallTargetedClick(tool, e.clientX, e.clientY)
+
+    // With the Select tool the click above has done any selecting. If it did
+    // not grab a piece to move, arm a pan so the same left-drag slides the mat
+    // — the tool has no drag-to-draw action to collide with, so a plain drag
+    // on the plan is free to mean "move around it", which is what people reach
+    // for first.
+    if (tool === 'select' && !dragRef.current) beginPan(e.clientX, e.clientY)
+  }
+
+  /**
+   * Records one end of the known distance being measured on the blueprint.
+   *
+   * The raw world point is used, never the snapped one: rounding to the 0.5 m
+   * grid would quantise the very measurement the scale is derived from, and on
+   * an uncalibrated image a grid cell can be metres of real building.
+   */
+  const pickCalibrationPoint = (clientX: number, clientY: number) => {
+    const picks = getCalibrationPicks()
+    const point = worldAt(clientX, clientY)
+
+    // A third click restarts rather than extends — two points is the whole
+    // measurement, so there is nothing to add to.
+    if (picks.length >= 2) {
+      setCalibrationPicks([point])
+      return
+    }
+
+    const next = [...picks, point]
+    setCalibrationPicks(next)
+    if (next.length === 2) {
+      useDesignStore.getState().setBlueprintCalibrating(false)
+    }
+  }
+
+  /**
+   * Click behaviour for the tools that act on an existing wall rather than the
+   * grid: select, add door, add window.
+   */
+  const handleWallTargetedClick = (
+    tool: Exclude<Tool, 'wall' | 'stair'>,
+    clientX: number,
+    clientY: number,
+  ) => {
+    const point = worldAt(clientX, clientY)
+    const { walls, select, addOpening, setTool } = useDesignStore.getState()
+
+    // Hit tolerance is a constant number of pixels, converted to metres, so
+    // targets stay equally easy to hit at every zoom level.
+    const tolerance = HIT_TOLERANCE_PX / viewportRef.current.scale
+
+    if (tool === 'select') {
+      // Furniture sits inside rooms, away from walls, so testing it first
+      // costs nothing and makes pieces near a wall still selectable.
+      const hitFurniture = pickFurniture(
+        useDesignStore.getState().furniture,
+        point,
+      )
+      if (hitFurniture) {
+        select({ kind: 'furniture', furnitureId: hitFurniture.id })
+        // Remember the grab offset so the piece doesn't snap its centre to
+        // the cursor the moment you start dragging it.
+        dragRef.current = {
+          kind: 'furniture',
+          id: hitFurniture.id,
+          dx: hitFurniture.position.x - point.x,
+          dz: hitFurniture.position.z - point.z,
+        }
+        return
+      }
+
+      // Stairs sit inside rooms too, and under the furniture — so they are
+      // tested straight after it, and for the same reason.
+      const hitStair = pickStair(useDesignStore.getState().stairs, point)
+      if (hitStair) {
+        select({ kind: 'stair', stairId: hitStair.id })
+        dragRef.current = {
+          kind: 'stair',
+          id: hitStair.id,
+          dx: hitStair.position.x - point.x,
+          dz: hitStair.position.z - point.z,
+        }
+        return
+      }
+
+      // Openings sit on top of walls and are smaller, so they win ties.
+      const hitOpening = pickOpening(walls, point, tolerance)
+      if (hitOpening) {
+        select({
+          kind: 'opening',
+          wallId: hitOpening.wall.id,
+          openingId: hitOpening.opening.id,
+        })
+        // Arm a slide along the wall. The offset keeps the door under the grab
+        // point instead of jumping its centre to the cursor.
+        const grab = projectOntoWall(hitOpening.wall, point)
+        dragRef.current = {
+          kind: 'opening',
+          wallId: hitOpening.wall.id,
+          openingId: hitOpening.opening.id,
+          tOffset: hitOpening.opening.position - grab.t,
+        }
+        return
+      }
+
+      const hitWall = pickWall(walls, point, tolerance)
+      if (hitWall) {
+        select({ kind: 'wall', wallId: hitWall.wall.id })
+        return
+      }
+
+      // Last, so everything built keeps priority: a click that has missed the
+      // furniture, the openings and the walls has landed on open floor, and
+      // open floor inside a loop is a room the user can name. The clicked
+      // point becomes the anchor rather than the room's centre, so the name
+      // stays pinned to the part of the space that was pointed at.
+      const hitRoom = roomAtPoint(roomsRef.current, point)
+      select(hitRoom ? { kind: 'room', anchor: point } : null)
+      return
+    }
+
+    const target = pickWall(walls, point, tolerance)
+    if (!target) {
+      select(null)
+      return
+    }
+
+    const openingId = addOpening(target.wall.id, tool, target.projection.t)
+    if (openingId) {
+      select({ kind: 'opening', wallId: target.wall.id, openingId })
+      // Drop back to Select so the door just placed can be nudged along the
+      // wall or edited straight away. Left on the Door tool, the next click
+      // dropped a second door on top of it instead of selecting this one —
+      // which read as "the new door can't be changed".
+      setTool('select')
+    } else {
+      select({ kind: 'wall', wallId: target.wall.id })
+    }
+  }
+
+  const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragRef.current
+    if (drag) {
+      const point = worldAt(e.clientX, e.clientY)
+      const store = useDesignStore.getState()
+
+      // A door or window slides along its wall: project the cursor onto that
+      // wall and set the opening's distance-from-start. The store clamps it so
+      // the opening never runs off either end.
+      if (drag.kind === 'opening') {
+        const wall = store.walls.find((w) => w.id === drag.wallId)
+        if (wall) {
+          const t = projectOntoWall(wall, point).t + drag.tOffset
+          store.updateOpening(drag.wallId, drag.openingId, { position: t })
+        }
+        return
+      }
+
+      const position = snapToGrid(
+        { x: point.x + drag.dx, z: point.z + drag.dz },
+        GRID_STEP[store.units].cell,
+      )
+
+      if (drag.kind === 'stair') store.updateStair(drag.id, { position })
+      else store.updateFurniture(drag.id, { position })
+      return
+    }
+
+    const pan = panRef.current
+    if (pan) {
+      const vp = viewportRef.current
+      vp.center.x = pan.cx - (e.clientX - pan.sx) / vp.scale
+      vp.center.z = pan.cz - (e.clientY - pan.sy) / vp.scale
+    }
+
+    // The calibration rubber-band has to track the pointer exactly, or the
+    // preview would disagree with the point the click actually records.
+    cursorRef.current = useDesignStore.getState().blueprintCalibrating
+      ? worldAt(e.clientX, e.clientY)
+      : snappedAt(e.clientX, e.clientY)
+    requestDraw()
+  }
+
+  const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    panRef.current = null
+    dragRef.current = null
+    canvasRef.current?.releasePointerCapture(e.pointerId)
+  }
+
+  const onPointerLeave = () => {
+    cursorRef.current = null
+    requestDraw()
+  }
+
+  /** Accepts furniture dragged from the catalogue onto the plan. */
+  const onDrop = (e: React.DragEvent<HTMLCanvasElement>) => {
+    e.preventDefault()
+    const type = e.dataTransfer.getData(FURNITURE_DRAG_TYPE)
+    if (!isFurnitureType(type)) return
+
+    const { addFurniture, select } = useDesignStore.getState()
+    const id = addFurniture(type, worldAt(e.clientX, e.clientY))
+    select({ kind: 'furniture', furnitureId: id })
+  }
+
+  const onDragOver = (e: React.DragEvent<HTMLCanvasElement>) => {
+    if (!e.dataTransfer.types.includes(FURNITURE_DRAG_TYPE)) return
+    // Without preventDefault the browser refuses the drop entirely.
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }
+
+  return (
+    <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
+      <canvas
+        ref={canvasRef}
+        className={`absolute inset-0 ${
+          spacePanning
+            ? 'cursor-grab'
+            : tool === 'select' && !calibrating
+              ? 'cursor-default'
+              : 'cursor-crosshair'
+        }`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerLeave={onPointerLeave}
+        onDoubleClick={endChain}
+        onDrop={onDrop}
+        onDragOver={onDragOver}
+        onContextMenu={(e) => e.preventDefault()}
+      />
+
+      <div className="pointer-events-none absolute bottom-4 left-4 rounded-md border border-slate-200 bg-white/90 px-3 py-2 text-xs text-slate-600 shadow-sm">
+        {calibrating && (
+          <>
+            Click the two ends of a known distance on the blueprint ·{' '}
+            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-sans">
+              Esc
+            </kbd>{' '}
+            to cancel
+          </>
+        )}
+        {!calibrating && tool === 'wall' && isDrawing && (
+          <>
+            Click to continue the wall ·{' '}
+            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-sans">
+              Esc
+            </kbd>{' '}
+            or double-click to finish
+          </>
+        )}
+        {!calibrating && tool === 'wall' && !isDrawing && (
+          <>Click on the grid to start drawing a wall</>
+        )}
+        {!calibrating && tool === 'select' && (
+          <>Click to select · drag to move around · or name a room</>
+        )}
+        {!calibrating && tool === 'stair' && (
+          <>Click where the staircase should stand</>
+        )}
+        {!calibrating && tool === 'door' && <>Click a wall to place a door</>}
+        {!calibrating && tool === 'window' && <>Click a wall to place a window</>}
+        <span className="ml-2 text-slate-400">
+          Scroll to move · pinch or Ctrl-scroll to zoom · Space or drag to pan
+        </span>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,1313 @@
+import { create } from 'zustand'
+import {
+  DEFAULT_FLOOR_MATERIAL,
+  DEFAULT_WALL_MATERIAL,
+  type MaterialId,
+} from '../materials/palette'
+import type { FurnitureType } from '../furniture/catalog'
+
+/**
+ * A point on the floor plane, in metres.
+ *
+ * Named `x`/`z` (not `x`/`y`) to match three.js world axes: the floor is the
+ * XZ plane and `y` is height. The 2D editor draws `z` as its vertical screen
+ * axis, so a plan drawn top-down lines up with the 3D scene with no conversion.
+ */
+export type Point = { x: number; z: number }
+
+export type OpeningType = 'door' | 'window'
+
+export type Opening = {
+  id: string
+  type: OpeningType
+  /** Distance in metres from the wall's start to the opening's centre. */
+  position: number
+  /** Metres. */
+  width: number
+  /** Metres. */
+  height: number
+  /** Height of the opening's bottom edge above the floor. Doors are 0. */
+  sill: number
+}
+
+export type Wall = {
+  id: string
+  start: Point
+  end: Point
+  /** Metres. */
+  height: number
+  /** Metres. */
+  thickness: number
+  openings: Opening[]
+  material: MaterialId
+}
+
+/**
+ * The room types offered when naming a space. Ordered as they are offered.
+ *
+ * Pooja, toilet-separate-from-bathroom, and a named staircase are all standard
+ * on Indian residential plans, which is what this list is drawn for.
+ */
+export type RoomType =
+  | 'living'
+  | 'bedroom'
+  | 'master-bedroom'
+  | 'kitchen'
+  | 'dining'
+  | 'pooja'
+  | 'toilet'
+  | 'bathroom'
+  | 'study'
+  | 'store'
+  | 'balcony'
+  | 'guest-room'
+  | 'staircase'
+
+/**
+ * A name the user has given to an enclosed space.
+ *
+ * Rooms themselves are derived from the walls every time they change, so a name
+ * cannot be stored "on" a room. It is pinned to `anchor` — a point inside the
+ * space when it was named — and re-matched afterwards by testing which detected
+ * loop contains that point. Move a wall and the name follows its room; move a
+ * wall straight past the anchor and the name detaches, which is the honest
+ * outcome since the space the user named no longer exists there.
+ */
+export type RoomLabel = {
+  id: string
+  type: RoomType
+  anchor: Point
+  /**
+   * A name the user typed to override the type's default label — "Kids' Room",
+   * "Home Office". Blank or absent falls back to the type's name, so the type
+   * still drives the zone colour while the caption can read as anything.
+   */
+  name?: string
+}
+
+/**
+ * The site: a rectangular plot and its legal setbacks, all in metres.
+ *
+ * Rectangular only, deliberately — it covers the overwhelming majority of
+ * residential plots, and an arbitrary polygon boundary would need its own
+ * editing tools to be worth anything.
+ *
+ * `front` is the edge the plot faces, which follows `plotFacing` and the north
+ * rotation rather than being pinned to the bottom of the drawing. `left` and
+ * `right` are as seen standing at the front looking into the plot.
+ */
+export type Plot = {
+  /** Extent along world x, in metres. */
+  width: number
+  /** Extent along world z, in metres. */
+  depth: number
+  /** World position of the plot's minimum-x, minimum-z corner. */
+  origin: Point
+  setbacks: {
+    front: number
+    rear: number
+    left: number
+    right: number
+  }
+}
+
+export const PLOT_DEFAULTS = {
+  /** 30 x 40 ft, the size the brief tests with. */
+  width: 30 * 0.3048,
+  depth: 40 * 0.3048,
+  setback: 5 * 0.3048,
+} as const
+
+/**
+ * A flight of stairs rising from the floor it sits on to the one above.
+ *
+ * Kept as its own collection rather than a furniture item because it is
+ * structural: it occupies a footprint the Vastu check reads, and it is the only
+ * object whose meaning spans two floors.
+ */
+export type Stair = {
+  id: string
+  /** Centre of the flight's footprint. */
+  position: Point
+  /** Rotation about the vertical axis, in radians. Zero ascends toward -z. */
+  rotation: number
+  /** Metres across the flight. */
+  width: number
+  /** Metres along the flight, in plan. */
+  run: number
+}
+
+export const STAIR_DEFAULTS = {
+  width: 1.0,
+  run: 3.6,
+  /** A comfortable domestic rise; the tread count follows the floor height. */
+  riserHeight: 0.17,
+} as const
+
+export type FurnitureItem = {
+  id: string
+  type: FurnitureType
+  /** Centre of the piece on the floor plane. */
+  position: Point
+  /** Rotation about the vertical axis, in radians. */
+  rotation: number
+  /**
+   * Footprint overrides, in metres. Absent means "use the catalogue's default
+   * size for this type", so an untouched piece needs nothing stored; set them to
+   * stretch or shrink one piece — a longer sofa, a wider kitchen counter —
+   * without affecting the others.
+   */
+  width?: number
+  depth?: number
+}
+
+/**
+ * A blueprint image traced under the plan.
+ *
+ * The image is positioned by two numbers rather than a transform matrix:
+ * `origin` is where its top-left pixel sits in world metres, and
+ * `metresPerPixel` is its scale. Calibration writes both, so a photographed
+ * or scanned drawing at any resolution lands at true size.
+ */
+export type Blueprint = {
+  /** Object URL for the decoded image. Revoked when the blueprint is replaced. */
+  src: string
+  fileName: string
+  /** Natural pixel dimensions of the source image. */
+  width: number
+  height: number
+  metresPerPixel: number
+  /** World position of the image's top-left corner, in metres. */
+  origin: Point
+  opacity: number
+  visible: boolean
+}
+
+export const BLUEPRINT_DEFAULTS = {
+  /** 1 px = 1 cm, i.e. a 1000 px drawing spans 10 m until calibrated. */
+  metresPerPixel: 0.01,
+  opacity: 0.5,
+} as const
+
+export const WALL_DEFAULTS = {
+  height: 3,
+  thickness: 0.2,
+} as const
+
+export const OPENING_DEFAULTS: Record<
+  OpeningType,
+  Pick<Opening, 'width' | 'height' | 'sill'>
+> = {
+  door: { width: 0.9, height: 2.1, sill: 0 },
+  window: { width: 1.2, height: 1.2, sill: 0.9 },
+}
+
+/** Keeps edits physically meaningful without fighting the user mid-typing. */
+export const LIMITS = {
+  wallLength: { min: 0.05, max: 500 },
+  wallHeight: { min: 0.2, max: 20 },
+  wallThickness: { min: 0.02, max: 2 },
+  openingWidth: { min: 0.1, max: 20 },
+  openingHeight: { min: 0.1, max: 20 },
+  furnitureSize: { min: 0.2, max: 10 },
+}
+
+/**
+ * How lengths and areas are shown. The model is always metric — this only
+ * changes what the user reads and types.
+ *
+ * `ftin` leads because feet-and-inches is what building drawings use across
+ * India, where this is aimed.
+ */
+export type Unit = 'ftin' | 'm'
+
+export const DEFAULT_UNIT: Unit = 'ftin'
+
+export const isUnit = (value: unknown): value is Unit =>
+  value === 'ftin' || value === 'm'
+
+/**
+ * A compass direction, to eight points. Used for which way the plot faces.
+ *
+ * Eight is what building practice (and Vastu, which builds on this next) works
+ * in — the four cardinals plus the four corners, no finer.
+ */
+export type Facing = 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW'
+
+export const DEFAULT_FACING: Facing = 'N'
+
+const FACING_VALUES: Facing[] = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+
+export const isFacing = (value: unknown): value is Facing =>
+  typeof value === 'string' && (FACING_VALUES as string[]).includes(value)
+
+/**
+ * One storey's worth of design. The plot, the north rotation and the unit
+ * setting are properties of the site, not of a storey, so they stay top-level
+ * and every floor shares them.
+ */
+export type FloorData = {
+  id: string
+  name: string
+  walls: Wall[]
+  furniture: FurnitureItem[]
+  roomLabels: RoomLabel[]
+  stairs: Stair[]
+}
+
+export const FLOOR_NAMES = ['Ground Floor', 'First Floor', 'Second Floor']
+
+/** Floor-to-floor height in metres: the wall, plus the slab it stands on. */
+export const FLOOR_HEIGHT = WALL_DEFAULTS.height + 0.15
+
+/** Height of a floor's finished level above the ground floor's. */
+export const floorElevation = (index: number) => index * FLOOR_HEIGHT
+
+export const emptyFloor = (index: number): FloorData => ({
+  id: crypto.randomUUID(),
+  name: FLOOR_NAMES[index] ?? `Floor ${index}`,
+  walls: [],
+  furniture: [],
+  roomLabels: [],
+  stairs: [],
+})
+
+export type ViewMode = '2d' | '3d'
+
+/**
+ * Where the camera sits during a walkthrough.
+ *
+ * `first` is eyes-only. `third` follows a human figure from behind, which is
+ * what most people need to judge a room: you cannot feel a doorway's width
+ * without seeing a body pass through it.
+ */
+export type WalkView = 'first' | 'third'
+
+/** Active pointer tool. `wall` draws; the rest act on existing walls. */
+export type Tool = 'select' | 'wall' | 'door' | 'window' | 'stair'
+
+export type Selection =
+  | { kind: 'wall'; wallId: string }
+  | { kind: 'room'; anchor: Point }
+  | { kind: 'stair'; stairId: string }
+  | { kind: 'opening'; wallId: string; openingId: string }
+  | { kind: 'furniture'; furnitureId: string }
+  | { kind: 'floor' }
+  | null
+
+/** Selections that belong to a wall. Narrows away `floor` and `furniture`. */
+const selectionWallId = (selection: Selection): string | null =>
+  selection && (selection.kind === 'wall' || selection.kind === 'opening')
+    ? selection.wallId
+    : null
+
+type DesignState = {
+  viewMode: ViewMode
+  /** Walkthrough navigation. Only meaningful in 3D. */
+  walkMode: boolean
+  walkView: WalkView
+  tool: Tool
+  selection: Selection
+  /**
+   * Storage for every storey.
+   *
+   * The entry at `activeFloor` is deliberately allowed to go stale: while a
+   * floor is open, the top-level `walls` / `furniture` / `roomLabels` / `stairs`
+   * ARE that floor, and every one of the thirty-odd things that read the design
+   * keeps reading them without knowing floors exist. The two are reconciled in
+   * exactly three places — switching floor, copying up, and `allFloors` — so
+   * read whole-building state through `allFloors(state)`, never through
+   * `floors` directly.
+   */
+  floors: FloorData[]
+  activeFloor: number
+
+  walls: Wall[]
+  furniture: FurnitureItem[]
+  /** User-given room names. The rooms themselves are derived from the walls. */
+  roomLabels: RoomLabel[]
+  stairs: Stair[]
+  floorMaterial: MaterialId
+  units: Unit
+  /**
+   * Construction rate in rupees per square foot, or 0 when it has not been
+   * set. Zero means "no estimate", not "free" — nothing should print a cost
+   * of ₹0 as though it were a quotation.
+   */
+  constructionRate: number
+  /**
+   * Where North points, in degrees clockwise from the top of the plan.
+   *
+   * 0 means the drawing is oriented conventionally, North up. Rotating this
+   * turns the compass, not the walls: the design keeps its own coordinates and
+   * only its relationship to the real world changes.
+   */
+  northOffset: number
+  /** Which way the plot faces in the real world. */
+  plotFacing: Facing
+  /** The site boundary, or null when the design is not on a defined plot. */
+  plot: Plot | null
+  /** Traced-under reference drawing, or null when none is loaded. */
+  blueprint: Blueprint | null
+  /** Name of the open project, or null for an unsaved draft. */
+  projectName: string | null
+  aiPanelOpen: boolean
+  furniturePanelOpen: boolean
+  blueprintPanelOpen: boolean
+  roomPanelOpen: boolean
+  vastuPanelOpen: boolean
+  plotPanelOpen: boolean
+  /** The nine-zone directional grid drawn over the plan. */
+  vastuGrid: boolean
+  /**
+   * Reveals the full set of measurements on the model: wall lengths and
+   * thicknesses, and every door and window's size. A view-only overlay, so it
+   * lives here beside `vastuGrid` rather than in the saved document.
+   */
+  showDimensions: boolean
+  /** Whether the floating site compass is shown. View-only, defaults on. */
+  showCompass: boolean
+  /**
+   * Set while the user is picking the two ends of a known distance on the
+   * blueprint. Lives in the store because the panel starts it and the plan
+   * canvas finishes it.
+   */
+  blueprintCalibrating: boolean
+  /** Chrome-free walkthrough for showing the design to someone. */
+  presentMode: boolean
+  /** A design opened from a share link. Editing is disabled throughout. */
+  readOnly: boolean
+  /**
+   * Bumped whenever the whole design is replaced. Views watch it to refit —
+   * a counter rather than a boolean so consecutive loads each trigger one.
+   */
+  viewEpoch: number
+
+  /**
+   * Undo/redo history for the design (walls, openings, rooms, furniture,
+   * stairs, floors, plot and north). View-only state — panels, tool, camera —
+   * is deliberately left out, so an undo never yanks the UI around. `past` holds
+   * states you can step back to; `future` holds ones you stepped back from.
+   */
+  past: DesignSnapshot[]
+  future: DesignSnapshot[]
+  /** Steps the design back one edit; a no-op when there is nothing to undo. */
+  undo: () => void
+  /** Re-applies the last undone edit; a no-op when there is nothing to redo. */
+  redo: () => void
+
+  setViewMode: (mode: ViewMode) => void
+  setWalkMode: (walking: boolean) => void
+  setWalkView: (view: WalkView) => void
+  setTool: (tool: Tool) => void
+  select: (selection: Selection) => void
+  setProjectName: (name: string | null) => void
+  setAiPanelOpen: (open: boolean) => void
+  setFurniturePanelOpen: (open: boolean) => void
+  setBlueprintPanelOpen: (open: boolean) => void
+  setRoomPanelOpen: (open: boolean) => void
+  setVastuPanelOpen: (open: boolean) => void
+  setPlotPanelOpen: (open: boolean) => void
+  setShowDimensions: (show: boolean) => void
+  setShowCompass: (show: boolean) => void
+
+  /** Opens a storey, filing the one being left back into `floors`. */
+  setActiveFloor: (index: number) => void
+  /**
+   * Copies this floor's layout onto the one above as a starting point.
+   * Returns false when there is no floor above, or the target is not empty —
+   * overwriting a storey someone has already drawn is not recoverable.
+   */
+  copyToNextFloor: () => boolean
+
+  addStair: (position: Point) => string
+  updateStair: (
+    id: string,
+    patch: Partial<Pick<Stair, 'position' | 'rotation' | 'width' | 'run'>>,
+  ) => void
+  removeStair: (id: string) => void
+
+  /** Replaces the plot outright, or clears it with null. */
+  setPlot: (plot: Plot | null) => void
+  updatePlot: (patch: Partial<Omit<Plot, 'setbacks'>>) => void
+  setSetback: (edge: keyof Plot['setbacks'], metres: number) => void
+  setVastuGrid: (on: boolean) => void
+  setBlueprintCalibrating: (on: boolean) => void
+
+  /** Names the space containing `anchor`. Returns the new label's id. */
+  nameRoom: (anchor: Point, type: RoomType) => string
+  updateRoomLabel: (
+    id: string,
+    patch: Partial<Pick<RoomLabel, 'type' | 'name'>>,
+  ) => void
+  removeRoomLabel: (id: string) => void
+  setPresentMode: (on: boolean) => void
+  setFloorMaterial: (material: MaterialId) => void
+  setUnits: (units: Unit) => void
+  setConstructionRate: (rupeesPerSqFt: number) => void
+  /** Degrees clockwise from plan-up; wrapped into [0, 360). */
+  setNorthOffset: (degrees: number) => void
+  setPlotFacing: (facing: Facing) => void
+
+  /** Replaces the traced image, revoking the previous one's object URL. */
+  setBlueprint: (blueprint: Blueprint | null) => void
+  updateBlueprint: (
+    patch: Partial<Pick<Blueprint, 'metresPerPixel' | 'origin' | 'opacity' | 'visible'>>,
+  ) => void
+
+  addFurniture: (type: FurnitureType, position: Point) => string
+  updateFurniture: (
+    id: string,
+    patch: Partial<Pick<FurnitureItem, 'position' | 'rotation' | 'width' | 'depth'>>,
+  ) => void
+  removeFurniture: (id: string) => void
+
+  /** Replaces the entire design — used by project load, import, and share links. */
+  loadDesign: (design: {
+    name?: string | null
+    walls: Wall[]
+    furniture?: FurnitureItem[]
+    roomLabels?: RoomLabel[]
+    stairs?: Stair[]
+    /** Upper storeys. The arguments above are the ground floor. */
+    floors?: FloorData[]
+    floorMaterial?: MaterialId
+    viewMode?: ViewMode
+    units?: Unit
+    constructionRate?: number
+    plot?: Plot | null
+    northOffset?: number
+    plotFacing?: Facing
+    readOnly?: boolean
+  }) => void
+  /** Clears everything back to an empty, unnamed draft. */
+  newDesign: () => void
+
+  /**
+   * Appends a wall. Returns its id, or `null` if the segment was rejected.
+   *
+   * Zero-length segments are rejected here rather than in the editor: a wall
+   * with no length has no valid 3D geometry, so keeping it out of the model
+   * means nothing downstream has to defend against it.
+   */
+  addWall: (
+    start: Point,
+    end: Point,
+    options?: Partial<Pick<Wall, 'height' | 'thickness'>>,
+  ) => string | null
+  updateWall: (
+    id: string,
+    patch: Partial<Pick<Wall, 'height' | 'thickness' | 'material'>>,
+  ) => void
+  /**
+   * Resizes a wall to an exact length in metres, pivoting on its start point
+   * so the end swings along the wall's existing direction.
+   *
+   * The start is held rather than the centre because walls are drawn as chains:
+   * moving the start would detach this wall from the one before it.
+   */
+  setWallLength: (id: string, length: number) => void
+  removeWall: (id: string) => void
+  clearWalls: () => void
+
+  /**
+   * Places an opening on a wall, centred `position` metres along it. Returns
+   * the new opening's id, or `null` if the wall is too short to hold it.
+   */
+  addOpening: (
+    wallId: string,
+    type: OpeningType,
+    position: number,
+  ) => string | null
+  updateOpening: (
+    wallId: string,
+    openingId: string,
+    patch: Partial<Omit<Opening, 'id' | 'type'>>,
+  ) => void
+  removeOpening: (wallId: string, openingId: string) => void
+}
+
+const samePoint = (a: Point, b: Point) => a.x === b.x && a.z === b.z
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value))
+
+const wallLength = (wall: Wall) =>
+  Math.hypot(wall.end.x - wall.start.x, wall.end.z - wall.start.z)
+
+/**
+ * Keeps an opening inside its wall: never wider than the wall, never poking out
+ * either end, and never taller than the wall it sits in. Applied on every write
+ * so the geometry layer can trust the data it renders.
+ */
+function constrainOpening(opening: Opening, wall: Wall): Opening {
+  const length = wallLength(wall)
+
+  const width = clamp(
+    opening.width,
+    LIMITS.openingWidth.min,
+    Math.max(LIMITS.openingWidth.min, length),
+  )
+  const sill = clamp(opening.sill, 0, Math.max(0, wall.height - 0.05))
+  const height = clamp(
+    opening.height,
+    LIMITS.openingHeight.min,
+    Math.max(LIMITS.openingHeight.min, wall.height - sill),
+  )
+  // Half a width of clearance at each end keeps the opening fully on the wall.
+  const position = clamp(opening.position, width / 2, length - width / 2)
+
+  return { ...opening, width, height, sill, position }
+}
+
+/**
+ * Clamps a whole wall — its own dimensions, then every opening against them.
+ *
+ * Shared by the edit path and the load path so a wall arriving from a file
+ * lands under exactly the same rules as one edited in the inspector.
+ */
+export function normalizeWall(wall: Wall): Wall {
+  const base: Wall = {
+    ...wall,
+    height: clamp(wall.height, LIMITS.wallHeight.min, LIMITS.wallHeight.max),
+    thickness: clamp(
+      wall.thickness,
+      LIMITS.wallThickness.min,
+      LIMITS.wallThickness.max,
+    ),
+    material: wall.material ?? DEFAULT_WALL_MATERIAL,
+  }
+  return { ...base, openings: base.openings.map((o) => constrainOpening(o, base)) }
+}
+
+/**
+ * The open floor's data, written back into the `floors` array.
+ *
+ * This is the ONLY place the checked-out top-level design is folded back into
+ * storage. Everything that needs the whole building goes through `allFloors`.
+ */
+function fileActiveFloor(state: DesignState): FloorData[] {
+  return state.floors.map((floor, index) =>
+    index === state.activeFloor
+      ? {
+          ...floor,
+          walls: state.walls,
+          furniture: state.furniture,
+          roomLabels: state.roomLabels,
+          stairs: state.stairs,
+        }
+      : floor,
+  )
+}
+
+/**
+ * Every storey, with the open one substituted in.
+ *
+ * Use this — not `state.floors` — for anything that spans the building: the 3D
+ * stack, saving, area totals across floors. Reading `floors` directly gets you
+ * a stale copy of whatever the user is currently editing.
+ */
+export function allFloors(state: {
+  floors: FloorData[]
+  activeFloor: number
+  walls: Wall[]
+  furniture: FurnitureItem[]
+  roomLabels: RoomLabel[]
+  stairs: Stair[]
+}): FloorData[] {
+  return state.floors.map((floor, index) =>
+    index === state.activeFloor
+      ? {
+          ...floor,
+          walls: state.walls,
+          furniture: state.furniture,
+          roomLabels: state.roomLabels,
+          stairs: state.stairs,
+        }
+      : floor,
+  )
+}
+
+/** Applies `patch` to one wall, leaving every other wall's identity untouched. */
+const patchWall = (walls: Wall[], id: string, fn: (wall: Wall) => Wall) =>
+  walls.map((wall) => (wall.id === id ? fn(wall) : wall))
+
+/**
+ * Single source of truth for the design. Both the 2D editor and the 3D scene
+ * read from here, so a wall drawn in plan view is the same object either mode
+ * renders.
+ */
+/**
+ * The slice of state undo/redo captures: everything that is "the design",
+ * nothing that is "how you are looking at it". Kept as references — the store
+ * only ever replaces these with new immutable values, never mutates in place,
+ * so a snapshot is a handful of pointers, and reference equality is enough to
+ * tell a real edit from a view change.
+ */
+type DesignSnapshot = Pick<
+  DesignState,
+  | 'walls'
+  | 'roomLabels'
+  | 'furniture'
+  | 'stairs'
+  | 'floors'
+  | 'activeFloor'
+  | 'plot'
+  | 'plotFacing'
+  | 'northOffset'
+  | 'floorMaterial'
+>
+
+function snapshotOf(s: DesignState): DesignSnapshot {
+  return {
+    walls: s.walls,
+    roomLabels: s.roomLabels,
+    furniture: s.furniture,
+    stairs: s.stairs,
+    floors: s.floors,
+    activeFloor: s.activeFloor,
+    plot: s.plot,
+    plotFacing: s.plotFacing,
+    northOffset: s.northOffset,
+    floorMaterial: s.floorMaterial,
+  }
+}
+
+function designChanged(a: DesignSnapshot, b: DesignSnapshot): boolean {
+  return (
+    a.walls !== b.walls ||
+    a.roomLabels !== b.roomLabels ||
+    a.furniture !== b.furniture ||
+    a.stairs !== b.stairs ||
+    a.floors !== b.floors ||
+    a.activeFloor !== b.activeFloor ||
+    a.plot !== b.plot ||
+    a.plotFacing !== b.plotFacing ||
+    a.northOffset !== b.northOffset ||
+    a.floorMaterial !== b.floorMaterial
+  )
+}
+
+/** Cap on remembered steps, so a long session cannot grow history unbounded. */
+const HISTORY_LIMIT = 100
+
+/**
+ * How long edits keep coalescing into one undo step. A drag fires many updates
+ * a frame apart, and they should undo as a single move; deliberate clicks are
+ * further apart than this, so they stay separate steps.
+ */
+const HISTORY_COALESCE_MS = 200
+
+// History bookkeeping, kept in module scope rather than in the store: `applying`
+// must gate the recorder while undo/redo write, and `committed`/`burstTimer`
+// are plumbing the UI never reads.
+let historyApplying = false
+let historyCommitted: DesignSnapshot | null = null
+let historyBurst: ReturnType<typeof setTimeout> | null = null
+
+export const useDesignStore = create<DesignState>()((set, get) => ({
+  viewMode: '2d',
+  walkMode: false,
+  walkView: 'third',
+  tool: 'wall',
+  selection: null,
+  floors: [emptyFloor(0), emptyFloor(1), emptyFloor(2)],
+  activeFloor: 0,
+  walls: [],
+  furniture: [],
+  roomLabels: [],
+  stairs: [],
+  floorMaterial: DEFAULT_FLOOR_MATERIAL,
+  units: DEFAULT_UNIT,
+  constructionRate: 0,
+  plot: null,
+  northOffset: 0,
+  plotFacing: DEFAULT_FACING,
+  blueprint: null,
+  projectName: null,
+  aiPanelOpen: false,
+  furniturePanelOpen: false,
+  blueprintPanelOpen: false,
+  roomPanelOpen: false,
+  vastuPanelOpen: false,
+  plotPanelOpen: false,
+  vastuGrid: false,
+  showDimensions: false,
+  showCompass: true,
+  blueprintCalibrating: false,
+  presentMode: false,
+  readOnly: false,
+  viewEpoch: 0,
+  past: [],
+  future: [],
+
+  undo: () => {
+    const { past } = get()
+    if (past.length === 0) return
+    const previous = past[past.length - 1]
+    const current = snapshotOf(get())
+    // Guard the recorder: this write restores design fields, and must not be
+    // logged as a fresh edit or undo would push its own result onto history.
+    historyApplying = true
+    set({ ...previous, past: past.slice(0, -1), future: [...get().future, current] })
+    historyApplying = false
+    historyCommitted = previous
+    if (historyBurst) {
+      clearTimeout(historyBurst)
+      historyBurst = null
+    }
+  },
+
+  redo: () => {
+    const { future } = get()
+    if (future.length === 0) return
+    const next = future[future.length - 1]
+    const current = snapshotOf(get())
+    historyApplying = true
+    set({ ...next, future: future.slice(0, -1), past: [...get().past, current] })
+    historyApplying = false
+    historyCommitted = next
+    if (historyBurst) {
+      clearTimeout(historyBurst)
+      historyBurst = null
+    }
+  },
+
+  // Leaving 3D always drops out of walk mode — otherwise returning to 3D would
+  // silently re-enter first-person with the pointer already captured.
+  setViewMode: (mode) =>
+    set(mode === '3d' ? { viewMode: mode } : { viewMode: mode, walkMode: false }),
+
+  setWalkMode: (walking) => set({ walkMode: walking }),
+
+  setWalkView: (walkView) => set({ walkView }),
+
+  setTool: (tool) => set({ tool }),
+
+  select: (selection) => set({ selection }),
+
+  setProjectName: (projectName) => set({ projectName }),
+
+  setAiPanelOpen: (aiPanelOpen) => set({ aiPanelOpen }),
+
+  setFurniturePanelOpen: (furniturePanelOpen) => set({ furniturePanelOpen }),
+
+  setBlueprintPanelOpen: (blueprintPanelOpen) => set({ blueprintPanelOpen }),
+
+  setRoomPanelOpen: (roomPanelOpen) => set({ roomPanelOpen }),
+
+  setVastuPanelOpen: (vastuPanelOpen) => set({ vastuPanelOpen }),
+
+  setPlotPanelOpen: (plotPanelOpen) => set({ plotPanelOpen }),
+  setShowDimensions: (showDimensions) => set({ showDimensions }),
+  setShowCompass: (showCompass) => set({ showCompass }),
+
+  setActiveFloor: (index) =>
+    set((state) => {
+      if (index === state.activeFloor) return {}
+      const floors = fileActiveFloor(state)
+      const target = floors[index]
+      if (!target) return {}
+
+      return {
+        floors,
+        activeFloor: index,
+        walls: target.walls,
+        furniture: target.furniture,
+        roomLabels: target.roomLabels,
+        stairs: target.stairs,
+        // Ids belong to the floor being left, and walking a storey that is no
+        // longer on screen would be disorienting.
+        selection: null,
+        walkMode: false,
+        viewEpoch: state.viewEpoch + 1,
+      }
+    }),
+
+  copyToNextFloor: () => {
+    const state = get()
+    const next = state.activeFloor + 1
+    const target = state.floors[next]
+    if (!target) return false
+    if (target.walls.length > 0 || target.furniture.length > 0) return false
+
+    // Fresh ids throughout: sharing an id across storeys would make selecting a
+    // wall upstairs also select the one below it.
+    const remap = <T extends { id: string }>(items: T[]): T[] =>
+      items.map((item) => ({ ...item, id: crypto.randomUUID() }))
+
+    set((current) => ({
+      floors: fileActiveFloor(current).map((floor, index) =>
+        index === next
+          ? {
+              ...floor,
+              walls: current.walls.map((wall) => ({
+                ...wall,
+                id: crypto.randomUUID(),
+                start: { ...wall.start },
+                end: { ...wall.end },
+                openings: remap(wall.openings).map((o) => ({ ...o })),
+              })),
+              furniture: current.furniture.map((item) => ({
+                ...item,
+                id: crypto.randomUUID(),
+                position: { ...item.position },
+              })),
+              roomLabels: current.roomLabels.map((label) => ({
+                ...label,
+                id: crypto.randomUUID(),
+                anchor: { ...label.anchor },
+              })),
+              // Stairs are not copied: the flight on this floor already rises
+              // into the one above, and duplicating it would stack two flights
+              // in the same shaft.
+              stairs: [],
+            }
+          : floor,
+      ),
+    }))
+    return true
+  },
+
+  addStair: (position) => {
+    const stair: Stair = {
+      id: crypto.randomUUID(),
+      position: { ...position },
+      rotation: 0,
+      width: STAIR_DEFAULTS.width,
+      run: STAIR_DEFAULTS.run,
+    }
+    set((state) => ({ stairs: [...state.stairs, stair] }))
+    return stair.id
+  },
+
+  updateStair: (id, patch) =>
+    set((state) => ({
+      stairs: state.stairs.map((stair) =>
+        stair.id === id
+          ? {
+              ...stair,
+              position: patch.position ? { ...patch.position } : stair.position,
+              rotation: patch.rotation ?? stair.rotation,
+              width: clamp(patch.width ?? stair.width, 0.6, 4),
+              run: clamp(patch.run ?? stair.run, 1, 12),
+            }
+          : stair,
+      ),
+    })),
+
+  removeStair: (id) =>
+    set((state) => ({
+      stairs: state.stairs.filter((stair) => stair.id !== id),
+      selection:
+        state.selection?.kind === 'stair' && state.selection.stairId === id
+          ? null
+          : state.selection,
+    })),
+
+  setPlot: (plot) => set({ plot }),
+
+  updatePlot: (patch) =>
+    set((state) =>
+      state.plot
+        ? {
+            plot: {
+              ...state.plot,
+              width: clamp(patch.width ?? state.plot.width, 0.5, 5000),
+              depth: clamp(patch.depth ?? state.plot.depth, 0.5, 5000),
+              origin: patch.origin ? { ...patch.origin } : state.plot.origin,
+            },
+          }
+        : {},
+    ),
+
+  // Setbacks are clamped against the plot itself: two setbacks that together
+  // exceed the plot would invert the buildable rectangle, and everything
+  // downstream would then be measuring a negative-sized box.
+  setSetback: (edge, metres) =>
+    set((state) => {
+      if (!state.plot) return {}
+      const span =
+        edge === 'left' || edge === 'right' ? state.plot.width : state.plot.depth
+      return {
+        plot: {
+          ...state.plot,
+          setbacks: {
+            ...state.plot.setbacks,
+            [edge]: clamp(metres, 0, Math.max(0, span)),
+          },
+        },
+      }
+    }),
+
+  setVastuGrid: (vastuGrid) => set({ vastuGrid }),
+
+  setBlueprintCalibrating: (blueprintCalibrating) => set({ blueprintCalibrating }),
+
+  nameRoom: (anchor, type) => {
+    const label: RoomLabel = {
+      id: crypto.randomUUID(),
+      type,
+      anchor: { ...anchor },
+    }
+    set((state) => ({ roomLabels: [...state.roomLabels, label] }))
+    return label.id
+  },
+
+  updateRoomLabel: (id, patch) =>
+    set((state) => ({
+      roomLabels: state.roomLabels.map((label) =>
+        label.id === id
+          ? {
+              ...label,
+              type: patch.type ?? label.type,
+              name: patch.name !== undefined ? patch.name : label.name,
+            }
+          : label,
+      ),
+    })),
+
+  removeRoomLabel: (id) =>
+    set((state) => ({
+      roomLabels: state.roomLabels.filter((label) => label.id !== id),
+    })),
+
+  // Object URLs live until revoked; dropping the reference alone would leak
+  // the whole decoded image for the life of the tab.
+  setBlueprint: (blueprint) =>
+    set((state) => {
+      const previous = state.blueprint
+      if (previous && previous.src !== blueprint?.src) {
+        URL.revokeObjectURL(previous.src)
+      }
+      return { blueprint }
+    }),
+
+  updateBlueprint: (patch) =>
+    set((state) =>
+      state.blueprint
+        ? {
+            blueprint: {
+              ...state.blueprint,
+              ...patch,
+              origin: patch.origin ? { ...patch.origin } : state.blueprint.origin,
+            },
+          }
+        : {},
+    ),
+
+  // Present mode is a 3D walkthrough by definition, so it forces both.
+  // Leaving it restores orbit rather than stranding the pointer captured.
+  setPresentMode: (on) =>
+    set(
+      on
+        ? { presentMode: true, viewMode: '3d', walkMode: true, selection: null }
+        : { presentMode: false, walkMode: false },
+    ),
+
+  setFloorMaterial: (floorMaterial) => set({ floorMaterial }),
+
+  setUnits: (units) => set({ units }),
+
+  setConstructionRate: (rupeesPerSqFt) =>
+    set({
+      constructionRate:
+        Number.isFinite(rupeesPerSqFt) && rupeesPerSqFt > 0 ? rupeesPerSqFt : 0,
+    }),
+
+  // Wrapped on the way in so nothing downstream has to defend against a
+  // northOffset of 720 or -30 arriving from a drag or a loaded file.
+  setNorthOffset: (degrees) =>
+    set({
+      northOffset: Number.isFinite(degrees)
+        ? ((degrees % 360) + 360) % 360
+        : 0,
+    }),
+
+  setPlotFacing: (plotFacing) => set({ plotFacing }),
+
+  addFurniture: (type, position) => {
+    const item: FurnitureItem = {
+      id: crypto.randomUUID(),
+      type,
+      position: { ...position },
+      rotation: 0,
+    }
+    set((state) => ({ furniture: [...state.furniture, item] }))
+    return item.id
+  },
+
+  updateFurniture: (id, patch) =>
+    set((state) => ({
+      furniture: state.furniture.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              position: patch.position ? { ...patch.position } : item.position,
+              rotation: patch.rotation ?? item.rotation,
+              width:
+                patch.width !== undefined
+                  ? clamp(patch.width, LIMITS.furnitureSize.min, LIMITS.furnitureSize.max)
+                  : item.width,
+              depth:
+                patch.depth !== undefined
+                  ? clamp(patch.depth, LIMITS.furnitureSize.min, LIMITS.furnitureSize.max)
+                  : item.depth,
+            }
+          : item,
+      ),
+    })),
+
+  removeFurniture: (id) =>
+    set((state) => ({
+      furniture: state.furniture.filter((item) => item.id !== id),
+      selection:
+        state.selection?.kind === 'furniture' && state.selection.furnitureId === id
+          ? null
+          : state.selection,
+    })),
+
+  loadDesign: ({
+    name,
+    walls,
+    furniture,
+    roomLabels,
+    stairs,
+    floors,
+    floorMaterial,
+    viewMode,
+    units,
+    constructionRate,
+    plot,
+    northOffset,
+    plotFacing,
+    readOnly,
+  }) =>
+    set((state) => ({
+      walls: walls.map(normalizeWall),
+      furniture: furniture ?? [],
+      roomLabels: roomLabels ?? [],
+      stairs: stairs ?? [],
+      // A design always has three storeys' worth of slots even when only the
+      // ground floor is drawn, so the floor selector never has to grow one.
+      floors: (floors ?? []).length
+        ? [0, 1, 2].map(
+            (index) =>
+              floors?.[index] ?? emptyFloor(index),
+          )
+        : [
+            {
+              ...emptyFloor(0),
+              walls: walls.map(normalizeWall),
+              furniture: furniture ?? [],
+              roomLabels: roomLabels ?? [],
+              stairs: stairs ?? [],
+            },
+            emptyFloor(1),
+            emptyFloor(2),
+          ],
+      activeFloor: 0,
+      floorMaterial: floorMaterial ?? DEFAULT_FLOOR_MATERIAL,
+      // A file written before units existed keeps whatever the viewer prefers,
+      // rather than silently flipping them to metric.
+      units: units ?? state.units,
+      constructionRate: constructionRate ?? 0,
+      plot: plot ?? null,
+      northOffset: northOffset ?? 0,
+      plotFacing: plotFacing ?? DEFAULT_FACING,
+      projectName: name ?? null,
+      viewMode: viewMode ?? state.viewMode,
+      readOnly: readOnly ?? state.readOnly,
+      // Selection holds ids from the design being replaced, and walk mode
+      // would drop the user inside a building that no longer exists.
+      selection: null,
+      walkMode: false,
+      viewEpoch: state.viewEpoch + 1,
+    })),
+
+  newDesign: () =>
+    set((state) => ({
+      floors: [emptyFloor(0), emptyFloor(1), emptyFloor(2)],
+      activeFloor: 0,
+      walls: [],
+      furniture: [],
+      roomLabels: [],
+      stairs: [],
+      plot: null,
+      floorMaterial: DEFAULT_FLOOR_MATERIAL,
+      projectName: null,
+      selection: null,
+      walkMode: false,
+      viewEpoch: state.viewEpoch + 1,
+    })),
+
+  addWall: (start, end, options) => {
+    if (samePoint(start, end)) return null
+
+    const wall: Wall = {
+      id: crypto.randomUUID(),
+      start: { ...start },
+      end: { ...end },
+      height: options?.height ?? WALL_DEFAULTS.height,
+      thickness: options?.thickness ?? WALL_DEFAULTS.thickness,
+      openings: [],
+      material: DEFAULT_WALL_MATERIAL,
+    }
+
+    set((state) => ({ walls: [...state.walls, wall] }))
+    return wall.id
+  },
+
+  // Shrinking a wall can strand its openings above the new roofline, so
+  // `normalizeWall` re-constrains them against the wall's new dimensions.
+  updateWall: (id, patch) =>
+    set((state) => ({
+      walls: patchWall(state.walls, id, (wall) =>
+        normalizeWall({
+          ...wall,
+          height: patch.height ?? wall.height,
+          thickness: patch.thickness ?? wall.thickness,
+          material: patch.material ?? wall.material,
+        }),
+      ),
+    })),
+
+  setWallLength: (id, length) =>
+    set((state) => ({
+      walls: patchWall(state.walls, id, (wall) => {
+        const current = wallLength(wall)
+        // A zero-length wall has no direction to grow along, so there is
+        // nothing sensible to resize it to.
+        if (current === 0) return wall
+
+        const target = Math.max(LIMITS.wallLength.min, length)
+        const ux = (wall.end.x - wall.start.x) / current
+        const uz = (wall.end.z - wall.start.z) / current
+
+        // Shortening can strand an opening past the new end, so re-clamp them.
+        return normalizeWall({
+          ...wall,
+          end: {
+            x: wall.start.x + ux * target,
+            z: wall.start.z + uz * target,
+          },
+        })
+      }),
+    })),
+
+  removeWall: (id) =>
+    set((state) => ({
+      walls: state.walls.filter((w) => w.id !== id),
+      // Selection holds an id, not a reference — drop it or the panel would
+      // point at a wall that no longer exists.
+      selection: selectionWallId(state.selection) === id ? null : state.selection,
+    })),
+
+  clearWalls: () => set({ walls: [], selection: null }),
+
+  addOpening: (wallId, type, position) => {
+    const wall = get().walls.find((w) => w.id === wallId)
+    if (!wall) return null
+
+    const defaults = OPENING_DEFAULTS[type]
+    // A wall shorter than the opening cannot hold it at any position.
+    if (wallLength(wall) < defaults.width) return null
+
+    const opening = constrainOpening(
+      { id: crypto.randomUUID(), type, position, ...defaults },
+      wall,
+    )
+
+    set((state) => ({
+      walls: patchWall(state.walls, wallId, (w) => ({
+        ...w,
+        openings: [...w.openings, opening],
+      })),
+    }))
+    return opening.id
+  },
+
+  updateOpening: (wallId, openingId, patch) =>
+    set((state) => ({
+      walls: patchWall(state.walls, wallId, (wall) => ({
+        ...wall,
+        openings: wall.openings.map((o) =>
+          o.id === openingId ? constrainOpening({ ...o, ...patch }, wall) : o,
+        ),
+      })),
+    })),
+
+  removeOpening: (wallId, openingId) =>
+    set((state) => ({
+      walls: patchWall(state.walls, wallId, (wall) => ({
+        ...wall,
+        openings: wall.openings.filter((o) => o.id !== openingId),
+      })),
+      selection:
+        state.selection?.kind === 'opening' &&
+        state.selection.openingId === openingId
+          ? null
+          : state.selection,
+    })),
+}))
+
+// ---- Undo/redo recorder ----
+//
+// Records design edits into `past` as they settle, coalescing a burst (a drag)
+// into one step. It lives outside the store object because it must observe the
+// store and write back to it without being one of its actions.
+
+// Seeded so the first real edit has a baseline to step back to.
+historyCommitted = snapshotOf(useDesignStore.getState())
+// Watched so a whole-design replacement (loading a project, restoring an
+// autosave, an AI generate) resets history instead of leaving an "undo" that
+// would wipe the design that was just loaded.
+let historyEpoch = useDesignStore.getState().viewEpoch
+
+useDesignStore.subscribe((state) => {
+  const snap = snapshotOf(state)
+
+  // A full replacement: adopt it as the new baseline and clear history.
+  if (state.viewEpoch !== historyEpoch) {
+    historyEpoch = state.viewEpoch
+    historyCommitted = snap
+    if (historyBurst) {
+      clearTimeout(historyBurst)
+      historyBurst = null
+    }
+    historyApplying = true
+    useDesignStore.setState({ past: [], future: [] })
+    historyApplying = false
+    return
+  }
+
+  // undo/redo are writing: keep the baseline in step, but record nothing.
+  if (historyApplying) {
+    historyCommitted = snap
+    return
+  }
+
+  // A view-only change (panel, tool, selection, camera) touches no design
+  // field, so there is nothing to record.
+  if (historyCommitted && !designChanged(historyCommitted, snap)) return
+
+  // First edit of a burst: push the pre-edit state so it can be returned to,
+  // and drop the redo branch the new edit diverges from. Later edits in the
+  // same burst only extend it; the timer below keeps the burst open.
+  if (!historyBurst && historyCommitted) {
+    const { past } = useDesignStore.getState()
+    const trimmed =
+      past.length >= HISTORY_LIMIT
+        ? past.slice(past.length - HISTORY_LIMIT + 1)
+        : past
+    historyApplying = true
+    useDesignStore.setState({ past: [...trimmed, historyCommitted], future: [] })
+    historyApplying = false
+  }
+
+  historyCommitted = snap
+  if (historyBurst) clearTimeout(historyBurst)
+  historyBurst = setTimeout(() => {
+    historyBurst = null
+  }, HISTORY_COALESCE_MS)
+})
