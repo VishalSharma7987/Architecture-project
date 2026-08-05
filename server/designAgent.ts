@@ -1,5 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk'
-
 /**
  * Floor-plan generation against the Claude API.
  *
@@ -8,8 +6,13 @@ import Anthropic from '@anthropic-ai/sdk'
  * API key off the wire.
  */
 
-const MODEL = 'claude-opus-4-8'
-const MAX_TOKENS = 16000
+// OpenRouter model id. This app's key is an OpenRouter key, so — like the
+// vision detector — the request goes to OpenRouter's OpenAI-format endpoint,
+// NOT the Anthropic SDK (whose native output_config/thinking OpenRouter does
+// not accept, and whose default endpoint rejects an OpenRouter key outright).
+const MODEL = 'anthropic/claude-sonnet-4.5'
+const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+const MAX_TOKENS = 6000
 
 const POINT_SCHEMA = {
   type: 'object',
@@ -107,56 +110,83 @@ export type DesignResult = {
 }
 
 async function requestDesign(
-  client: Anthropic,
+  apiKey: string,
   userContent: string,
 ): Promise<DesignResult> {
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    system: SYSTEM_PROMPT,
-    // Laying out a plan is a spatial reasoning problem — the model needs room
-    // to work out room sizes and wall coordinates before committing to them.
-    thinking: { type: 'adaptive' },
-    output_config: {
-      effort: 'medium',
-      format: { type: 'json_schema', schema: DESIGN_SCHEMA },
+  const response = await fetch(ENDPOINT, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
     },
-    messages: [{ role: 'user', content: userContent }],
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      // The schema lives in the system prompt; json_object is the widest
+      // response-format constraint every provider on OpenRouter honours.
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            SYSTEM_PROMPT +
+            '\n\nReturn a JSON object matching this JSON Schema exactly:\n' +
+            JSON.stringify(DESIGN_SCHEMA),
+        },
+        { role: 'user', content: userContent },
+      ],
+    }),
   })
 
-  if (response.stop_reason === 'refusal') {
-    throw new Error('The model declined this request.')
-  }
-  if (response.stop_reason === 'max_tokens') {
-    throw new Error(
-      'The plan was too large to finish. Try a smaller or simpler brief.',
-    )
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    if (response.status === 401) {
+      throw new Error('The AI key was rejected. Check the key in .env.')
+    }
+    if (response.status === 402) {
+      throw new Error(
+        'The AI account is out of credit. Top it up at openrouter.ai to generate plans.',
+      )
+    }
+    throw new Error(`The AI service returned ${response.status}. ${detail.slice(0, 200)}`)
   }
 
-  const text = response.content.find((block) => block.type === 'text')
-  if (!text || text.type !== 'text') {
-    throw new Error('The model returned no design.')
+  const payload = (await response.json()) as {
+    error?: { message?: string }
+    choices?: { message?: { content?: string }; finish_reason?: string }[]
   }
+  if (payload.error) throw new Error(payload.error.message ?? 'The AI request failed.')
 
-  // Structured outputs guarantee schema-conformant JSON, but this still runs
-  // through the client's validator before it reaches the store.
-  return JSON.parse(text.text) as DesignResult
+  const choice = payload.choices?.[0]
+  if (choice?.finish_reason === 'length') {
+    throw new Error('The plan was too large to finish. Try a smaller or simpler brief.')
+  }
+  const text = choice?.message?.content
+  if (!text) throw new Error('The model returned no design.')
+
+  // The schema is instructed, not enforced, so strip any code fence and parse.
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+  try {
+    return JSON.parse((fenced ? fenced[1] : text).trim()) as DesignResult
+  } catch {
+    throw new Error('The model did not return a readable plan.')
+  }
 }
 
-export function generateDesign(client: Anthropic, brief: string) {
+export function generateDesign(apiKey: string, brief: string) {
   return requestDesign(
-    client,
+    apiKey,
     `Design a floor plan for this brief:\n\n${brief}`,
   )
 }
 
 export function editDesign(
-  client: Anthropic,
+  apiKey: string,
   design: unknown,
   instruction: string,
 ) {
   return requestDesign(
-    client,
+    apiKey,
     `Here is the current floor plan:
 
 ${JSON.stringify(design, null, 2)}

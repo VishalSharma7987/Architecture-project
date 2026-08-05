@@ -72,27 +72,27 @@ function describeError(error: unknown): { status: number; message: string } {
 }
 
 export function aiPlugin(
-  apiKey: string | undefined,
+  // Kept for signature stability with vite.config; generate/edit run on
+  // OpenRouter now, so a separate Anthropic key is no longer used.
+  _anthropicKey: string | undefined,
   openRouterKeys: string[],
 ): Plugin {
-  // Constructed once, not per request — the SDK holds a connection pool.
-  const client = apiKey ? new Anthropic({ apiKey }) : null
-  // Blueprint detection runs on OpenRouter, across however many keys are set.
+  // Every AI feature runs on OpenRouter, across however many keys are set.
   const detectionKeys = openRouterKeys.filter((k) => k && k.trim())
 
   const handle = async (
     req: Connect.IncomingMessage,
     res: ServerResponse,
-    run: (client: Anthropic, body: Record<string, unknown>) => Promise<unknown>,
+    run: (apiKey: string, body: Record<string, unknown>) => Promise<unknown>,
   ) => {
     if (req.method !== 'POST') {
       json(res, 405, { error: 'Use POST.' })
       return
     }
-    if (!client) {
+    if (detectionKeys.length === 0) {
       json(res, 503, {
         error:
-          'No API key configured. Copy .env.example to .env, add your ANTHROPIC_API_KEY, and restart the dev server.',
+          'No API key configured. Copy .env.example to .env, add an OPENROUTER_API_KEY, and restart the dev server.',
       })
       return
     }
@@ -107,7 +107,7 @@ export function aiPlugin(
         return
       }
 
-      json(res, 200, await run(client, body))
+      json(res, 200, await run(detectionKeys[0], body))
     } catch (error) {
       const { status, message } = describeError(error)
       // Server-side log keeps the full error; the client gets the summary.
@@ -120,20 +120,20 @@ export function aiPlugin(
     name: 'space-design-ai',
     configureServer(server) {
       server.middlewares.use('/api/ai/generate', (req, res) =>
-        handle(req, res, (client, body) => {
+        handle(req, res, (apiKey, body) => {
           const brief = typeof body.brief === 'string' ? body.brief.trim() : ''
           if (!brief) throw new Error('Describe what you want before generating.')
-          return generateDesign(client, brief)
+          return generateDesign(apiKey, brief)
         }),
       )
 
       server.middlewares.use('/api/ai/edit', (req, res) =>
-        handle(req, res, (client, body) => {
+        handle(req, res, (apiKey, body) => {
           const instruction =
             typeof body.instruction === 'string' ? body.instruction.trim() : ''
           if (!instruction) throw new Error('Describe the change you want.')
           if (!body.design) throw new Error('No current design was sent.')
-          return editDesign(client, body.design, instruction)
+          return editDesign(apiKey, body.design, instruction)
         }),
       )
 
