@@ -4,8 +4,8 @@ import { NoToneMapping, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } 
 import { floorElevation, useDesignStore } from '../store/useDesignStore'
 import { FURNITURE_DRAG_TYPE } from '../components/FurniturePanel'
 import { isFurnitureType } from '../furniture/catalog'
-import { CharacterAvatar } from './CharacterAvatar'
 import { Building } from './Building'
+import { CharacterAvatar } from './CharacterAvatar'
 import { Controls } from './Controls'
 import { FrameBuilding } from './FrameBuilding'
 import { Ground } from './Ground'
@@ -37,11 +37,6 @@ export function SceneCanvas() {
   const elevation = floorElevation(activeFloor)
 
   const thirdPerson = walkMode && walkView === 'third'
-  // The figure appears only once a walk actually starts — a person standing in
-  // the middle of the room the whole time you are modelling reads as clutter.
-  // "Walk as: Figure" chooses which body the walk uses; pressing Walk is what
-  // brings it into the scene.
-  const showFigure = thirdPerson
   // The live camera, captured on Canvas creation so DOM-level drop handling
   // (which sits outside the R3F tree) can raycast with it.
   const cameraRef = useRef<PerspectiveCamera | null>(null)
@@ -153,10 +148,10 @@ export function SceneCanvas() {
         <Ground />
         <Building />
 
-        {/* The figure stands on the storey being edited, for the same reason
-            its furniture does. The walk cameras are still anchored to ground
-            level, so a walkthrough of an upper floor is not yet honest. */}
-        {showFigure && (
+        {/* The animated character appears only during a third-person walk, on
+            the storey being edited. It reads avatarState, which the controls
+            below drive, so its body follows the same movement the camera does. */}
+        {thirdPerson && (
           <group position={[0, elevation, 0]}>
             <CharacterAvatar />
           </group>

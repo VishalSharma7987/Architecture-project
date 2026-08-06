@@ -278,6 +278,17 @@ export function BlueprintPanel() {
     setStatus({ kind: 'idle' })
   }
 
+  /**
+   * Removes the image AND everything traced from it. Swapping the underlay
+   * alone leaves the previous plan's walls standing over the new drawing, which
+   * reads as the two images being layered on top of each other — this is the
+   * "start again with a different plan" action. Undoable in one step.
+   */
+  const startOver = () => {
+    useDesignStore.getState().clearFloor()
+    removeBlueprint()
+  }
+
   return (
     <aside
       className="flex w-72 shrink-0 flex-col border-r border-slate-200 bg-white"
@@ -549,15 +560,31 @@ export function BlueprintPanel() {
               </button>
             </section>
 
-            <section className="border-t border-slate-100 pt-4">
+            <section className="space-y-2 border-t border-slate-100 pt-4">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                Start again
+              </h3>
               <button
                 type="button"
                 onClick={removeBlueprint}
                 data-testid="blueprint-remove"
-                className="text-[11px] font-medium text-slate-400 hover:text-red-600"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
               >
-                Remove blueprint
+                Remove image only
               </button>
+              <button
+                type="button"
+                onClick={startOver}
+                data-testid="blueprint-start-over"
+                className="w-full rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100"
+              >
+                Remove image &amp; traced walls
+              </button>
+              <p className="text-[11px] leading-relaxed text-slate-400">
+                Replacing the image swaps the underlay but keeps what you already
+                traced, so the old walls stay over the new plan. Use the second
+                button to start a different plan from scratch — ⌘Z undoes it.
+              </p>
             </section>
           </>
         )}

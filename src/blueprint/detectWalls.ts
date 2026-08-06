@@ -61,6 +61,42 @@ export const DEFAULT_DETECT_OPTIONS = {
   requireJunction: true,
 }
 
+/**
+ * Longest edge the pixel defaults above were tuned against. Anything else is
+ * scaled from here — see {@link sizedDefaults}.
+ */
+const REFERENCE_LONGEST_PX = 2000
+
+/**
+ * The pixel thresholds, restated for the image actually being read.
+ *
+ * A wall's thickness in pixels is a function of how large the drawing was
+ * rendered, not of the building — the same house at 600 px and at 3000 px draws
+ * walls five times apart. Fixed pixel minimums therefore silently reject every
+ * smaller drawing, which is the single most common reason a plan "isn't read".
+ * Scaling them by the image's longest edge makes one set of numbers describe
+ * both, and leaves the ratios (aspect, fill, gap) alone since those are already
+ * dimensionless.
+ *
+ * The floors are not scaled away entirely: below about two pixels there is no
+ * band left to measure, however small the drawing.
+ */
+function sizedDefaults(image: RasterLike): typeof DEFAULT_DETECT_OPTIONS {
+  const longest = Math.max(image.width, image.height)
+  const k = longest / REFERENCE_LONGEST_PX
+
+  return {
+    ...DEFAULT_DETECT_OPTIONS,
+    minLengthPx: Math.max(12, DEFAULT_DETECT_OPTIONS.minLengthPx * k),
+    minThicknessPx: Math.max(2, DEFAULT_DETECT_OPTIONS.minThicknessPx * k),
+    maxThicknessPx: Math.max(24, DEFAULT_DETECT_OPTIONS.maxThicknessPx * k),
+    junctionTolerancePx: Math.max(
+      2,
+      DEFAULT_DETECT_OPTIONS.junctionTolerancePx * k,
+    ),
+  }
+}
+
 /** An ImageData in all but name, so the detector runs outside a browser too. */
 export type RasterLike = {
   data: Uint8ClampedArray
@@ -143,6 +179,127 @@ export function inkMask(image: RasterLike): Uint8Array {
   }
 
   return mask
+}
+
+/**
+ * Reduces a raster to "is this pixel unlike the paper" — a colour-aware
+ * companion to {@link inkMask}.
+ *
+ * Lightness alone cannot separate a printed plan from a coloured one: flatten a
+ * rust-orange wall and a pale grid line to grey and they can land on the same
+ * value, and a plan whose rooms are flooded with tan sits so close to its own
+ * walls that one global cut swallows both. Measuring distance from the sheet's
+ * own dominant colour instead keeps hue in play, so "wall" means "unlike the
+ * paper" whatever colour either happens to be — and a tinted or inverted sheet
+ * needs no special case, since its own background is the reference.
+ */
+export function paperContrastMasks(image: RasterLike): Uint8Array[] {
+  const { data, width, height } = image
+  const count = width * height
+
+  // Dominant colour = the paper. Quantised to 5 bits a channel so that the
+  // near-identical pixels of a scan or a JPEG count as one colour rather than
+  // scattering across thousands of buckets.
+  const buckets = new Uint32Array(32 * 32 * 32)
+  const rgb = new Uint8Array(count * 3)
+
+  for (let i = 0; i < count; i++) {
+    const o = i * 4
+    const alpha = data[o + 3] / 255
+    // Composite over white, so transparent padding reads as blank paper.
+    const r = Math.round(data[o] * alpha + 255 * (1 - alpha))
+    const g = Math.round(data[o + 1] * alpha + 255 * (1 - alpha))
+    const b = Math.round(data[o + 2] * alpha + 255 * (1 - alpha))
+    rgb[i * 3] = r
+    rgb[i * 3 + 1] = g
+    rgb[i * 3 + 2] = b
+    buckets[((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)]++
+  }
+
+  let modeIndex = 0
+  for (let i = 1; i < buckets.length; i++) {
+    if (buckets[i] > buckets[modeIndex]) modeIndex = i
+  }
+  // Centre of the winning bucket, so the reference is not biased to its corner.
+  const paperR = (((modeIndex >> 10) & 31) << 3) + 4
+  const paperG = (((modeIndex >> 5) & 31) << 3) + 4
+  const paperB = ((modeIndex & 31) << 3) + 4
+
+  const paperLuma = 0.299 * paperR + 0.587 * paperG + 0.114 * paperB
+
+  // Three readings off the same reference, gathered in one pass.
+  //
+  // `distance` alone is not enough. On a plan whose rooms are flooded with
+  // colour the floor becomes the dominant tone, so the paper reference lands on
+  // the FILL — and then both the walls and the white margin around the drawing
+  // count as "far from paper", fusing the sheet into one blob. Splitting by
+  // direction rescues it: against a tan floor the walls are the darker side and
+  // the margin the lighter one, and each is a clean reading on its own.
+  const distance = new Uint8Array(count)
+  const luma = new Uint8Array(count)
+  const distHistogram = new Uint32Array(256)
+  const darkHistogram = new Uint32Array(256)
+  const lightHistogram = new Uint32Array(256)
+
+  for (let i = 0; i < count; i++) {
+    const r = rgb[i * 3]
+    const g = rgb[i * 3 + 1]
+    const b = rgb[i * 3 + 2]
+    // Chebyshev distance: one channel differing enough is what makes a colour
+    // read as different, and it needs no square root per pixel.
+    const d = Math.max(
+      Math.abs(r - paperR),
+      Math.abs(g - paperG),
+      Math.abs(b - paperB),
+    )
+    distance[i] = d
+    distHistogram[d]++
+
+    const l = Math.round(0.299 * r + 0.587 * g + 0.114 * b)
+    luma[i] = l
+    if (l < paperLuma) darkHistogram[l]++
+    else if (l > paperLuma) lightHistogram[l]++
+  }
+
+  const masks: Uint8Array[] = []
+
+  const distThreshold = otsuThreshold(distHistogram)
+  const byDistance = new Uint8Array(count)
+  for (let i = 0; i < count; i++) {
+    byDistance[i] = distance[i] > distThreshold ? 1 : 0
+  }
+  masks.push(byDistance)
+
+  // Ink darker than the paper — the ordinary case, and the one that recovers a
+  // colour-flooded plan whose walls are the darkest thing on the sheet.
+  if (histogramTotal(darkHistogram) > 0) {
+    const t = otsuThreshold(darkHistogram)
+    const darker = new Uint8Array(count)
+    for (let i = 0; i < count; i++) {
+      darker[i] = luma[i] <= t && luma[i] < paperLuma ? 1 : 0
+    }
+    masks.push(darker)
+  }
+
+  // Ink lighter than the paper — a reversed sheet, or pale walls drawn over a
+  // dark floor tint.
+  if (histogramTotal(lightHistogram) > 0) {
+    const t = otsuThreshold(lightHistogram)
+    const lighter = new Uint8Array(count)
+    for (let i = 0; i < count; i++) {
+      lighter[i] = luma[i] >= t && luma[i] > paperLuma ? 1 : 0
+    }
+    masks.push(lighter)
+  }
+
+  return masks
+}
+
+/** Total samples in a histogram — used to skip an empty side. */
+function histogramTotal(histogram: Uint32Array): number {
+  let total = 0
+  for (let i = 0; i < histogram.length; i++) total += histogram[i]
+  return total
 }
 
 /** Mask laid out so that `u` runs along the wall and `v` across it. */
@@ -483,11 +640,56 @@ export function detectWallSegments(
   image: RasterLike,
   options: DetectOptions = {},
 ): PixelSegment[] {
-  const opts = { ...DEFAULT_DETECT_OPTIONS, ...options }
+  // Defaults sized to this image; anything the caller passes still wins.
+  const opts = { ...sizedDefaults(image), ...options }
   const { width, height } = image
   if (width < 2 || height < 2) return []
 
-  const mask = inkMask(image)
+  // Read the sheet more than one way and keep whichever finds the most wall.
+  // No single binarisation covers every drawing: luma-and-Otsu is right for ink
+  // on paper, but a plan whose rooms are flooded with a mid-tone colour splits
+  // at the wrong level and collapses floor and wall into one blob, while a
+  // saturated wall colour can sit at the same lightness as a grid line. Scoring
+  // the actual candidates is more honest than guessing the drawing's style up
+  // front, and costs one extra pass over an image already in memory.
+  let best: PixelSegment[] = []
+  let bestScore = -1
+
+  for (const mask of candidateMasks(image)) {
+    const segments = segmentsFromMask(mask, width, height, opts)
+    const score = scoreSegments(segments)
+    if (score > bestScore) {
+      bestScore = score
+      best = segments
+    }
+  }
+
+  return best
+}
+
+/**
+ * How much of a plan a candidate reading found. Total wall length rather than a
+ * count, so a reading that recovers one long exterior run beats one that
+ * shatters the same wall into fragments.
+ */
+function scoreSegments(segments: PixelSegment[]): number {
+  let total = 0
+  for (const s of segments) total += Math.hypot(s.x2 - s.x1, s.y2 - s.y1)
+  return total
+}
+
+/** The ink readings worth trying, cheapest and most common first. */
+function candidateMasks(image: RasterLike): Uint8Array[] {
+  return [inkMask(image), ...paperContrastMasks(image)]
+}
+
+/** Runs the band pipeline over one ink mask. */
+function segmentsFromMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  opts: typeof DEFAULT_DETECT_OPTIONS,
+): PixelSegment[] {
   const horizontal: Oriented = { mask, along: width, across: height }
   const vertical: Oriented = {
     mask: transpose(mask, width, height),

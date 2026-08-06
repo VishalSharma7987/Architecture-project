@@ -109,7 +109,47 @@ export type DesignResult = {
   walls: unknown[]
 }
 
+/**
+ * Tries each OpenRouter key in turn, returning the first that answers.
+ *
+ * A key that is out of credit (402), rejected (401) or erroring hands off to
+ * the next — so a second funded key covers for a spent one without the user
+ * doing anything. Only when every key has failed does the combined error
+ * surface, so the message says what went wrong with each rather than just the
+ * last.
+ */
 async function requestDesign(
+  keys: string[],
+  userContent: string,
+): Promise<DesignResult> {
+  const available = keys.filter((k) => k && k.trim())
+  if (available.length === 0) {
+    throw new Error('No OpenRouter API key is configured.')
+  }
+
+  const failures: string[] = []
+  for (let i = 0; i < available.length; i++) {
+    try {
+      return await callOnce(available[i], userContent)
+    } catch (error) {
+      failures.push(
+        `key ${i + 1}: ${error instanceof Error ? error.message : String(error)}`,
+      )
+    }
+  }
+
+  // Every key failed. If they all ran out of credit, say that plainly rather
+  // than dumping the raw list.
+  if (failures.every((f) => f.includes('out of credit'))) {
+    throw new Error(
+      'Every AI key is out of credit. Top one up at openrouter.ai to generate plans.',
+    )
+  }
+  throw new Error(`Could not generate a plan. ${failures.join(' | ')}`)
+}
+
+/** One OpenRouter attempt with a single key. Throws on any failure. */
+async function callOnce(
   apiKey: string,
   userContent: string,
 ): Promise<DesignResult> {
@@ -173,20 +213,20 @@ async function requestDesign(
   }
 }
 
-export function generateDesign(apiKey: string, brief: string) {
+export function generateDesign(keys: string[], brief: string) {
   return requestDesign(
-    apiKey,
+    keys,
     `Design a floor plan for this brief:\n\n${brief}`,
   )
 }
 
 export function editDesign(
-  apiKey: string,
+  keys: string[],
   design: unknown,
   instruction: string,
 ) {
   return requestDesign(
-    apiKey,
+    keys,
     `Here is the current floor plan:
 
 ${JSON.stringify(design, null, 2)}

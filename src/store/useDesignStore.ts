@@ -509,6 +509,12 @@ type DesignState = {
   setWallLength: (id: string, length: number) => void
   removeWall: (id: string) => void
   clearWalls: () => void
+  /**
+   * Empties the open storey — walls, names, furniture and stairs — as one edit,
+   * so starting a trace over takes a single undo to reverse rather than one per
+   * object. The blueprint underlay is left alone; removing that is separate.
+   */
+  clearFloor: () => void
 
   /**
    * Places an opening on a wall, centred `position` metres along it. Returns
@@ -1204,6 +1210,15 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     })),
 
   clearWalls: () => set({ walls: [], selection: null }),
+
+  clearFloor: () =>
+    set({
+      walls: [],
+      roomLabels: [],
+      furniture: [],
+      stairs: [],
+      selection: null,
+    }),
 
   addOpening: (wallId, type, position) => {
     const wall = get().walls.find((w) => w.id === wallId)
