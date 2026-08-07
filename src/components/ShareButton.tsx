@@ -26,6 +26,7 @@ export function ShareButton() {
   const constructionRate = useDesignStore((s) => s.constructionRate)
   const plotFacing = useDesignStore((s) => s.plotFacing)
   const projectName = useDesignStore((s) => s.projectName)
+  const blueprint = useDesignStore((s) => s.blueprint)
 
   const [state, setState] = useState<State>({ kind: 'idle' })
   const rootRef = useRef<HTMLDivElement>(null)
@@ -63,6 +64,10 @@ export function ShareButton() {
           constructionRate,
           northOffset,
           plotFacing,
+          // The underlay's placement and scale travel with the design; its
+          // pixels do not, so the recipient sees the walls at true size
+          // without a multi-megabyte image in the URL.
+          blueprint,
           // A shared design is for viewing, so it opens in 3D.
           viewMode: '3d',
         }),

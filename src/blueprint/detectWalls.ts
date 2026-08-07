@@ -61,6 +61,42 @@ export const DEFAULT_DETECT_OPTIONS = {
   requireJunction: true,
 }
 
+/**
+ * Longest edge the pixel defaults above were tuned against. Anything else is
+ * scaled from here — see {@link sizedDefaults}.
+ */
+const REFERENCE_LONGEST_PX = 2000
+
+/**
+ * The pixel thresholds, restated for the image actually being read.
+ *
+ * A wall's thickness in pixels is a function of how large the drawing was
+ * rendered, not of the building — the same house at 600 px and at 3000 px draws
+ * walls five times apart. Fixed pixel minimums therefore silently reject every
+ * smaller drawing, which is the single most common reason a plan "isn't read".
+ * Scaling them by the image's longest edge makes one set of numbers describe
+ * both, and leaves the ratios (aspect, fill, gap) alone since those are already
+ * dimensionless.
+ *
+ * The floors are not scaled away entirely: below about two pixels there is no
+ * band left to measure, however small the drawing.
+ */
+function sizedDefaults(image: RasterLike): typeof DEFAULT_DETECT_OPTIONS {
+  const longest = Math.max(image.width, image.height)
+  const k = longest / REFERENCE_LONGEST_PX
+
+  return {
+    ...DEFAULT_DETECT_OPTIONS,
+    minLengthPx: Math.max(12, DEFAULT_DETECT_OPTIONS.minLengthPx * k),
+    minThicknessPx: Math.max(2, DEFAULT_DETECT_OPTIONS.minThicknessPx * k),
+    maxThicknessPx: Math.max(24, DEFAULT_DETECT_OPTIONS.maxThicknessPx * k),
+    junctionTolerancePx: Math.max(
+      2,
+      DEFAULT_DETECT_OPTIONS.junctionTolerancePx * k,
+    ),
+  }
+}
+
 /** An ImageData in all but name, so the detector runs outside a browser too. */
 export type RasterLike = {
   data: Uint8ClampedArray
@@ -143,6 +179,148 @@ export function inkMask(image: RasterLike): Uint8Array {
   }
 
   return mask
+}
+
+/**
+ * Reduces a raster to "is this pixel unlike the paper" — a colour-aware
+ * companion to {@link inkMask}.
+ *
+ * Lightness alone cannot separate a printed plan from a coloured one: flatten a
+ * rust-orange wall and a pale grid line to grey and they can land on the same
+ * value, and a plan whose rooms are flooded with tan sits so close to its own
+ * walls that one global cut swallows both. Measuring distance from the sheet's
+ * own dominant colour instead keeps hue in play, so "wall" means "unlike the
+ * paper" whatever colour either happens to be — and a tinted or inverted sheet
+ * needs no special case, since its own background is the reference.
+ */
+export function paperContrastMasks(image: RasterLike): Uint8Array[] {
+  const { data, width, height } = image
+  const count = width * height
+
+  // Dominant colour = the paper. Quantised to 5 bits a channel so that the
+  // near-identical pixels of a scan or a JPEG count as one colour rather than
+  // scattering across thousands of buckets.
+  const buckets = new Uint32Array(32 * 32 * 32)
+  const rgb = new Uint8Array(count * 3)
+
+  for (let i = 0; i < count; i++) {
+    const o = i * 4
+    const alpha = data[o + 3] / 255
+    // Composite over white, so transparent padding reads as blank paper.
+    const r = Math.round(data[o] * alpha + 255 * (1 - alpha))
+    const g = Math.round(data[o + 1] * alpha + 255 * (1 - alpha))
+    const b = Math.round(data[o + 2] * alpha + 255 * (1 - alpha))
+    rgb[i * 3] = r
+    rgb[i * 3 + 1] = g
+    rgb[i * 3 + 2] = b
+    buckets[((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3)]++
+  }
+
+  let modeIndex = 0
+  for (let i = 1; i < buckets.length; i++) {
+    if (buckets[i] > buckets[modeIndex]) modeIndex = i
+  }
+  // Centre of the winning bucket, so the reference is not biased to its corner.
+  const paperR = (((modeIndex >> 10) & 31) << 3) + 4
+  const paperG = (((modeIndex >> 5) & 31) << 3) + 4
+  const paperB = ((modeIndex & 31) << 3) + 4
+
+  const paperLuma = 0.299 * paperR + 0.587 * paperG + 0.114 * paperB
+
+  // Three readings off the same reference, gathered in one pass.
+  //
+  // `distance` alone is not enough. On a plan whose rooms are flooded with
+  // colour the floor becomes the dominant tone, so the paper reference lands on
+  // the FILL — and then both the walls and the white margin around the drawing
+  // count as "far from paper", fusing the sheet into one blob. Splitting by
+  // direction rescues it: against a tan floor the walls are the darker side and
+  // the margin the lighter one, and each is a clean reading on its own.
+  const distance = new Uint8Array(count)
+  const luma = new Uint8Array(count)
+  const distHistogram = new Uint32Array(256)
+  const darkHistogram = new Uint32Array(256)
+  const lightHistogram = new Uint32Array(256)
+
+  for (let i = 0; i < count; i++) {
+    const r = rgb[i * 3]
+    const g = rgb[i * 3 + 1]
+    const b = rgb[i * 3 + 2]
+    // Chebyshev distance: one channel differing enough is what makes a colour
+    // read as different, and it needs no square root per pixel.
+    const d = Math.max(
+      Math.abs(r - paperR),
+      Math.abs(g - paperG),
+      Math.abs(b - paperB),
+    )
+    distance[i] = d
+    distHistogram[d]++
+
+    const l = Math.round(0.299 * r + 0.587 * g + 0.114 * b)
+    luma[i] = l
+    if (l < paperLuma) darkHistogram[l]++
+    else if (l > paperLuma) lightHistogram[l]++
+  }
+
+  const masks: Uint8Array[] = []
+
+  const distThreshold = otsuThreshold(distHistogram)
+  const byDistance = new Uint8Array(count)
+  for (let i = 0; i < count; i++) {
+    byDistance[i] = distance[i] > distThreshold ? 1 : 0
+  }
+  masks.push(byDistance)
+
+  // Both directional masks also demand real separation from the paper, not
+  // merely the right side of it.
+  //
+  // Without that they select the SHEET. The paper reference is quantised to
+  // five bits a channel, so on a white drawing it lands at 252 rather than 255
+  // — and every pure-white pixel is then "lighter than the paper", which is
+  // 95% of the image. On a plain sheet that blob is rejected downstream for
+  // being far too thick, so the fault stayed invisible; but on a drawing with a
+  // grid, the grid lines SLICE the white field into long thin strips with
+  // excellent aspect ratios, and `scoreSegments` — which maximises total
+  // detected length — then prefers 75 imaginary walls totalling 77,592 px over
+  // 7 real ones totalling 6,300. Both the gridded and the inverted fixture
+  // detected zero real walls because of this.
+  //
+  // Reusing `distThreshold` is the right bound: it is already the Otsu split
+  // between "this is the paper" and "this is something drawn on it", so a
+  // directional mask that also clears it keeps exactly the rescue it was added
+  // for — a colour-flooded plan where the walls are the dark side of a tinted
+  // floor — while excluding the floor and the margin themselves.
+  const farFromPaper = (i: number) => distance[i] > distThreshold
+
+  // Ink darker than the paper — the ordinary case, and the one that recovers a
+  // colour-flooded plan whose walls are the darkest thing on the sheet.
+  if (histogramTotal(darkHistogram) > 0) {
+    const t = otsuThreshold(darkHistogram)
+    const darker = new Uint8Array(count)
+    for (let i = 0; i < count; i++) {
+      darker[i] = luma[i] <= t && luma[i] < paperLuma && farFromPaper(i) ? 1 : 0
+    }
+    masks.push(darker)
+  }
+
+  // Ink lighter than the paper — a reversed sheet, or pale walls drawn over a
+  // dark floor tint.
+  if (histogramTotal(lightHistogram) > 0) {
+    const t = otsuThreshold(lightHistogram)
+    const lighter = new Uint8Array(count)
+    for (let i = 0; i < count; i++) {
+      lighter[i] = luma[i] >= t && luma[i] > paperLuma && farFromPaper(i) ? 1 : 0
+    }
+    masks.push(lighter)
+  }
+
+  return masks
+}
+
+/** Total samples in a histogram — used to skip an empty side. */
+function histogramTotal(histogram: Uint32Array): number {
+  let total = 0
+  for (let i = 0; i < histogram.length; i++) total += histogram[i]
+  return total
 }
 
 /** Mask laid out so that `u` runs along the wall and `v` across it. */
@@ -455,6 +633,107 @@ function hasJunction(band: Band, crossing: Band[], slack: number) {
  * short thin wall and only its share of the plan tells them apart. Bands vote
  * in proportion to their length, so annotation barely gets a say.
  */
+/**
+ * Fuses the two faces of one wall back into a single band.
+ *
+ * Architectural plans very often draw a wall as an outline — two thin parallel
+ * lines with hatching or a tint between them — rather than as a solid black
+ * band. Read literally that is two walls a few centimetres apart, which is what
+ * puts a doubled, hollow shell in the 3D view: every wall built twice with a
+ * slot down the middle.
+ *
+ * A pair is fused when it looks like one wall seen from both sides: the two
+ * bands run alongside each other, they are of similar weight (a wall's faces are
+ * drawn with the same pen), and the whole thing from outer face to outer face is
+ * still thin enough to BE a wall. That last test is what stops two genuinely
+ * separate walls — the sides of a corridor, say — being welded into one solid
+ * block: their span is far wider than any wall.
+ */
+function mergeWallFaces(bands: Band[], maxThicknessPx: number): Band[] {
+  if (bands.length < 2) return bands
+
+  const order = [...bands].sort((a, b) => a.centre - b.centre)
+  const used = new Array<boolean>(order.length).fill(false)
+  const out: Band[] = []
+
+  for (let i = 0; i < order.length; i++) {
+    if (used[i]) continue
+    const a = order[i]
+    let merged: Band | null = null
+
+    for (let j = i + 1; j < order.length; j++) {
+      if (used[j]) continue
+      const b = order[j]
+
+      // Outer face to outer face. Past the ceiling there is no wall thick
+      // enough for these to be two sides of it, and since the list is sorted by
+      // centre no later band can be closer either.
+      const span = Math.max(a.vMax, b.vMax) - Math.min(a.vMin, b.vMin) + 1
+      if (span > maxThicknessPx) break
+
+      // Both faces of one wall are drawn with the same weight; a thin line
+      // running beside a thick wall is a different thing (a dimension line, a
+      // kerb) and must not be absorbed into it.
+      const ratio = a.thickness / b.thickness
+      if (ratio < 0.5 || ratio > 2) continue
+
+      // And they have to actually run together, not merely pass nearby.
+      const aLength = a.uMax - a.uMin + 1
+      const bLength = b.uMax - b.uMin + 1
+      const overlap = Math.min(a.uMax, b.uMax) - Math.max(a.uMin, b.uMin) + 1
+      const shorter = Math.min(aLength, bLength)
+      if (overlap < shorter * FACE_OVERLAP_RATIO) continue
+
+      // Two faces of one wall run its WHOLE length together — they are the
+      // same line drawn twice. Overlap alone does not say that: a short band
+      // lying entirely alongside a long one is fully overlapped by it while
+      // being nothing to do with it.
+      //
+      // On the simple fixture that short band is a door's quarter-circle swing
+      // arc, 98 px of near-vertical curve beside a 500 px partition. It passed
+      // every other test — the span to its outer edge was 64 px, under the
+      // 96 px ceiling, and the two had similar pen weights — so the partition
+      // came back 0.64 m thick and displaced 0.26 m, five times its real size.
+      // A wall that wrong flows straight into the 3D model and the cost sheet.
+      if (shorter < Math.max(aLength, bLength) * FACE_LENGTH_RATIO) continue
+
+      const vMin = Math.min(a.vMin, b.vMin)
+      const vMax = Math.max(a.vMax, b.vMax)
+      merged = {
+        uMin: Math.min(a.uMin, b.uMin),
+        uMax: Math.max(a.uMax, b.uMax),
+        vMin,
+        vMax,
+        centre: (vMin + vMax + 1) / 2,
+        thickness: span,
+        // The pair describes a solid wall, whatever the drawing put between the
+        // faces — hatching, a tint, or nothing at all.
+        fill: 1,
+      }
+      used[j] = true
+      break
+    }
+
+    used[i] = true
+    out.push(merged ?? a)
+  }
+
+  return out
+}
+
+/** How much of the shorter face must run alongside the other to count as a pair. */
+const FACE_OVERLAP_RATIO = 0.5
+
+/**
+ * How close in LENGTH two bands must be to be the two faces of one wall.
+ *
+ * Generous at 0.6, because a real pair is rarely exactly equal: one face may
+ * be interrupted by a door the other side of the wall is not, or trimmed by a
+ * junction snap. But an arc, a leaf line or a dimension tick beside a long
+ * partition is a small fraction of it, and that is what this rejects.
+ */
+const FACE_LENGTH_RATIO = 0.6
+
 function typicalThickness(bands: Band[]): number {
   const votes: number[] = []
   for (const band of bands) {
@@ -483,11 +762,56 @@ export function detectWallSegments(
   image: RasterLike,
   options: DetectOptions = {},
 ): PixelSegment[] {
-  const opts = { ...DEFAULT_DETECT_OPTIONS, ...options }
+  // Defaults sized to this image; anything the caller passes still wins.
+  const opts = { ...sizedDefaults(image), ...options }
   const { width, height } = image
   if (width < 2 || height < 2) return []
 
-  const mask = inkMask(image)
+  // Read the sheet more than one way and keep whichever finds the most wall.
+  // No single binarisation covers every drawing: luma-and-Otsu is right for ink
+  // on paper, but a plan whose rooms are flooded with a mid-tone colour splits
+  // at the wrong level and collapses floor and wall into one blob, while a
+  // saturated wall colour can sit at the same lightness as a grid line. Scoring
+  // the actual candidates is more honest than guessing the drawing's style up
+  // front, and costs one extra pass over an image already in memory.
+  let best: PixelSegment[] = []
+  let bestScore = -1
+
+  for (const mask of candidateMasks(image)) {
+    const segments = segmentsFromMask(mask, width, height, opts)
+    const score = scoreSegments(segments)
+    if (score > bestScore) {
+      bestScore = score
+      best = segments
+    }
+  }
+
+  return best
+}
+
+/**
+ * How much of a plan a candidate reading found. Total wall length rather than a
+ * count, so a reading that recovers one long exterior run beats one that
+ * shatters the same wall into fragments.
+ */
+function scoreSegments(segments: PixelSegment[]): number {
+  let total = 0
+  for (const s of segments) total += Math.hypot(s.x2 - s.x1, s.y2 - s.y1)
+  return total
+}
+
+/** The ink readings worth trying, cheapest and most common first. */
+function candidateMasks(image: RasterLike): Uint8Array[] {
+  return [inkMask(image), ...paperContrastMasks(image)]
+}
+
+/** Runs the band pipeline over one ink mask. */
+function segmentsFromMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  opts: typeof DEFAULT_DETECT_OPTIONS,
+): PixelSegment[] {
   const horizontal: Oriented = { mask, along: width, across: height }
   const vertical: Oriented = {
     mask: transpose(mask, width, height),
@@ -507,8 +831,13 @@ export function detectWallSegments(
     ).filter((b) => keep(b, opts)),
   )
 
-  const floor = typicalThickness(rough.flat()) * opts.thicknessFloorRatio
-  const walls = rough.map((bands) => bands.filter((b) => b.thickness >= floor))
+  // Fuse outlined walls before anything measures thickness: left as pairs, the
+  // "typical wall" of a hatched drawing would be the weight of its pen rather
+  // than the width of its walls, and every later test would be scaled to that.
+  const paired = rough.map((bands) => mergeWallFaces(bands, opts.maxThicknessPx))
+
+  const floor = typicalThickness(paired.flat()) * opts.thicknessFloorRatio
+  const walls = paired.map((bands) => bands.filter((b) => b.thickness >= floor))
 
   let snappedH = snapJunctions(walls[0], walls[1], opts.junctionTolerancePx)
   let snappedV = snapJunctions(walls[1], walls[0], opts.junctionTolerancePx)

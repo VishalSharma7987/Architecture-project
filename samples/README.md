@@ -1,15 +1,24 @@
 # Sample blueprints (test fixtures)
 
-Three renderings of the **same** floor plan, plus the design document a correct
-import should produce from any of them.
+Several renderings of the **same** floor plan, plus the design document a correct
+import should produce from any of them. Because the geometry never changes,
+`blueprint-expected.json` is the ground truth for every one of them — so any
+difference in what imports is a difference in how the drawing was *presented*,
+not in what it depicts.
 
 | File | Use it for |
 | --- | --- |
 | `blueprint-simple.png` | Easiest case: pure black-on-white, no grid, no dimensions. Start here. |
 | `blueprint-detailed.png` | Realistic case: grid, dimension lines, title, scale bar, north arrow — all noise a parser must ignore. |
 | `blueprint-dark.png` | Classic white-on-blue blueprint. Tests that detection is not hard-coded to "dark lines on light paper". |
-| `blueprint-expected.json` | Ground truth. Import a PNG, export the result, diff against this. |
+| `blueprint-colour.svg` | Rooms flooded with a floor tint, walls in brown rather than black. The floor — not the paper — is the commonest colour on the sheet, which is what collapses a lightness-only threshold into one blob. |
+| `blueprint-noisy.svg` | A stock plan as downloaded: furniture outlines beside the walls and a watermark lying across the whole drawing. |
+| `blueprint-thin.svg` | Hairline walls (¼ thickness), as a plan pasted at screenshot size draws them. Tests that detection is not tied to a fixed pixel thickness. |
+| `blueprint-expected.json` | Ground truth. Import any of the above, export the result, diff against this. |
 | `blueprint-*.svg` | Vector source of each PNG, if you need to re-render at another size. |
+
+The app accepts SVG directly (it takes any `image/*`), so the SVG-only fixtures
+can be dragged straight in — no PNG step needed.
 
 ## The plan
 
@@ -28,6 +37,9 @@ Origin for `blueprint-expected.json` is the plan's outer top-left corner — pix
 node gen-blueprint.mjs simple   > blueprint-simple.svg
 node gen-blueprint.mjs detailed > blueprint-detailed.svg
 node gen-blueprint.mjs dark     > blueprint-dark.svg
+node gen-blueprint.mjs colour   > blueprint-colour.svg
+node gen-blueprint.mjs noisy    > blueprint-noisy.svg
+node gen-blueprint.mjs thin     > blueprint-thin.svg
 ```
 
 Then render each SVG to PNG (any tool; these were made with headless Chrome at

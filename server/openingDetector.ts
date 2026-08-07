@@ -25,6 +25,16 @@ const MODEL = 'google/gemma-4-26b-a4b-it:free'
 /** Output cap — just large enough for the compact JSON below. */
 const MAX_TOKENS = 1200
 
+/**
+ * How many times each key is asked before giving up.
+ *
+ * Two, not more: the model is sampled, so a blank read is often just an unlucky
+ * roll and a second ask usually lands — but a plan this model genuinely cannot
+ * read will not become legible on the fifth attempt, and every retry is another
+ * request against a free tier that rate-limits.
+ */
+const ATTEMPTS_PER_KEY = 2
+
 /*
  * The reply uses short keys and array tuples, not readable objects, purely to
  * spend as few output tokens as possible — the binding constraint here is the
@@ -227,17 +237,49 @@ export async function analysePlan(
   }
 
   const failures: string[] = []
-  for (let i = 0; i < available.length; i++) {
-    try {
-      return await callModel(available[i], imageDataUrl)
-    } catch (error) {
-      // Record and try the next key. Only when every key has failed does the
-      // combined message surface — usually every key being rate-limited at once.
-      const label = `key ${i + 1}`
-      failures.push(`${label}: ${error instanceof Error ? error.message : String(error)}`)
+  // The best result seen so far, kept in case every later attempt also comes
+  // back thin — a partial read still beats reporting nothing at all.
+  let bestEmpty: PlanAnalysis | null = null
+
+  // Each key gets more than one go. The model is sampled, not deterministic:
+  // the same plan can come back fully read on one call and empty on the next,
+  // which is what makes detection feel like it "sometimes works". Asking again
+  // costs one request and turns most of those misses into hits.
+  for (let round = 0; round < ATTEMPTS_PER_KEY; round++) {
+    for (let i = 0; i < available.length; i++) {
+      try {
+        const analysis = await callModel(available[i], imageDataUrl)
+        if (!isEmptyAnalysis(analysis)) return analysis
+        // Read nothing: keep it as a fallback and try again rather than
+        // handing back a blank plan the user has to interpret.
+        bestEmpty ??= analysis
+      } catch (error) {
+        // Record and try the next key. Only when everything has failed does the
+        // combined message surface — usually every key rate-limited at once.
+        failures.push(
+          `key ${i + 1}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
     }
   }
+
+  // Every attempt either failed outright or read nothing. An empty-but-valid
+  // read is still an answer; only a total failure is an error.
+  if (bestEmpty) return bestEmpty
   throw new Error(`Detection failed. ${failures.join(' | ')}`)
+}
+
+/**
+ * True when a read found nothing usable — no openings, rooms or furniture, and
+ * no building box. Worth another attempt; a read with any of them is not.
+ */
+function isEmptyAnalysis(a: PlanAnalysis): boolean {
+  return (
+    a.openings.length === 0 &&
+    a.rooms.length === 0 &&
+    a.furniture.length === 0 &&
+    a.box === null
+  )
 }
 
 /** One request with a given key, then parse the completion into an analysis. */

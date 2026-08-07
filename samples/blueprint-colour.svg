@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200">
+<rect width="1600" height="1200" fill="#ffffff"/>
+<rect x="200" y="150" width="1200" height="900" fill="#d6c6a8"/>
+<line x1="200" y1="150" x2="300" y2="150" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<line x1="460" y1="150" x2="880" y2="150" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<line x1="1040" y1="150" x2="1400" y2="150" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<polygon points="300,158 460,158 460,142 300,142" fill="#ffffff" stroke="#8b4513" stroke-width="3"/>
+<line x1="300" y1="150" x2="460" y2="150" stroke="#8b4513" stroke-width="3"/>
+<polygon points="880,158 1040,158 1040,142 880,142" fill="#ffffff" stroke="#8b4513" stroke-width="3"/>
+<line x1="880" y1="150" x2="1040" y2="150" stroke="#8b4513" stroke-width="3"/>
+<line x1="1400" y1="150" x2="1400" y2="260" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<line x1="1400" y1="440" x2="1400" y2="660" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<line x1="1400" y1="840" x2="1400" y2="1050" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<polygon points="1392,260 1392,440 1408,440 1408,260" fill="#ffffff" stroke="#8b4513" stroke-width="3"/>
+<line x1="1400" y1="260" x2="1400" y2="440" stroke="#8b4513" stroke-width="3"/>
+<polygon points="1392,660 1392,840 1408,840 1408,660" fill="#ffffff" stroke="#8b4513" stroke-width="3"/>
+<line x1="1400" y1="660" x2="1400" y2="840" stroke="#8b4513" stroke-width="3"/>
+<line x1="1400" y1="1050" x2="1245" y2="1050" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<line x1="1075" y1="1050" x2="750" y2="1050" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<line x1="650" y1="1050" x2="200" y2="1050" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<polygon points="1245,1042 1075,1042 1075,1058 1245,1058" fill="#ffffff" stroke="#8b4513" stroke-width="3"/>
+<line x1="1245" y1="1050" x2="1075" y2="1050" stroke="#8b4513" stroke-width="3"/>
+<path d="M 650 1050 A 100 100 0 0 1 750 950" fill="none" stroke="#8b4513" stroke-width="2.5"/>
+<line x1="750" y1="1050" x2="750" y2="950" stroke="#8b4513" stroke-width="5"/>
+<line x1="200" y1="1050" x2="200" y2="815" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<line x1="200" y1="645" x2="200" y2="150" stroke="#8b4513" stroke-width="16" stroke-linecap="butt"/>
+<polygon points="208,815 208,645 192,645 192,815" fill="#ffffff" stroke="#8b4513" stroke-width="3"/>
+<line x1="200" y1="815" x2="200" y2="645" stroke="#8b4513" stroke-width="3"/>
+<line x1="800" y1="150" x2="800" y2="405" stroke="#8b4513" stroke-width="12" stroke-linecap="butt"/>
+<line x1="800" y1="495" x2="800" y2="650" stroke="#8b4513" stroke-width="12" stroke-linecap="butt"/>
+<path d="M 800 495 A 90 90 0 0 1 710 405" fill="none" stroke="#8b4513" stroke-width="2.5"/>
+<line x1="800" y1="405" x2="710" y2="405" stroke="#8b4513" stroke-width="5"/>
+<line x1="200" y1="650" x2="305" y2="650" stroke="#8b4513" stroke-width="12" stroke-linecap="butt"/>
+<line x1="395" y1="650" x2="855" y2="650" stroke="#8b4513" stroke-width="12" stroke-linecap="butt"/>
+<line x1="945" y1="650" x2="1400" y2="650" stroke="#8b4513" stroke-width="12" stroke-linecap="butt"/>
+<path d="M 395 650 A 90 90 0 0 0 305 560" fill="none" stroke="#8b4513" stroke-width="2.5"/>
+<line x1="305" y1="650" x2="305" y2="560" stroke="#8b4513" stroke-width="5"/>
+<path d="M 945 650 A 90 90 0 0 0 855 560" fill="none" stroke="#8b4513" stroke-width="2.5"/>
+<line x1="855" y1="650" x2="855" y2="560" stroke="#8b4513" stroke-width="5"/>
+<line x1="500" y1="650" x2="500" y2="857.5" stroke="#8b4513" stroke-width="12" stroke-linecap="butt"/>
+<line x1="500" y1="942.5" x2="500" y2="1050" stroke="#8b4513" stroke-width="12" stroke-linecap="butt"/>
+<path d="M 500 942.5 A 85 85 0 0 1 415 857.5" fill="none" stroke="#8b4513" stroke-width="2.5"/>
+<line x1="500" y1="857.5" x2="415" y2="857.5" stroke="#8b4513" stroke-width="5"/>
+<text x="500" y="400" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" font-weight="bold" letter-spacing="2" fill="#8b4513">LIVING ROOM</text>
+<text x="1100" y="400" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" font-weight="bold" letter-spacing="2" fill="#8b4513">KITCHEN</text>
+<text x="350" y="850" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" font-weight="bold" letter-spacing="2" fill="#8b4513">BATH</text>
+<text x="950" y="850" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="28" font-weight="bold" letter-spacing="2" fill="#8b4513">BEDROOM</text>
+</svg>

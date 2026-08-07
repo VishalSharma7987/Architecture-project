@@ -1,9 +1,11 @@
 import { useRef, useState, useSyncExternalStore } from 'react'
+import { AI_UNAVAILABLE_MESSAGE, isAiConfigured } from '../ai/endpoint'
 import {
   clearCalibrationPicks,
+  describeCalibration,
   getCalibrationPicks,
-  isCalibrated,
-  markCalibrated,
+  isMeasured,
+  proposeCalibration,
   subscribeCalibration,
 } from '../blueprint/calibration'
 import { detectWallSegments, segmentsToWalls } from '../blueprint/detectWalls'
@@ -20,6 +22,7 @@ import {
   useDesignStore,
   type Point,
 } from '../store/useDesignStore'
+import { formatLength, parseLength } from '../units/length'
 
 /** A wall the detector proposed, still waiting for the user to accept it. */
 type DetectedWall = { start: Point; end: Point; thickness: number }
@@ -92,6 +95,7 @@ export function BlueprintPanel() {
     (s) => s.setBlueprintCalibrating,
   )
   const updateBlueprint = useDesignStore((s) => s.updateBlueprint)
+  const units = useDesignStore((s) => s.units)
   const picks = useSyncExternalStore(subscribeCalibration, getCalibrationPicks)
 
   const fileRef = useRef<HTMLInputElement>(null)
@@ -102,7 +106,8 @@ export function BlueprintPanel() {
   const [detected, setDetected] = useState<DetectedWall[] | null>(null)
   const [knownLength, setKnownLength] = useState('')
 
-  const calibrated = blueprint ? isCalibrated(blueprint.src) : false
+  const calibrated = isMeasured(blueprint?.calibration)
+  const aiAvailable = isAiConfigured()
   const busy =
     status.kind === 'loading' ||
     status.kind === 'detecting' ||
@@ -141,41 +146,56 @@ export function BlueprintPanel() {
   }
 
   const applyCalibration = () => {
-    const typed = Number(knownLength)
     if (!blueprint || measured <= 0) return
-    if (!Number.isFinite(typed) || typed <= 0) {
-      setStatus({ kind: 'error', message: 'Type the real length in metres.' })
+
+    // `parseLength`, not `Number`. The field used to be metres-only in an app
+    // whose default unit is feet-and-inches, with a parser sitting right there
+    // that already accepts 12'6", 3.81m, 381cm and 6 3/4".
+    const typed = parseLength(knownLength, units)
+    if (typed === null || typed <= 0) {
+      setStatus({
+        kind: 'error',
+        message:
+          units === 'm'
+            ? 'Type the real length, e.g. 3.81 m.'
+            : `Type the real length, e.g. 12'6".`,
+      })
       return
     }
 
-    const metresPerPixel = Math.min(
-      BLUEPRINT.maxMetresPerPixel,
-      Math.max(
-        BLUEPRINT.minMetresPerPixel,
-        blueprint.metresPerPixel * (typed / measured),
-      ),
-    )
-    // The factor that was actually applied, after clamping — using the raw
-    // ratio here would slide the image whenever a limit bit.
-    const factor = metresPerPixel / blueprint.metresPerPixel
-    const anchor = picks[0]
-
-    updateBlueprint({
-      metresPerPixel,
+    const result = proposeCalibration({
+      source: 'manual',
+      metresPerPixel: blueprint.metresPerPixel * (typed / measured),
       // The first point clicked is what the user aimed at, so the image grows
       // or shrinks around it rather than wandering off under the cursor.
-      origin: {
-        x: anchor.x - (anchor.x - blueprint.origin.x) * factor,
-        z: anchor.z - (anchor.z - blueprint.origin.z) * factor,
-      },
+      anchor: picks[0],
+      evidence: { picks: [picks[0], picks[1]], typedMetres: typed },
     })
 
-    markCalibrated(blueprint.src)
+    if (!result.applied) {
+      setStatus({ kind: 'error', message: result.reason })
+      return
+    }
+
     clearCalibrationPicks()
     setKnownLength('')
     // Anything already detected was measured at the old scale.
     setDetected(null)
-    setStatus({ kind: 'idle' })
+    setStatus(
+      result.staleWalls > 0
+        ? {
+            kind: 'note',
+            // Said out loud rather than left to be discovered: the walls keep
+            // the metres they were built with, so the underlay and the drawing
+            // now disagree until they are redrawn.
+            message:
+              `Scale set. The ${result.staleWalls} wall` +
+              `${result.staleWalls === 1 ? '' : 's'} already drawn keep their ` +
+              'old size — they were built at the previous scale. Delete and ' +
+              're-detect them to pick up the new one.',
+          }
+        : { kind: 'idle' },
+    )
   }
 
   const detect = async () => {
@@ -186,6 +206,17 @@ export function BlueprintPanel() {
 
     let raster = rasterRef.current
     if (!raster) {
+      if (!blueprint.src) {
+        // A placement restored from a saved project: the scale survived the
+        // reload, the pixels did not.
+        setStatus({
+          kind: 'error',
+          message:
+            `This project remembers ${blueprint.fileName} and its scale, but ` +
+            'not the image. Choose the file again to trace it.',
+        })
+        return
+      }
       const result = await rasterFromSrc(blueprint.src)
       if (!result.ok) {
         setStatus({ kind: 'error', message: result.error })
@@ -276,6 +307,17 @@ export function BlueprintPanel() {
     setDetected(null)
     setKnownLength('')
     setStatus({ kind: 'idle' })
+  }
+
+  /**
+   * Removes the image AND everything traced from it. Swapping the underlay
+   * alone leaves the previous plan's walls standing over the new drawing, which
+   * reads as the two images being layered on top of each other — this is the
+   * "start again with a different plan" action. Undoable in one step.
+   */
+  const startOver = () => {
+    useDesignStore.getState().clearFloor()
+    removeBlueprint()
   }
 
   return (
@@ -384,15 +426,24 @@ export function BlueprintPanel() {
               </h3>
               <p className="text-[11px] tabular-nums text-slate-600">
                 {scaleLabel(blueprint.metresPerPixel)} · image is{' '}
-                {(blueprint.width * blueprint.metresPerPixel).toFixed(2)} m wide
+                {formatLength(blueprint.width * blueprint.metresPerPixel, units)}{' '}
+                wide
               </p>
-
-              {!calibrated && (
-                <p className="text-[11px] text-amber-600">
-                  Not calibrated yet — this is the default guess, not a
-                  measurement.
-                </p>
-              )}
+              {/* Names where the number came from rather than only whether it
+                  is "calibrated". An AI estimate used to be reported in the
+                  same words as a measurement; now every source says which it
+                  is, in one sentence, in one place. */}
+              <p
+                className={`text-[11px] ${
+                  calibrated ? 'text-emerald-700' : 'text-amber-600'
+                }`}
+                data-testid="blueprint-scale-source"
+              >
+                Scale {describeCalibration(blueprint.calibration)}
+                {blueprint.calibration.lockedByUser &&
+                  ' — locked, so detection cannot change it'}
+                .
+              </p>
 
               {picks.length < 2 && !calibrating && (
                 <button
@@ -428,15 +479,20 @@ export function BlueprintPanel() {
                     htmlFor="blueprint-length"
                     className="block text-[11px] leading-relaxed text-violet-800"
                   >
-                    That span currently reads {measured.toFixed(2)} m. How long
-                    is it really?
+                    That span currently reads {formatLength(measured, units)}.
+                    How long is it really?
                   </label>
                   <div className="flex items-center gap-2">
                     <input
                       id="blueprint-length"
-                      type="number"
-                      min={0}
-                      step="any"
+                      // `text`, not `number`: the field now accepts 12'6" and
+                      // 3.81m through `parseLength`, and a number input would
+                      // silently reject both.
+                      type="text"
+                      inputMode="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder={units === 'm' ? '3.81 m' : `12'6"`}
                       value={knownLength}
                       autoFocus
                       onChange={(e) => setKnownLength(e.target.value)}
@@ -444,9 +500,8 @@ export function BlueprintPanel() {
                         if (e.key === 'Enter') applyCalibration()
                       }}
                       data-testid="blueprint-length"
-                      className="w-20 rounded-md border border-violet-300 bg-white px-2 py-1 text-xs outline-none focus:border-violet-500"
+                      className="w-24 rounded-md border border-violet-300 bg-white px-2 py-1 text-xs outline-none focus:border-violet-500"
                     />
-                    <span className="text-[11px] text-violet-800">metres</span>
                     <button
                       type="button"
                       onClick={applyCalibration}
@@ -536,10 +591,22 @@ export function BlueprintPanel() {
                 image and places them on the walls above. Approximate — check
                 each one and fix the misses.
               </p>
+              {!aiAvailable && (
+                // Wall detection above is deterministic and still works; only
+                // this one step needs a server. Saying which is which stops a
+                // missing backend reading as "the blueprint feature is broken".
+                <p
+                  className="mb-2 rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] leading-relaxed text-slate-600"
+                  data-testid="blueprint-openings-unavailable"
+                >
+                  {AI_UNAVAILABLE_MESSAGE} Place doors and windows with the Door
+                  and Window tools.
+                </p>
+              )}
               <button
                 type="button"
                 onClick={() => void findOpenings()}
-                disabled={busy}
+                disabled={busy || !aiAvailable}
                 data-testid="blueprint-openings"
                 className="w-full rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-200 disabled:cursor-not-allowed disabled:text-slate-400"
               >
@@ -549,15 +616,31 @@ export function BlueprintPanel() {
               </button>
             </section>
 
-            <section className="border-t border-slate-100 pt-4">
+            <section className="space-y-2 border-t border-slate-100 pt-4">
+              <h3 className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                Start again
+              </h3>
               <button
                 type="button"
                 onClick={removeBlueprint}
                 data-testid="blueprint-remove"
-                className="text-[11px] font-medium text-slate-400 hover:text-red-600"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 transition-colors hover:border-slate-300 hover:bg-slate-50"
               >
-                Remove blueprint
+                Remove image only
               </button>
+              <button
+                type="button"
+                onClick={startOver}
+                data-testid="blueprint-start-over"
+                className="w-full rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100"
+              >
+                Remove image &amp; traced walls
+              </button>
+              <p className="text-[11px] leading-relaxed text-slate-400">
+                Replacing the image swaps the underlay but keeps what you already
+                traced, so the old walls stay over the new plan. Use the second
+                button to start a different plan from scratch — ⌘Z undoes it.
+              </p>
             </section>
           </>
         )}

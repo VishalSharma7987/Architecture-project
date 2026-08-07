@@ -9,6 +9,14 @@ import {
 import { getFurniture, type FurnitureType } from '../furniture/catalog'
 import { pickWall, pointAlongWall } from '../scene/wallGeometry'
 import { resolveRooms, roomAtPoint, type ResolvedRoom } from '../rooms/resolve'
+import {
+  AI_TIMEOUT_MS,
+  AI_UNAVAILABLE_MESSAGE,
+  AiUnavailableError,
+  aiFetch,
+  isTimeout,
+} from '../ai/endpoint'
+import { proposeCalibration } from './calibration'
 
 /**
  * Largest edge, in pixels, of the image sent for analysis.
@@ -61,10 +69,19 @@ export type AnalyseResult =
   | { ok: true; analysis: PlanAnalysis }
   | { ok: false; error: string }
 
-/** How the building's real size was arrived at, for an honest status line. */
+/**
+ * How the building's real size was arrived at, for an honest status line.
+ *
+ * `estimated` used to be spelled `calibrated`, which is what made the banner
+ * read "Sized to 40′ from the drawing" for a number a free vision model had
+ * guessed off a JPEG. Only a user measurement is a calibration; this is a
+ * reading, and it says so.
+ */
 export type ScaleSource =
-  | { kind: 'calibrated'; feet: number }
+  | { kind: 'estimated'; feet: number }
   | { kind: 'guess' }
+  /** A measurement already in force, which the read was not allowed to replace. */
+  | { kind: 'kept-measured' }
 
 export type PlacedOpenings = { found: number; added: number; dropped: number }
 
@@ -78,6 +95,14 @@ export type PlacedOpenings = { found: number; added: number; dropped: number }
 export async function analyseBlueprint(): Promise<AnalyseResult> {
   const blueprint = useDesignStore.getState().blueprint
   if (!blueprint) return { ok: false, error: 'Load a blueprint image first.' }
+  if (!blueprint.src) {
+    return {
+      ok: false,
+      error:
+        `This project remembers ${blueprint.fileName} and its scale, but not ` +
+        'the image itself. Choose the file again to read it.',
+    }
+  }
 
   let dataUrl: string
   try {
@@ -87,11 +112,11 @@ export async function analyseBlueprint(): Promise<AnalyseResult> {
   }
 
   try {
-    const response = await fetch('/api/ai/openings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: dataUrl }),
-    })
+    const response = await aiFetch(
+      '/api/ai/openings',
+      { image: dataUrl },
+      AI_TIMEOUT_MS.vision,
+    )
     const payload = (await response.json()) as PlanAnalysis & { error?: string }
     if (!response.ok) {
       return { ok: false, error: payload.error ?? 'Detection failed.' }
@@ -107,31 +132,54 @@ export async function analyseBlueprint(): Promise<AnalyseResult> {
         furniture: payload.furniture ?? [],
       },
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof AiUnavailableError) {
+      return { ok: false, error: AI_UNAVAILABLE_MESSAGE }
+    }
+    if (isTimeout(error)) {
+      return {
+        ok: false,
+        error: 'Reading the plan took too long and was cancelled. Try again, ' +
+          'or place the doors and windows by hand.',
+      }
+    }
     return { ok: false, error: 'Could not reach the detection service.' }
   }
 }
 
 /**
- * Sizes the blueprint to its real dimensions from the analysis.
+ * PROPOSES a size for the blueprint from what the model read.
  *
  * The model reads the plan's dimension labels (a "40'" along one edge) and the
- * pixel box those measure across; the ratio is the true metres-per-pixel. This
- * is what stops an uncalibrated import coming in at twice its real size, so the
- * 3D areas match the drawing. Returns how the scale was decided — the caller
- * says so, because a guessed size and a measured one are not the same claim.
+ * pixel box those measure across; the ratio is an estimate of metres-per-pixel.
+ * That is worth having on an image nobody has measured — it stops an untouched
+ * import coming in at twice its real size — and it is worth nothing at all
+ * against an image the user measured themselves.
  *
- * Must run BEFORE the walls are built, since they inherit this scale.
+ * So this is a proposal, not a write. `proposeCalibration` ranks `ai` below
+ * every other source and refuses outright once the user has locked a
+ * measurement, which is the whole of the fix for the defect where switching to
+ * 3D on a freshly calibrated plan silently replaced the measurement with this
+ * estimate and then built every wall from it.
+ *
+ * Must run BEFORE the walls are built, since they inherit whatever scale is in
+ * force — including, now, the one the proposal was refused in favour of.
  */
 export function applyPlanScale(analysis: PlanAnalysis): ScaleSource {
   const blueprint = useDesignStore.getState().blueprint
-  if (!blueprint || !analysis.box) return { kind: 'guess' }
+  if (!blueprint) return { kind: 'guess' }
+
+  // Report the refusal before doing the arithmetic: when the user has already
+  // measured, there is nothing for this function to contribute and the banner
+  // should say the measurement was kept rather than imply a fresh reading.
+  if (blueprint.calibration.lockedByUser) return { kind: 'kept-measured' }
+  if (!analysis.box) return { kind: 'guess' }
 
   const spanX = (analysis.box.x1 - analysis.box.x0) * blueprint.width
   const spanZ = (analysis.box.y1 - analysis.box.y0) * blueprint.height
 
   // Prefer whichever dimension the model read, and cross-check when it read
-  // both; averaging two independent measurements steadies a shaky box edge.
+  // both; averaging two independent readings steadies a shaky box edge.
   const estimates: number[] = []
   if (analysis.widthFeet && spanX > 0) {
     estimates.push((analysis.widthFeet * METRES_PER_FOOT) / spanX)
@@ -141,19 +189,23 @@ export function applyPlanScale(analysis: PlanAnalysis): ScaleSource {
   }
   if (estimates.length === 0) return { kind: 'guess' }
 
-  const metresPerPixel = estimates.reduce((a, b) => a + b, 0) / estimates.length
-  useDesignStore.getState().updateBlueprint({
-    metresPerPixel,
-    // Re-centre on the world origin at the new scale, so the building lands in
-    // view rather than sliding off as it resizes.
-    origin: {
-      x: -(blueprint.width * metresPerPixel) / 2,
-      z: -(blueprint.height * metresPerPixel) / 2,
-    },
+  const result = proposeCalibration({
+    source: 'ai',
+    metresPerPixel: estimates.reduce((a, b) => a + b, 0) / estimates.length,
+    // No anchor: the image's own centre is held. The old code re-centred on the
+    // world origin instead, which slid the underlay out from beneath anything
+    // already traced against it.
+    evidence: { readFeet: analysis.widthFeet ?? analysis.depthFeet ?? undefined },
   })
 
+  if (!result.applied) {
+    return blueprint.calibration.source === 'none'
+      ? { kind: 'guess' }
+      : { kind: 'kept-measured' }
+  }
+
   return {
-    kind: 'calibrated',
+    kind: 'estimated',
     feet: analysis.widthFeet ?? analysis.depthFeet ?? 0,
   }
 }
@@ -519,7 +571,7 @@ const wallLength = (wall: Wall) =>
  * JPEG and a size cap keep the upload well under the endpoint's limit — a phone
  * photo of a plan can be tens of megabytes, which no vision request wants.
  */
-function toSendableJpeg(src: Blueprint['src']): Promise<string> {
+function toSendableJpeg(src: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const image = new Image()
     image.onload = () => {

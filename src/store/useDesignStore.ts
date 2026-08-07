@@ -162,16 +162,78 @@ export type FurnitureItem = {
 }
 
 /**
+ * How a blueprint's scale was arrived at. Ordered by trust in
+ * `CALIBRATION_RANK` — see `blueprint/calibration.ts`, which owns the ladder
+ * and is the only module allowed to write a scale.
+ */
+export type CalibrationSource =
+  | 'manual'
+  | 'dxf-units'
+  | 'vector'
+  | 'ocr'
+  | 'heuristic'
+  | 'ai'
+  | 'none'
+
+/** How the scale was arrived at, kept so the UI can be specific about it. */
+export type CalibrationEvidence = {
+  /** The two world points picked, for `manual`. */
+  picks?: [Point, Point]
+  /** What the user typed, in metres, for `manual`. */
+  typedMetres?: number
+  /** The dimension the model read, in feet, for `ai`. */
+  readFeet?: number
+  /** Free text for anything else — a DXF unit code, an OCR string. */
+  note?: string
+}
+
+/**
+ * The provenance of a blueprint's scale, carried beside the number itself.
+ *
+ * The number alone was not enough: two sources wrote it, neither recorded
+ * which had, and so an estimate could silently replace a measurement and still
+ * be reported as "calibrated". Storing the source next to the value is what
+ * makes that impossible rather than merely discouraged.
+ */
+export type Calibration = {
+  source: CalibrationSource
+  /** The value in force. Always within `BLUEPRINT.min/maxMetresPerPixel`. */
+  metresPerPixel: number
+  /** Set when the user measured it. Nothing automated may then replace it. */
+  lockedByUser: boolean
+  /** ISO 8601. */
+  setAt: string
+  evidence?: CalibrationEvidence
+}
+
+/**
  * A blueprint image traced under the plan.
  *
  * The image is positioned by two numbers rather than a transform matrix:
  * `origin` is where its top-left pixel sits in world metres, and
  * `metresPerPixel` is its scale. Calibration writes both, so a photographed
  * or scanned drawing at any resolution lands at true size.
+ *
+ * `metresPerPixel` and `calibration.metresPerPixel` are always equal. The
+ * duplication is deliberate: every reader of the scale already reads
+ * `blueprint.metresPerPixel`, and forcing thirteen call sites through
+ * `blueprint.calibration.metresPerPixel` to add provenance would have been a
+ * large diff with no benefit to any of them. `proposeCalibration` writes both
+ * in one `updateBlueprint` call and is the only writer of either.
  */
 export type Blueprint = {
-  /** Object URL for the decoded image. Revoked when the blueprint is replaced. */
-  src: string
+  /**
+   * Object URL for the decoded image, or null when the pixels are not loaded.
+   *
+   * Null is the state a saved design comes back in. An object URL is valid for
+   * one session of one tab, so it cannot be persisted — but the placement and
+   * the calibration around it can, and losing a measurement to a page reload
+   * was one of the reasons the scale bug was unrecoverable. So a reopened
+   * project remembers that it was traced from `site-plan.png` at 1 px = 1.9 cm,
+   * and re-picking that file restores the drawing underneath the walls rather
+   * than starting the measurement again.
+   */
+  src: string | null
   fileName: string
   /** Natural pixel dimensions of the source image. */
   width: number
@@ -181,6 +243,8 @@ export type Blueprint = {
   origin: Point
   opacity: number
   visible: boolean
+  /** Where `metresPerPixel` came from and whether the user locked it. */
+  calibration: Calibration
 }
 
 export const BLUEPRINT_DEFAULTS = {
@@ -271,6 +335,20 @@ export const emptyFloor = (index: number): FloorData => ({
   roomLabels: [],
   stairs: [],
 })
+
+/**
+ * What autosave last did, for the status bar.
+ *
+ * `conflict` is its own state rather than a flavour of `failed`: nothing went
+ * wrong technically, but another tab is writing the same two localStorage keys
+ * and whichever saves last wins. The user is the only one who can resolve that,
+ * so they have to be told it is happening.
+ */
+export type AutosaveState =
+  | { kind: 'idle' }
+  | { kind: 'saved'; at: string }
+  | { kind: 'failed'; message: string }
+  | { kind: 'conflict' }
 
 export type ViewMode = '2d' | '3d'
 
@@ -378,10 +456,34 @@ type DesignState = {
   /** A design opened from a share link. Editing is disabled throughout. */
   readOnly: boolean
   /**
-   * Bumped whenever the whole design is replaced. Views watch it to refit —
-   * a counter rather than a boolean so consecutive loads each trigger one.
+   * What autosave last did. Shown in the status bar.
+   *
+   * It used to have no state at all: on a full-quota write it returned without
+   * updating its dirty marker and retried silently every four seconds, forever,
+   * while the user carried on believing their work was being saved. A failure
+   * this quiet is worse than no autosave.
+   */
+  autosave: AutosaveState
+  setAutosave: (state: AutosaveState) => void
+  /**
+   * Bumped whenever what is on screen has moved enough to need reframing —
+   * a load, a new design, a floor switch, or a wholesale wall replacement.
+   * Views watch it to refit. A counter rather than a boolean so consecutive
+   * loads each trigger one.
    */
   viewEpoch: number
+  /**
+   * Bumped only when the undo stack has become meaningless: the document the
+   * history described is gone, so stepping back into it would restore a design
+   * the user did not ask for.
+   *
+   * Deliberately separate from `viewEpoch`. The two used to be one counter, and
+   * that is why an AI edit — which must refit the view — also silently wiped
+   * every undo step, leaving the user no way back from a bad generation. A
+   * floor switch had the same problem for the same reason. Refitting the camera
+   * and discarding the user's history are different claims and now say so.
+   */
+  historyEpoch: number
 
   /**
    * Undo/redo history for the design (walls, openings, rooms, furniture,
@@ -451,8 +553,22 @@ type DesignState = {
 
   /** Replaces the traced image, revoking the previous one's object URL. */
   setBlueprint: (blueprint: Blueprint | null) => void
+  /**
+   * Patches the traced image's placement and appearance.
+   *
+   * `metresPerPixel` and `calibration` are in this patch type but must only
+   * ever be supplied by `proposeCalibration` in `blueprint/calibration.ts`,
+   * which enforces the authority ladder. Writing them from anywhere else is
+   * how an AI estimate came to overwrite a user's measurement;
+   * `calibration.test.ts` fails the build if another module tries.
+   */
   updateBlueprint: (
-    patch: Partial<Pick<Blueprint, 'metresPerPixel' | 'origin' | 'opacity' | 'visible'>>,
+    patch: Partial<
+      Pick<
+        Blueprint,
+        'metresPerPixel' | 'origin' | 'opacity' | 'visible' | 'calibration'
+      >
+    >,
   ) => void
 
   addFurniture: (type: FurnitureType, position: Point) => string
@@ -461,6 +577,28 @@ type DesignState = {
     patch: Partial<Pick<FurnitureItem, 'position' | 'rotation' | 'width' | 'depth'>>,
   ) => void
   removeFurniture: (id: string) => void
+
+  /**
+   * Swaps the walls and nothing else, keeping every other part of the design.
+   *
+   * This is what an assistant edit actually means: the model was shown the
+   * walls, it returned walls, and it was never told the furniture, the room
+   * names, the stairs, the plot, the north rotation or the upper storeys
+   * existed — so it cannot have an opinion about them, and taking its silence
+   * as "delete them" is not a reading anyone asked for. The AI paths used
+   * `loadDesign` for this, which defaults every field it is not handed, and so
+   * destroyed all of it on every edit.
+   *
+   * Recorded as one ordinary undo step: unlike a load, this is an edit to the
+   * open document, and it must be reversible like any other.
+   *
+   * Openings ride inside their walls, so they are replaced along with them —
+   * that is the whole point of the edit. Room names are pinned to points and
+   * re-resolve against the new walls; a name whose space no longer exists
+   * simply stops resolving, which is the same thing that happens when the user
+   * drags a wall past it by hand.
+   */
+  replaceWalls: (walls: Wall[], name?: string | null) => void
 
   /** Replaces the entire design — used by project load, import, and share links. */
   loadDesign: (design: {
@@ -478,6 +616,11 @@ type DesignState = {
     plot?: Plot | null
     northOffset?: number
     plotFacing?: Facing
+    /**
+     * The traced underlay's remembered placement, with no pixels — its `src`
+     * is null until the user re-picks the file. Absent clears it.
+     */
+    blueprint?: Blueprint | null
     readOnly?: boolean
   }) => void
   /** Clears everything back to an empty, unnamed draft. */
@@ -509,6 +652,12 @@ type DesignState = {
   setWallLength: (id: string, length: number) => void
   removeWall: (id: string) => void
   clearWalls: () => void
+  /**
+   * Empties the open storey — walls, names, furniture and stairs — as one edit,
+   * so starting a trace over takes a single undo to reverse rather than one per
+   * object. The blueprint underlay is left alone; removing that is separate.
+   */
+  clearFloor: () => void
 
   /**
    * Places an opening on a wall, centred `position` metres along it. Returns
@@ -628,6 +777,70 @@ export function allFloors(state: {
   )
 }
 
+/**
+ * Everything `serializeDesign` reads, as one comparable value.
+ *
+ * Autosave used to decide whether anything had changed with
+ * `walls === savedWallsRef.current`. A session spent naming rooms, arranging
+ * furniture, setting the plot and its setbacks, rotating north, entering the
+ * construction rate or changing the floor finish touched no wall and was
+ * therefore never saved — while the README promised that closing the tab does
+ * not lose work.
+ *
+ * Deliberately WIDER than `DesignSnapshot`: `units` and `constructionRate` are
+ * persisted but not undoable, so the two sets are genuinely different and
+ * sharing one would silently under-save or over-record.
+ *
+ * Compared by reference for the collections, which is sound because the store
+ * only ever replaces them, and by value for the primitives.
+ */
+export type PersistedFingerprint = {
+  projectName: string | null
+  walls: Wall[]
+  furniture: FurnitureItem[]
+  roomLabels: RoomLabel[]
+  stairs: Stair[]
+  floors: FloorData[]
+  plot: Plot | null
+  blueprint: Blueprint | null
+  floorMaterial: MaterialId
+  viewMode: ViewMode
+  units: Unit
+  constructionRate: number
+  northOffset: number
+  plotFacing: Facing
+}
+
+export function persistedFingerprint(s: DesignState): PersistedFingerprint {
+  return {
+    projectName: s.projectName,
+    walls: s.walls,
+    furniture: s.furniture,
+    roomLabels: s.roomLabels,
+    stairs: s.stairs,
+    floors: s.floors,
+    plot: s.plot,
+    blueprint: s.blueprint,
+    floorMaterial: s.floorMaterial,
+    viewMode: s.viewMode,
+    units: s.units,
+    constructionRate: s.constructionRate,
+    northOffset: s.northOffset,
+    plotFacing: s.plotFacing,
+  }
+}
+
+/** True when anything that would be written to disk has moved. */
+export function persistedChanged(
+  a: PersistedFingerprint | null,
+  b: PersistedFingerprint,
+): boolean {
+  if (!a) return true
+  return (Object.keys(b) as (keyof PersistedFingerprint)[]).some(
+    (key) => a[key] !== b[key],
+  )
+}
+
 /** Applies `patch` to one wall, leaving every other wall's identity untouched. */
 const patchWall = (walls: Wall[], id: string, fn: (wall: Wall) => Wall) =>
   walls.map((wall) => (wall.id === id ? fn(wall) : wall))
@@ -656,6 +869,7 @@ type DesignSnapshot = Pick<
   | 'plotFacing'
   | 'northOffset'
   | 'floorMaterial'
+  | 'blueprint'
 >
 
 function snapshotOf(s: DesignState): DesignSnapshot {
@@ -670,7 +884,36 @@ function snapshotOf(s: DesignState): DesignSnapshot {
     plotFacing: s.plotFacing,
     northOffset: s.northOffset,
     floorMaterial: s.floorMaterial,
+    blueprint: s.blueprint,
   }
+}
+
+/**
+ * Whether the design — as opposed to the way it is being looked at — moved.
+ *
+ * Everything but the blueprint is compared by reference, which is sound
+ * because the store only ever replaces these with new immutable values.
+ *
+ * The blueprint is the exception, and deliberately so. It carries two kinds of
+ * field: its scale and placement, which ARE the design (a calibration must be
+ * undoable — losing one used to be unrecoverable), and its opacity and
+ * visibility, which are how you are looking at it. Comparing the object by
+ * reference would put an undo step behind every frame of an opacity drag. So
+ * only the design-bearing fields are compared here.
+ *
+ * The cost is that undoing a calibration also restores whatever opacity was in
+ * force when it was made. That is a real but invisible side effect, and it is
+ * the cheaper of the two mistakes.
+ */
+function blueprintChanged(a: Blueprint | null, b: Blueprint | null): boolean {
+  if (a === b) return false
+  if (!a || !b) return true
+  return (
+    a.src !== b.src ||
+    a.metresPerPixel !== b.metresPerPixel ||
+    a.origin !== b.origin ||
+    a.calibration !== b.calibration
+  )
 }
 
 function designChanged(a: DesignSnapshot, b: DesignSnapshot): boolean {
@@ -684,7 +927,8 @@ function designChanged(a: DesignSnapshot, b: DesignSnapshot): boolean {
     a.plot !== b.plot ||
     a.plotFacing !== b.plotFacing ||
     a.northOffset !== b.northOffset ||
-    a.floorMaterial !== b.floorMaterial
+    a.floorMaterial !== b.floorMaterial ||
+    blueprintChanged(a.blueprint, b.blueprint)
   )
 }
 
@@ -737,7 +981,9 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   blueprintCalibrating: false,
   presentMode: false,
   readOnly: false,
+  autosave: { kind: 'idle' },
   viewEpoch: 0,
+  historyEpoch: 0,
   past: [],
   future: [],
 
@@ -799,6 +1045,8 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   setVastuPanelOpen: (vastuPanelOpen) => set({ vastuPanelOpen }),
 
   setPlotPanelOpen: (plotPanelOpen) => set({ plotPanelOpen }),
+  setAutosave: (autosave) => set({ autosave }),
+
   setShowDimensions: (showDimensions) => set({ showDimensions }),
   setShowCompass: (showCompass) => set({ showCompass }),
 
@@ -973,11 +1221,12 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     })),
 
   // Object URLs live until revoked; dropping the reference alone would leak
-  // the whole decoded image for the life of the tab.
+  // the whole decoded image for the life of the tab. A null `src` is a
+  // remembered placement with no pixels attached and has nothing to revoke.
   setBlueprint: (blueprint) =>
     set((state) => {
       const previous = state.blueprint
-      if (previous && previous.src !== blueprint?.src) {
+      if (previous?.src && previous.src !== blueprint?.src) {
         URL.revokeObjectURL(previous.src)
       }
       return { blueprint }
@@ -1081,9 +1330,16 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     plot,
     northOffset,
     plotFacing,
+    blueprint,
     readOnly,
   }) =>
-    set((state) => ({
+    set((state) => {
+      // The outgoing underlay owns an object URL; nothing else will revoke it
+      // once the store stops pointing at it.
+      if (state.blueprint?.src && state.blueprint.src !== blueprint?.src) {
+        URL.revokeObjectURL(state.blueprint.src)
+      }
+      return {
       walls: walls.map(normalizeWall),
       furniture: furniture ?? [],
       roomLabels: roomLabels ?? [],
@@ -1118,12 +1374,17 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       projectName: name ?? null,
       viewMode: viewMode ?? state.viewMode,
       readOnly: readOnly ?? state.readOnly,
+      blueprint: blueprint ?? null,
       // Selection holds ids from the design being replaced, and walk mode
       // would drop the user inside a building that no longer exists.
       selection: null,
       walkMode: false,
       viewEpoch: state.viewEpoch + 1,
-    })),
+      // A different document entirely: the old history describes a design that
+      // is no longer open, so keeping it would let one undo silently restore it.
+      historyEpoch: state.historyEpoch + 1,
+      }
+    }),
 
   newDesign: () =>
     set((state) => ({
@@ -1139,6 +1400,24 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       selection: null,
       walkMode: false,
       viewEpoch: state.viewEpoch + 1,
+      historyEpoch: state.historyEpoch + 1,
+    })),
+
+  replaceWalls: (walls, name) =>
+    set((state) => ({
+      // Normalised on the way in for the same reason `loadDesign` does it:
+      // these walls came from outside the editor and have not been through
+      // `updateWall`, so nothing has yet clamped them or their openings.
+      walls: walls.map(normalizeWall),
+      // Ids in the old walls are gone; a selection pointing at one would leave
+      // the inspector describing a wall that no longer exists.
+      selection: null,
+      projectName: name === undefined ? state.projectName : name,
+      // Refit: the new plan can be anywhere, and leaving the viewport on the
+      // old one reads as the edit having done nothing.
+      viewEpoch: state.viewEpoch + 1,
+      // historyEpoch deliberately NOT bumped — this is an edit, and an edit is
+      // undoable.
     })),
 
   addWall: (start, end, options) => {
@@ -1205,6 +1484,15 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
   clearWalls: () => set({ walls: [], selection: null }),
 
+  clearFloor: () =>
+    set({
+      walls: [],
+      roomLabels: [],
+      furniture: [],
+      stairs: [],
+      selection: null,
+    }),
+
   addOpening: (wallId, type, position) => {
     const wall = get().walls.find((w) => w.id === wallId)
     if (!wall) return null
@@ -1259,17 +1547,22 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
 // Seeded so the first real edit has a baseline to step back to.
 historyCommitted = snapshotOf(useDesignStore.getState())
-// Watched so a whole-design replacement (loading a project, restoring an
-// autosave, an AI generate) resets history instead of leaving an "undo" that
-// would wipe the design that was just loaded.
-let historyEpoch = useDesignStore.getState().viewEpoch
+// Watched so opening a DIFFERENT document (loading a project, importing,
+// restoring an autosave, opening a share link, starting a new design) resets
+// history instead of leaving an "undo" that would wipe what was just loaded.
+//
+// Deliberately `historyEpoch` and not `viewEpoch`: an edit that merely needs
+// the camera refitted — an assistant edit, a floor switch — must stay
+// undoable. Watching `viewEpoch` here is what used to make an AI result
+// permanent.
+let lastHistoryEpoch = useDesignStore.getState().historyEpoch
 
 useDesignStore.subscribe((state) => {
   const snap = snapshotOf(state)
 
-  // A full replacement: adopt it as the new baseline and clear history.
-  if (state.viewEpoch !== historyEpoch) {
-    historyEpoch = state.viewEpoch
+  // A different document: adopt it as the new baseline and clear history.
+  if (state.historyEpoch !== lastHistoryEpoch) {
+    lastHistoryEpoch = state.historyEpoch
     historyCommitted = snap
     if (historyBurst) {
       clearTimeout(historyBurst)

@@ -8,6 +8,22 @@
     "allowArbitraryExtensions": true,
     "skipLibCheck": true,
 
+    /* Type safety.
+     *
+     * `strict` was NOT set for the whole life of the project and turning it on
+     * produced ZERO errors — the code was already written to it. Enabling it
+     * costs nothing and stops that drifting.
+     *
+     * `noUncheckedIndexedAccess` is deliberately NOT enabled. It produces 309
+     * errors, 212 of them in `blueprint/detectWalls.ts` alone, and almost all
+     * are `array[i]` inside numeric loops whose index is provably in range.
+     * Silencing those with `!` would touch a module §3 marks protect-only, add
+     * ~300 assertions that each say "trust me", and teach the next reader that
+     * `!` is punctuation. The rule is worth having on code written under it,
+     * not retrofitted with a sed script. Revisit per-directory.
+     */
+    "strict": true,
+
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
@@ -22,5 +38,11 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
+  // Tests live beside the code they cover, but they are not the app: they use
+  // node APIs (`node:fs` for the architecture fitness checks) and vitest
+  // globals, and pulling `@types/node` into the app project would quietly
+  // legitimise importing node built-ins from client code. They are typechecked
+  // by `tsconfig.test.json` instead, which `tsc -b` still runs.
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**"],
   "include": ["src"]
 }

@@ -83,7 +83,7 @@ export function aiPlugin(
   const handle = async (
     req: Connect.IncomingMessage,
     res: ServerResponse,
-    run: (apiKey: string, body: Record<string, unknown>) => Promise<unknown>,
+    run: (keys: string[], body: Record<string, unknown>) => Promise<unknown>,
   ) => {
     if (req.method !== 'POST') {
       json(res, 405, { error: 'Use POST.' })
@@ -107,7 +107,7 @@ export function aiPlugin(
         return
       }
 
-      json(res, 200, await run(detectionKeys[0], body))
+      json(res, 200, await run(detectionKeys, body))
     } catch (error) {
       const { status, message } = describeError(error)
       // Server-side log keeps the full error; the client gets the summary.
@@ -120,20 +120,20 @@ export function aiPlugin(
     name: 'space-design-ai',
     configureServer(server) {
       server.middlewares.use('/api/ai/generate', (req, res) =>
-        handle(req, res, (apiKey, body) => {
+        handle(req, res, (keys, body) => {
           const brief = typeof body.brief === 'string' ? body.brief.trim() : ''
           if (!brief) throw new Error('Describe what you want before generating.')
-          return generateDesign(apiKey, brief)
+          return generateDesign(keys, brief)
         }),
       )
 
       server.middlewares.use('/api/ai/edit', (req, res) =>
-        handle(req, res, (apiKey, body) => {
+        handle(req, res, (keys, body) => {
           const instruction =
             typeof body.instruction === 'string' ? body.instruction.trim() : ''
           if (!instruction) throw new Error('Describe the change you want.')
           if (!body.design) throw new Error('No current design was sent.')
-          return editDesign(apiKey, body.design, instruction)
+          return editDesign(keys, body.design, instruction)
         }),
       )
 

@@ -87,11 +87,10 @@ export const WALK = {
 }
 
 /**
- * The human figure walked through the design in third-person.
- *
- * Sized to a 1.75 m adult so rooms, doorways and worktops are judged against a
- * body rather than a floating camera — the whole point of putting a figure in
- * the scene.
+ * Physical dimensions of the walkthrough figure, shared by the collision body
+ * and the follow camera. The character's own model and colours live with
+ * whatever component renders it — this is only the metrics the walk system
+ * needs, so a body remains sized and framed correctly however it is drawn.
  */
 export const AVATAR = {
   height: 1.75,
@@ -104,25 +103,6 @@ export const AVATAR = {
   lookHeight: 1.35,
   /** How fast the body turns to face its heading, in radians per second. */
   turnSpeed: 11,
-  /** Full stride cycles per second at walking speed; scaled by actual speed. */
-  strideRate: 0.95,
-  /** Peak swing of an arm or leg, in radians. */
-  swing: 0.62,
-  skin: '#f3c3a0',
-  /** Blonde bob. */
-  hair: '#d7a244',
-  /** Open white cardigan — the outer layer and the sleeves. */
-  cardigan: '#eceef1',
-  /** Green top, showing at the neckline under the cardigan. */
-  top: '#2e9e5b',
-  trousers: '#3f4557',
-  /** Navy sneakers on a white sole. */
-  shoes: '#2b3350',
-  sole: '#f2f3f5',
-  /** Dot eyes, a soft smile and rosy cheeks — friendly, not cartoonish. */
-  eye: '#3a3436',
-  cheek: '#f0a39c',
-  mouth: '#c56b63',
 }
 
 /** Door leaves that swing open as the figure approaches. */

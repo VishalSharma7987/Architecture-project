@@ -112,9 +112,16 @@ export default function App() {
                 {structure.kind === 'building' && 'Building the walls to scale…'}
                 {structure.kind === 'built' &&
                   `${
-                    structure.scale.kind === 'calibrated'
-                      ? `Sized to ${structure.scale.feet}′ from the drawing. `
-                      : 'Sized by best guess — no dimension was legible; calibrate in 2D. '
+                    structure.scale.kind === 'estimated'
+                      ? // "Estimated", not "sized to" — a vision model read a
+                        // figure off a JPEG. The wording used to claim a
+                        // measurement, which is the one thing this build was
+                        // certain not to have.
+                        `Size estimated at ${structure.scale.feet}′ from the drawing's ` +
+                        'dimension text — check it, and calibrate in 2D to be sure. '
+                      : structure.scale.kind === 'kept-measured'
+                        ? 'Built at the scale you measured. '
+                        : 'Sized by best guess — no dimension was legible; calibrate in 2D. '
                   }Built ${structure.walls} walls and placed ${
                     structure.openings
                   } door${structure.openings === 1 ? '' : 's'} and windows${

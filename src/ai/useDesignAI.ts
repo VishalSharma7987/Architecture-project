@@ -1,6 +1,13 @@
 import { useCallback, useState } from 'react'
 import { useDesignStore } from '../store/useDesignStore'
 import { DESIGN_VERSION, parseDesign } from '../persistence/schema'
+import {
+  AI_TIMEOUT_MS,
+  AI_UNAVAILABLE_MESSAGE,
+  AiUnavailableError,
+  aiFetch,
+  isTimeout,
+} from './endpoint'
 
 export type AIStatus =
   | { kind: 'idle' }
@@ -31,15 +38,19 @@ export function useDesignAI() {
 
       let response: Response
       try {
-        response = await fetch(`/api/ai/${endpoint}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        })
-      } catch {
+        response = await aiFetch(`/api/ai/${endpoint}`, payload, AI_TIMEOUT_MS.design)
+      } catch (error) {
+        // Three genuinely different situations, which used to collapse into
+        // one misleading sentence about the dev server.
         setStatus({
           kind: 'error',
-          message: 'Could not reach the server. Is the dev server running?',
+          message:
+            error instanceof AiUnavailableError
+              ? AI_UNAVAILABLE_MESSAGE
+              : isTimeout(error)
+                ? 'The model took too long and the request was cancelled. ' +
+                  'Try a shorter brief.'
+                : 'Could not reach the server. Check your connection.',
         })
         return
       }
@@ -83,10 +94,14 @@ export function useDesignAI() {
         return
       }
 
-      useDesignStore.getState().loadDesign({
-        name: parsed.doc.name,
-        walls: parsed.doc.walls,
-      })
+      // `replaceWalls`, NOT `loadDesign`. `loadDesign` defaults every field it
+      // is not handed, so passing it walls alone deleted the furniture, the
+      // room names, the stairs, the plot, the north rotation, the construction
+      // rate, the floor finish and both upper storeys — and then bumped the
+      // history epoch, so none of it could be undone. The model is only ever
+      // shown walls and can only return walls; everything else is the user's
+      // and is none of its business.
+      useDesignStore.getState().replaceWalls(parsed.doc.walls, parsed.doc.name)
 
       setStatus({
         kind: 'done',

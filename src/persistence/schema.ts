@@ -7,6 +7,9 @@ import {
   OPENING_DEFAULTS,
   STAIR_DEFAULTS,
   WALL_DEFAULTS,
+  type Blueprint,
+  type Calibration,
+  type CalibrationSource,
   type FurnitureItem,
   type Opening,
   type OpeningType,
@@ -30,10 +33,24 @@ import {
 import { isFurnitureType } from '../furniture/catalog'
 
 /**
- * Bump when the on-disk shape changes incompatibly, and add a migration in
- * `parseDesign`. Files carry their version so an old export stays loadable.
+ * Bump when the on-disk shape changes, and add an entry to `MIGRATIONS`.
+ * Files carry their version so an old export stays loadable.
+ *
+ * v1 → v2: `blueprint` added. A v1 file has no traced underlay recorded, so it
+ *          migrates to `blueprint: null`.
  */
-export const DESIGN_VERSION = 1
+export const DESIGN_VERSION = 2
+
+/**
+ * A traced blueprint as it is saved: everything except the pixels.
+ *
+ * `src` is an object URL — valid for one session of one tab — so it is the one
+ * field that cannot be persisted. Everything that took the user effort can be:
+ * which file it was, how big it is, where it sits, and above all the scale and
+ * how it was arrived at. Reopening a project therefore remembers a measurement
+ * instead of asking for it again.
+ */
+export type PersistedBlueprint = Omit<Blueprint, 'src'>
 
 export type DesignDocument = {
   version: number
@@ -61,10 +78,25 @@ export type DesignDocument = {
    * predates multiple floors, and one written then still opens here.
    */
   floors: FloorData[]
+  /** The traced underlay's placement and scale, without its pixels. */
+  blueprint: PersistedBlueprint | null
 }
 
 export type ParseResult =
-  | { ok: true; doc: DesignDocument; warnings: string[] }
+  | {
+      ok: true
+      doc: DesignDocument
+      warnings: string[]
+      /**
+       * The version the file was actually written at, before migration.
+       *
+       * `doc.version` is always `DESIGN_VERSION` — the document has been
+       * brought forward. Callers that need to know where it came from (to say
+       * "upgraded from an older format", or to decide whether re-saving is
+       * lossy) need the original, and the old code discarded it.
+       */
+      originalVersion: number
+    }
   | { ok: false; error: string }
 
 export function serializeDesign(input: {
@@ -73,6 +105,12 @@ export function serializeDesign(input: {
   viewMode: ViewMode
   furniture?: FurnitureItem[]
   roomLabels?: RoomLabel[]
+  /**
+   * Ground-floor stairs. Accepted but NOT written: `DesignDocument` has no
+   * top-level `stairs`, and every storey's stairs already travel inside
+   * `floors[]`. Kept in the signature because four call sites pass it and
+   * removing it would read as a behaviour change when it is a no-op.
+   */
   stairs?: Stair[]
   floors?: FloorData[]
   plot?: Plot | null
@@ -81,6 +119,8 @@ export function serializeDesign(input: {
   constructionRate?: number
   northOffset?: number
   plotFacing?: Facing
+  /** The traced underlay, if any. Its `src` is dropped — see PersistedBlueprint. */
+  blueprint?: Blueprint | null
   savedAt?: string
 }): DesignDocument {
   return {
@@ -100,8 +140,26 @@ export function serializeDesign(input: {
     rooms: input.roomLabels ?? [],
     plot: input.plot ?? null,
     floors: input.floors ?? [],
+    blueprint: input.blueprint ? stripSrc(input.blueprint) : null,
   }
 }
+
+/** Everything about a blueprint except the object URL, which cannot outlive the tab. */
+function stripSrc(blueprint: Blueprint): PersistedBlueprint {
+  const { src: _src, ...persisted } = blueprint
+  return persisted
+}
+
+/**
+ * A remembered placement, ready for the store, with no image attached.
+ *
+ * `src: null` is the whole difference between "this project was traced from
+ * site-plan.png at a scale you measured" and "there is no blueprint". The
+ * first is worth keeping across a reload; only the pixels are not.
+ */
+export const attachable = (
+  blueprint: PersistedBlueprint | null,
+): Blueprint | null => (blueprint ? { ...blueprint, src: null } : null)
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
@@ -278,6 +336,67 @@ function parsePlot(value: unknown): Plot | null {
   }
 }
 
+const CALIBRATION_SOURCES: CalibrationSource[] = [
+  'manual',
+  'dxf-units',
+  'vector',
+  'ocr',
+  'heuristic',
+  'ai',
+  'none',
+]
+
+const isCalibrationSource = (value: unknown): value is CalibrationSource =>
+  typeof value === 'string' && (CALIBRATION_SOURCES as string[]).includes(value)
+
+/**
+ * A saved blueprint placement, or null when anything essential is missing.
+ *
+ * All-or-nothing like the plot, and for the same reason: a placement without a
+ * scale is not a placement, and inventing one would put the underlay at a size
+ * nobody chose. An unreadable `calibration` degrades to `source: 'none'`
+ * instead — the numbers are still usable, only their provenance is lost, and
+ * downgrading provenance is always safe because it can only make the authority
+ * ladder more permissive toward a fresh measurement, never less.
+ */
+function parseBlueprint(value: unknown): PersistedBlueprint | null {
+  if (!isRecord(value)) return null
+
+  const fileName = str(value.fileName)
+  const width = num(value.width)
+  const height = num(value.height)
+  const metresPerPixel = num(value.metresPerPixel)
+  const origin = parsePoint(value.origin)
+  if (fileName === null || width === null || height === null) return null
+  if (metresPerPixel === null || metresPerPixel <= 0 || !origin) return null
+  if (width <= 0 || height <= 0) return null
+
+  const raw = isRecord(value.calibration) ? value.calibration : {}
+  const calibrated = num(raw.metresPerPixel)
+  const calibration: Calibration = {
+    source: isCalibrationSource(raw.source) ? raw.source : 'none',
+    // Kept consistent with the placement: the two are written together and a
+    // file where they disagree has been hand-edited.
+    metresPerPixel: calibrated !== null && calibrated > 0 ? calibrated : metresPerPixel,
+    lockedByUser: raw.lockedByUser === true,
+    setAt: str(raw.setAt) ?? new Date().toISOString(),
+  }
+  // A lock without a measurement behind it is not a lock. Only `manual` locks.
+  if (calibration.source !== 'manual') calibration.lockedByUser = false
+
+  const opacity = num(value.opacity)
+  return {
+    fileName,
+    width,
+    height,
+    metresPerPixel,
+    origin,
+    opacity: opacity === null ? 0.5 : Math.min(1, Math.max(0.05, opacity)),
+    visible: value.visible !== false,
+    calibration,
+  }
+}
+
 function parseStair(value: unknown, ids: Set<string>): Stair | null {
   if (!isRecord(value)) return null
   const position = parsePoint(value.position)
@@ -315,25 +434,81 @@ function parseFurniture(value: unknown, ids: Set<string>): FurnitureItem | null 
 }
 
 /**
+ * One step forward in the on-disk format, keyed by the version it upgrades FROM.
+ *
+ * Every entry is a pure `(doc) => doc` on loosely-typed JSON, applied in order
+ * by `migrate` below, so a v1 file opened in a v5 build runs 1→2→3→4→5 rather
+ * than needing an N×N table of direct conversions.
+ *
+ * Rules for adding one:
+ *   - never mutate the input; return a new object;
+ *   - assume nothing about the input beyond the version it claims — it is
+ *     untrusted JSON, and the per-field validators below still run afterwards;
+ *   - ship an old-format fixture and a round-trip test with it (L7).
+ *
+ * `schema.ts` has carried a comment promising this mechanism since v1 and did
+ * not have one: the only version handling was a forward-rejection. Building it
+ * before it was needed rather than after is the whole point of L7.
+ */
+const MIGRATIONS: Record<number, (doc: Record<string, unknown>) => Record<string, unknown>> = {
+  // v1 → v2: the traced blueprint became part of the document. A v1 file was
+  // written by a build that never persisted one, so there is nothing to
+  // recover and `null` is the honest value — not a fabricated placement.
+  1: (doc) => ({ ...doc, blueprint: null, version: 2 }),
+}
+
+/**
+ * Brings a document forward to `DESIGN_VERSION`, one step at a time.
+ *
+ * A missing migration for a version we claim to support is a programming
+ * error, not a bad file, so it throws rather than silently half-upgrading.
+ */
+function migrate(doc: Record<string, unknown>, from: number): Record<string, unknown> {
+  let current = doc
+  for (let version = from; version < DESIGN_VERSION; version++) {
+    const step = MIGRATIONS[version]
+    if (!step) {
+      throw new Error(
+        `No migration from design version ${version} to ${version + 1}. ` +
+          'Every version between 1 and DESIGN_VERSION needs an entry in MIGRATIONS.',
+      )
+    }
+    current = step(current)
+  }
+  return current
+}
+
+/**
  * Validates untrusted JSON into a design document.
  *
  * Anything structurally wrong fails with a message the UI can show. Anything
  * merely odd — a missing id, a bad opening, a zero-length wall — is repaired or
  * dropped and reported as a warning, so one bad row cannot cost the user their
  * whole file.
+ *
+ * Older files are migrated forward first, so every validator below only ever
+ * sees the current shape.
  */
 export function parseDesign(value: unknown): ParseResult {
   if (!isRecord(value)) return { ok: false, error: 'File is not a JSON object.' }
 
-  const version = num(value.version)
-  if (version === null) {
+  const originalVersion = num(value.version)
+  if (originalVersion === null) {
     return { ok: false, error: 'Missing "version" — not a Space Designer file.' }
   }
-  if (version > DESIGN_VERSION) {
+  if (originalVersion > DESIGN_VERSION) {
     return {
       ok: false,
-      error: `File version ${version} is newer than this app supports (${DESIGN_VERSION}).`,
+      error: `File version ${originalVersion} is newer than this app supports (${DESIGN_VERSION}).`,
     }
+  }
+  if (originalVersion < 1 || !Number.isInteger(originalVersion)) {
+    return { ok: false, error: `"version" ${originalVersion} is not a valid version.` }
+  }
+
+  value = migrate(value, originalVersion)
+  if (!isRecord(value)) {
+    return { ok: false, error: 'Migration produced an unreadable document.' }
   }
 
   if (!Array.isArray(value.walls)) {
@@ -474,9 +649,18 @@ export function parseDesign(value: unknown): ParseResult {
     ? settings.plotFacing
     : DEFAULT_FACING
 
+  // Optional — v1 files carry none, and a placement that fails validation is
+  // dropped rather than rejecting an otherwise good design: the underlay is a
+  // tracing aid, and losing it costs less than losing the plan.
+  const blueprint = value.blueprint == null ? null : parseBlueprint(value.blueprint)
+  if (value.blueprint != null && !blueprint) {
+    warnings.push('dropped an unreadable blueprint placement')
+  }
+
   return {
     ok: true,
     warnings,
+    originalVersion,
     doc: {
       version: DESIGN_VERSION,
       name: str(value.name) ?? 'Untitled',
@@ -494,6 +678,7 @@ export function parseDesign(value: unknown): ParseResult {
       rooms,
       plot,
       floors,
+      blueprint,
     },
   }
 }

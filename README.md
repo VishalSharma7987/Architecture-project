@@ -16,6 +16,11 @@ A 3D space planning app.
   or edit the current plan with an instruction.
 - **Milestone 7** — presentation: wall and floor finishes, furniture, studio
   lighting, a chrome-free Present mode, and read-only share links.
+- **Later milestones**, not written up here: blueprint tracing with deterministic
+  wall detection, room detection and naming, the area statement and cost sheet,
+  plot boundaries and setbacks, Vastu analysis, multi-storey, stairs, PDF/CSV
+  export, and a rigged walkthrough figure. See `docs/audit/` for what actually
+  exists, feature by feature, and `docs/adr/` for what has changed since.
 
 ## Running it
 
@@ -28,15 +33,22 @@ Open the URL it prints (usually http://localhost:5173).
 
 ### Enabling the AI features
 
-The `AI` button needs an Anthropic API key. Everything else works without one.
+The `AI` button needs an **OpenRouter** API key. Everything else works without
+one. (`ANTHROPIC_API_KEY` is still read by `vite.config.ts` and then discarded —
+generate/edit moved to OpenRouter.)
 
 ```bash
 cp .env.example .env      # then edit .env and paste your key
 npm run dev               # restart — the key is read at server start
 ```
 
-Get a key from [platform.claude.com](https://platform.claude.com). Without one,
-the AI panel still opens and reports that no key is configured.
+Get a key from [openrouter.ai](https://openrouter.ai). Without one, the AI panel
+still opens and reports that no key is configured.
+
+**In a built deployment there are no AI endpoints at all** — they are Vite
+dev-server middleware. A production build disables the AI controls and says so,
+unless `VITE_AI_BASE_URL` points at a service you have stood up. See
+`.env.example`.
 
 Other scripts:
 
@@ -62,7 +74,7 @@ tilt so the scene never collapses to an empty horizon.
 
 | Action                | Input                              |
 | --------------------- | ---------------------------------- |
-| Place / continue wall | left-click (snaps to 0.5 m grid)   |
+| Place / continue wall | left-click (snaps to the unit grid) |
 | Finish wall chain     | `Esc` or double-click              |
 | Pan                   | right-click or middle-click drag   |
 | Zoom                  | scroll wheel (zooms toward cursor) |
@@ -135,8 +147,11 @@ Eye height is pinned at 1.7 m and movement is horizontal, so looking up does
 not lift you off the floor. Entering walk mode drops you at the centre of the
 layout; leaving it restores the orbit camera exactly where you left it.
 
-There is **no wall collision** — you can walk through walls. That is a
-deliberate omission for this milestone, not an oversight.
+**Collision differs between the two walk modes.** `Follow` resolves movement
+against the walls with a swept circle, so a doorway is the only way through and
+the camera pulls in rather than clipping into a wall. `Eyes` does not — it moves
+the camera directly and you can walk through walls. That asymmetry is a known
+gap, not a design: see `docs/audit/07_CURRENT_FEATURES.md`.
 
 ## Layout
 
@@ -177,6 +192,13 @@ src/
     FloorPlanEditor.tsx   Canvas + pointer handling (draw / select / place / pan / zoom)
     draw.ts               Imperative canvas renderer (grid, walls, openings, selection)
     viewport.ts           Screen<->world transforms, grid snapping, zoom-to-cursor
+  blueprint/              Trace an image: raster, deterministic wall detection,
+                          the calibration authority ladder, the vision read
+  rooms/ plan/rooms.ts    Rooms derived from the wall graph, names by containment
+  site/                   Plot, setbacks, buildable area, bearings and sectors
+  vastu/                  The placement ruleset, the nine-zone grid, the analysis
+  units/                  length.ts — the sole unit converter, and the grid step
+  export/                 pdf.ts (hand-rolled), statement.ts, documents.ts
   scene/                  3D workspace
     SceneCanvas.tsx       <Canvas> setup: renderer, camera, scene assembly
     Ground.tsx            Floor plane + infinite reference grid
@@ -187,7 +209,7 @@ src/
     Lighting.tsx          Ambient + hemisphere + key/fill directional lights
     Controls.tsx          OrbitControls configuration
     WalkControls.tsx      First-person: pointer lock + WASD
-    walkMotion.ts         Pure: key state -> velocity (kept separate to test)
+    walkMotion.ts         Pure: key state -> velocity (pure, tested)
     config.ts             All scene tuning values in one place
 ```
 
@@ -197,8 +219,9 @@ The environment map is built from in-scene `Lightformer` planes rendered once to
 a 256px cubemap, **not** from drei's `Environment preset`. The presets fetch
 several megabytes of HDR from a CDN, which would make the app depend on the
 network and stall the first frame. This gives real image-based reflections —
-most visible on polished concrete — with nothing to download. There is a test
-asserting the app makes zero external requests.
+most visible on polished concrete — with nothing to download. `src/ai/endpoint.test.ts`
+asserts that no deterministic module imports the AI layer, so the app keeps
+working with every AI service down.
 
 Only one light casts shadows. A second caster produces crossing shadows that
 read as a rendering fault rather than as sunlight.
@@ -245,12 +268,22 @@ The validator assigns fresh ones on the way in.
 ### Saved file format
 
 ```json
-{ "version": 1, "name": "...", "savedAt": "<ISO>",
-  "settings": { "viewMode": "2d" }, "walls": [ ... ] }
+{ "version": 2, "name": "...", "savedAt": "<ISO>",
+  "settings": { "viewMode", "floorMaterial", "units",
+                "constructionRate", "northOffset", "plotFacing" },
+  "walls": [...], "furniture": [...], "rooms": [...],
+  "plot": {...} | null, "floors": [...],
+  "blueprint": {...} | null }
 ```
 
-`version` is checked on load; a file from a newer app is refused rather than
-half-read. Add a migration in `parseDesign` when the shape changes.
+`version` is checked on load. A file from a newer app is refused rather than
+half-read; an older one is migrated forward by `MIGRATIONS` in `parseDesign`,
+one step at a time, and `ParseResult.originalVersion` reports where it came
+from. Every migration ships with an old-format fixture and a round-trip test.
+
+`blueprint` carries the traced underlay's placement and its calibration —
+everything except the pixels, since an object URL cannot outlive the tab.
+Re-picking the same file restores the measurement.
 
 **Everything read from disk or localStorage goes through `parseDesign`**, which
 treats its input as untrusted — a `.json` file is arbitrary user input, and
@@ -315,7 +348,10 @@ ends, and no taller than the space above its sill. Shrinking a wall therefore
 shrinks the openings in it rather than stranding them above the roofline, and
 the geometry layer can trust whatever it is handed.
 
-**One three.js unit = one metre.** The fine grid is 0.5 m, the bold grid 5 m.
+**One three.js unit = one metre.** The drawing grid belongs to the display
+unit — 6 inches and 5 feet in `ft-in` mode (the default), 0.5 m and 5 m in
+metric. On a half-metre grid no round imperial length is reachable by hand,
+which is why the step follows the unit.
 Keeping that ratio fixed means walls and furniture added later can be sized in
 real-world metres with no conversion.
 
@@ -331,5 +367,5 @@ looking at the result:
    factor to every light, so a sum of π is what renders the floor at its actual
    `GROUND.color`. Lower values drift grey.
 
-Shadow casting is already wired up on the key light and the floor is set to
-receive — there is just nothing standing on it yet.
+Shadow casting is on the key light; furniture, stairs, door leaves and the
+walkthrough figure all cast, and the floor receives.

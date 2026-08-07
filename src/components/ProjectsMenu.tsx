@@ -12,7 +12,7 @@ import {
   downloadPlanPdf,
   type DocumentInput,
 } from '../export/documents'
-import { serializeDesign } from '../persistence/schema'
+import { attachable, serializeDesign } from '../persistence/schema'
 import {
   deleteProject,
   listProjects,
@@ -40,6 +40,7 @@ export function ProjectsMenu() {
   const plotFacing = useDesignStore((s) => s.plotFacing)
   const viewMode = useDesignStore((s) => s.viewMode)
   const projectName = useDesignStore((s) => s.projectName)
+  const blueprint = useDesignStore((s) => s.blueprint)
   const loadDesign = useDesignStore((s) => s.loadDesign)
   const newDesign = useDesignStore((s) => s.newDesign)
   const setProjectName = useDesignStore((s) => s.setProjectName)
@@ -55,6 +56,14 @@ export function ProjectsMenu() {
   // at print resolution takes long enough that a menu giving no sign of it
   // reads as a menu whose buttons do nothing.
   const [pending, setPending] = useState<string | null>(null)
+  /**
+   * The destructive action awaiting a second click, as `verb:name`, or null.
+   *
+   * Save-over and delete both permanently destroy a stored project and had no
+   * confirmation at all. Cleared whenever the menu opens or the name changes,
+   * so a stale confirmation can never be armed by accident.
+   */
+  const [confirming, setConfirming] = useState<string | null>(null)
 
   const rootRef = useRef<HTMLDivElement>(null)
   const exportRef = useRef<HTMLDivElement>(null)
@@ -72,6 +81,7 @@ export function ProjectsMenu() {
     setDraftName(useDesignStore.getState().projectName ?? '')
     setStatus(null)
     setExportOpen(false)
+    setConfirming(null)
   }, [open])
 
   useEffect(() => {
@@ -111,6 +121,21 @@ export function ProjectsMenu() {
       return
     }
 
+    // Saving is keyed on the name, so typing an existing one destroyed that
+    // project with no warning. Confirmation is inline and two-step rather than
+    // a `window.confirm`: it matches the vocabulary `copyToNextFloor` already
+    // uses for a refusal the user can override, and it does not block the tab.
+    const overwriting = name !== projectName && projects.some((p) => p.name === name)
+    if (overwriting && confirming !== `save:${name}`) {
+      setConfirming(`save:${name}`)
+      setStatus({
+        tone: 'error',
+        message: `“${name}” already exists. Save again to replace it.`,
+      })
+      return
+    }
+    setConfirming(null)
+
     // Read the storeys at save time rather than subscribing: `allFloors`
     // builds a fresh array each call, so as a selector it would hand zustand a
     // new snapshot on every render and spin forever.
@@ -130,6 +155,7 @@ export function ProjectsMenu() {
         constructionRate,
         northOffset,
         plotFacing,
+        blueprint,
       }),
     )
     if (!result.ok) {
@@ -164,15 +190,24 @@ export function ProjectsMenu() {
       constructionRate: doc.settings.constructionRate,
       northOffset: doc.settings.northOffset,
       plotFacing: doc.settings.plotFacing,
+      blueprint: attachable(doc.blueprint),
     })
     setOpen(false)
   }
 
   const handleDelete = (name: string) => {
+    // One stray click on a ✕ used to destroy a project outright. The second
+    // click is the confirmation; the button relabels itself in between.
+    if (confirming !== `delete:${name}`) {
+      setConfirming(`delete:${name}`)
+      return
+    }
+    setConfirming(null)
     deleteProject(name)
     // The open design keeps its contents but is no longer a stored project.
     if (projectName === name) setProjectName(null)
     refresh()
+    setStatus({ tone: 'ok', message: `Deleted “${name}”.` })
   }
 
   const handleNew = () => {
@@ -240,6 +275,7 @@ export function ProjectsMenu() {
         constructionRate,
         northOffset,
         plotFacing,
+        blueprint,
       }),
     )
   }
@@ -323,6 +359,7 @@ export function ProjectsMenu() {
       constructionRate: result.doc.settings.constructionRate,
       northOffset: result.doc.settings.northOffset,
       plotFacing: result.doc.settings.plotFacing,
+      blueprint: attachable(result.doc.blueprint),
     })
     setStatus(
       result.warnings.length > 0
@@ -357,7 +394,11 @@ export function ProjectsMenu() {
           <div className="flex gap-1.5">
             <input
               value={draftName}
-              onChange={(e) => setDraftName(e.target.value)}
+              onChange={(e) => {
+                setDraftName(e.target.value)
+                // Retyping invalidates a pending overwrite confirmation.
+                setConfirming(null)
+              }}
               onKeyDown={(e) => e.key === 'Enter' && handleSave()}
               placeholder="Project name"
               data-testid="project-name-input"
@@ -367,9 +408,13 @@ export function ProjectsMenu() {
               type="button"
               onClick={handleSave}
               data-testid="project-save"
-              className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-700"
+              className={`shrink-0 rounded-md px-3 py-1.5 text-xs font-semibold text-white ${
+                confirming === `save:${draftName.trim()}`
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-slate-900 hover:bg-slate-700'
+              }`}
             >
-              Save
+              {confirming === `save:${draftName.trim()}` ? 'Replace' : 'Save'}
             </button>
           </div>
 
@@ -412,10 +457,19 @@ export function ProjectsMenu() {
                     <button
                       type="button"
                       onClick={() => handleDelete(project.name)}
-                      aria-label={`Delete project ${project.name}`}
-                      className="rounded-md px-2 py-1.5 text-xs text-slate-400 hover:bg-red-50 hover:text-red-600"
+                      aria-label={
+                        confirming === `delete:${project.name}`
+                          ? `Confirm deleting project ${project.name}`
+                          : `Delete project ${project.name}`
+                      }
+                      data-testid={`project-delete-${project.name}`}
+                      className={`shrink-0 rounded-md px-2 py-1.5 text-xs transition-colors ${
+                        confirming === `delete:${project.name}`
+                          ? 'bg-red-600 font-semibold text-white'
+                          : 'text-slate-400 hover:bg-red-50 hover:text-red-600'
+                      }`}
                     >
-                      ✕
+                      {confirming === `delete:${project.name}` ? 'Delete?' : '✕'}
                     </button>
                   </li>
                 ))}

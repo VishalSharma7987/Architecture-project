@@ -7,6 +7,17 @@
  */
 export const MAX_RASTER_DIMENSION = 2000
 
+/**
+ * Shortest edge, in pixels, that wall detection is allowed to run on.
+ *
+ * The detector measures walls in pixels, so a small screenshot of a plan simply
+ * has no wall thick enough to find: a 6 m house pasted at 300 px wide draws its
+ * walls one or two pixels across, under any sane minimum. Enlarging first costs
+ * nothing in fidelity — the information is already there — and turns those
+ * hairlines into bands the detector can actually measure.
+ */
+export const MIN_RASTER_DIMENSION = 1400
+
 /** A decoded image plus the object URL keeping it alive. */
 export type DecodedImage = {
   element: HTMLImageElement
@@ -96,7 +107,15 @@ export function rasterise(
   maxDimension = MAX_RASTER_DIMENSION,
 ): RasterResult {
   const longest = Math.max(image.width, image.height)
-  const scale = longest > maxDimension ? maxDimension / longest : 1
+  // Shrink an oversized image, enlarge an undersized one, leave the rest alone.
+  // Both bounds matter: the first keeps detection interactive, the second keeps
+  // a small screenshot's walls thick enough to be measurable at all.
+  const scale =
+    longest > maxDimension
+      ? maxDimension / longest
+      : longest < MIN_RASTER_DIMENSION
+        ? MIN_RASTER_DIMENSION / longest
+        : 1
   const width = Math.max(1, Math.round(image.width * scale))
   const height = Math.max(1, Math.round(image.height * scale))
 
@@ -108,6 +127,12 @@ export function rasterise(
   if (!ctx) {
     return { ok: false, error: 'This browser cannot read image pixels.' }
   }
+
+  // Enlarging is done without interpolation on purpose: smoothing would ramp a
+  // crisp 1px wall into a grey gradient that thresholding then splits at some
+  // arbitrary point, eating the wall's edges. Nearest-neighbour keeps the ink
+  // binary, so a hairline becomes a clean band of exactly the same shape.
+  if (scale > 1) ctx.imageSmoothingEnabled = false
 
   // Anything not covered by the image reads as blank paper, not black.
   ctx.fillStyle = '#ffffff'

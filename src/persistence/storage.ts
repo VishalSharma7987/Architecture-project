@@ -1,7 +1,9 @@
 import { parseDesign, type DesignDocument } from './schema'
 
-const PROJECTS_KEY = 'space-design.projects.v1'
-const AUTOSAVE_KEY = 'space-design.autosave.v1'
+// Exported so the cross-tab `storage` listener in `useAutosave` can recognise
+// a write from another tab without re-declaring the strings.
+export const PROJECTS_KEY = 'space-design.projects.v1'
+export const AUTOSAVE_KEY = 'space-design.autosave.v1'
 
 export type ProjectSummary = {
   name: string

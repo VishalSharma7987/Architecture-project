@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useDesignStore } from '../store/useDesignStore'
+import { attachable } from './schema'
 import { decodeShareLink, readShareFragment } from './shareLink'
 
 type SharedState =
@@ -59,6 +60,7 @@ export function useSharedDesign(): SharedState {
         constructionRate: result.doc.settings.constructionRate,
         northOffset: result.doc.settings.northOffset,
         plotFacing: result.doc.settings.plotFacing,
+        blueprint: attachable(result.doc.blueprint),
         readOnly: true,
       })
       setState({ kind: 'loaded' })

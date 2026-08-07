@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { AI_UNAVAILABLE_MESSAGE, isAiConfigured } from '../ai/endpoint'
 import { useDesignStore } from '../store/useDesignStore'
 import { buildWallsFromBlueprint } from './buildStructure'
 import {
@@ -7,6 +8,7 @@ import {
   placeFurniture,
   placeOpenings,
   placeRooms,
+  type AnalyseResult,
   type ScaleSource,
 } from './detectOpenings'
 
@@ -69,8 +71,17 @@ export function useBlueprintStructure(): StructurePhase {
       // 1. Read the plan: dimensions + openings in one vision call. If that
       // fails (no key, out of credit), fall back to walls alone at the default
       // scale so the conversion still produces something.
-      setPhase({ kind: 'reading' })
-      const analysis = await analyseBlueprint()
+      //
+      // Skipped outright when the build has no AI backend: the request would
+      // 404 against a static host, and spending a second on a round trip that
+      // cannot succeed only delays the walls the deterministic detector is
+      // about to build anyway.
+      const analysis: AnalyseResult = isAiConfigured()
+        ? await (async () => {
+            setPhase({ kind: 'reading' })
+            return analyseBlueprint()
+          })()
+        : { ok: false, error: AI_UNAVAILABLE_MESSAGE }
       if (!live) return
 
       // 2. Size the blueprint to its real dimensions, before the walls inherit

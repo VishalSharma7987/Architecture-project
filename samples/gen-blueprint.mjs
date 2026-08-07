@@ -1,16 +1,32 @@
 // Generates sample 2D floor-plan blueprints as SVG.
-// Usage: node gen-blueprint.mjs <variant> > out.svg     variant = simple | detailed | dark
+// Usage: node gen-blueprint.mjs <variant> > out.svg
+//   variant = simple | detailed | dark | colour | noisy | thin
+//
+// The last three exist to exercise the ways a real downloaded plan differs from
+// a clean drawing, each of which used to defeat wall detection outright:
+//   colour — rooms flooded with a tint and walls in a colour, not black
+//   noisy  — a watermark and furniture over the plan, as stock plans carry
+//   thin   — hairline walls, as a small screenshot of a plan produces
 
 const variant = process.argv[2] ?? 'simple'
-const detailed = variant === 'detailed' || variant === 'dark'
+const detailed = ['detailed', 'dark', 'noisy'].includes(variant)
 const dark = variant === 'dark'
+const colour = variant === 'colour'
+const noisy = variant === 'noisy'
+const thin = variant === 'thin'
 
 const W = 1600
 const H = 1200
 
-const ink = dark ? '#ffffff' : '#111111'
+const ink = dark ? '#ffffff' : colour ? '#8b4513' : '#111111'
 const paper = dark ? '#0b3a63' : '#ffffff'
 const faint = dark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)'
+
+/** Floor tint inside the shell. Null leaves the sheet blank, as a print does. */
+const roomFill = colour ? '#d6c6a8' : null
+
+/** Hairline walls, as a plan pasted at screenshot size draws them. */
+const wallScale = thin ? 0.25 : 1
 
 // --- geometry ------------------------------------------------------------
 // 100 px = 1.00 m. Outer shell is 12.0 m x 9.0 m.
@@ -88,7 +104,7 @@ function run(origin, u, d0, d1, t) {
   const q = at(origin, u, d1)
   push(
     `<line x1="${p[0]}" y1="${p[1]}" x2="${q[0]}" y2="${q[1]}" ` +
-      `stroke="${ink}" stroke-width="${t}" stroke-linecap="butt"/>`,
+      `stroke="${ink}" stroke-width="${t * wallScale}" stroke-linecap="butt"/>`,
   )
 }
 
@@ -169,7 +185,29 @@ if (detailed) {
   push('</g>')
 }
 
+// Floor tint, laid inside the shell before the walls go over it. This is the
+// arrangement that used to break detection: with the interior flooded, the
+// commonest colour on the sheet is the FLOOR, not the paper.
+if (roomFill) {
+  push(`<rect x="200" y="150" width="1200" height="900" fill="${roomFill}"/>`)
+}
+
 for (const w of walls) drawWall(w)
+
+// Furniture, drawn as the outline blocks a stock plan uses. Noise the detector
+// must not mistake for walls: solid, axis-aligned, and right beside them.
+if (noisy) {
+  const pieces = [
+    [250, 250, 180, 90], [300, 420, 90, 180], [900, 220, 200, 110],
+    [1180, 300, 140, 200], [250, 720, 120, 200], [600, 750, 240, 120],
+    [1000, 700, 200, 260], [560, 950, 160, 70],
+  ]
+  push(`<g fill="none" stroke="${faint}" stroke-width="3">`)
+  for (const [x, y, w, h] of pieces) {
+    push(`<rect x="${x}" y="${y}" width="${w}" height="${h}"/>`)
+  }
+  push('</g>')
+}
 
 for (const r of rooms) {
   push(
@@ -218,6 +256,19 @@ if (detailed) {
     `<text x="200" y="52" font-family="Helvetica, Arial, sans-serif" font-size="30" ` +
       `font-weight="bold" letter-spacing="3" fill="${ink}">GROUND FLOOR PLAN — SCALE 1:100</text>`,
   )
+}
+
+// Watermark last, so it lies over the drawing exactly as a stock plan's does —
+// crossing walls and rooms alike, which is what makes it awkward to ignore.
+if (noisy) {
+  push(`<g fill="rgba(0,0,0,0.13)" font-family="Helvetica, Arial, sans-serif" font-size="46" font-weight="bold" letter-spacing="6">`)
+  for (let i = 0; i < 4; i++) {
+    push(
+      `<text x="${120 + i * 60}" y="${260 + i * 250}" transform="rotate(-24 ${120 + i * 60} ${260 + i * 250})">` +
+        `SAMPLE PLAN · not for construction</text>`,
+    )
+  }
+  push('</g>')
 }
 
 push('</svg>')

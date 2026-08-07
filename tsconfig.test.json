@@ -1,0 +1,13 @@
+{
+  // Same rules as the app, plus the two things only tests are allowed:
+  // node built-ins and the vitest globals. Kept as its own project so that
+  // relaxing anything here can never relax it for shipped code.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.test.tsbuildinfo",
+    "types": ["node", "vite/client", "vitest/globals"],
+    "noEmit": true
+  },
+  "exclude": [],
+  "include": ["src", "vitest.config.ts"]
+}

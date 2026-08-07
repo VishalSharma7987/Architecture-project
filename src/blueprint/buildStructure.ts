@@ -27,7 +27,16 @@ const rasterFromSrc = (src: string): Promise<RasterResult> =>
 
 export type BuildResult =
   | { ok: true; count: number }
-  | { ok: false; reason: 'no-blueprint' | 'has-walls' | 'decode' | 'none-found' }
+  | {
+      ok: false
+      reason:
+        | 'no-blueprint'
+        /** A placement restored from a saved project, with no image attached yet. */
+        | 'no-image'
+        | 'has-walls'
+        | 'decode'
+        | 'none-found'
+    }
 
 /**
  * Detects the walls in the current blueprint and adds them to the open floor,
@@ -45,6 +54,10 @@ export async function buildWallsFromBlueprint(): Promise<BuildResult> {
   const state = useDesignStore.getState()
   const blueprint = state.blueprint
   if (!blueprint) return { ok: false, reason: 'no-blueprint' }
+  // A reopened project remembers its underlay's placement and scale but not
+  // its pixels — there is nothing to detect walls in until the user re-picks
+  // the file.
+  if (!blueprint.src) return { ok: false, reason: 'no-image' }
   if (state.walls.length > 0) return { ok: false, reason: 'has-walls' }
 
   const result = await rasterFromSrc(blueprint.src)

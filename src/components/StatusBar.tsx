@@ -52,9 +52,43 @@ export function StatusBar() {
         )}
       </div>
 
-      <span className="tabular-nums" data-testid="status-wall-count">
-        {wallCount} {wallCount === 1 ? 'wall' : 'walls'}
-      </span>
+      <div className="flex items-center gap-3">
+        <AutosaveIndicator />
+        <span className="tabular-nums" data-testid="status-wall-count">
+          {wallCount} {wallCount === 1 ? 'wall' : 'walls'}
+        </span>
+      </div>
     </footer>
+  )
+}
+
+/**
+ * What autosave last did.
+ *
+ * Silent on the happy path — a permanent "Saved" badge is noise, and the
+ * absence of a warning is the signal. Loud when it has stopped working: a
+ * failed write used to retry every four seconds with no indication at all,
+ * so the user kept working in the belief that closing the tab was safe.
+ */
+function AutosaveIndicator() {
+  const autosave = useDesignStore((s) => s.autosave)
+
+  if (autosave.kind === 'idle' || autosave.kind === 'saved') return null
+
+  const message =
+    autosave.kind === 'failed'
+      ? `Not saving — ${autosave.message} Export to keep this work.`
+      : 'This design is open in another tab. Whichever saves last wins — ' +
+        'close one, or export from this one.'
+
+  return (
+    <span
+      role="status"
+      title={message}
+      data-testid={`autosave-${autosave.kind}`}
+      className="max-w-md truncate rounded bg-amber-50 px-2 py-0.5 font-medium text-amber-700"
+    >
+      {message}
+    </span>
   )
 }
