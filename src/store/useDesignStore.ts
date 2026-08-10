@@ -890,9 +890,32 @@ function snapshotOf(s: DesignState): DesignSnapshot {
     plotFacing: s.plotFacing,
     northOffset: s.northOffset,
     floorMaterial: s.floorMaterial,
-    blueprint: s.blueprint,
+    blueprint: forgetPixels(s.blueprint),
   }
 }
+
+/**
+ * A blueprint as history may keep it: everything except the object URL.
+ *
+ * `setBlueprint` revokes the outgoing URL, because holding it would leak the
+ * whole decoded image for the life of the tab. But the outgoing blueprint is
+ * also in the undo snapshot, so undo used to hand back a `Blueprint` whose
+ * `src` had already been revoked — an image that silently fails to load, with
+ * the panel's own "remembers the file but not the image" message never firing,
+ * because it tests `!blueprint.src` and a revoked URL is still a string.
+ *
+ * Dropping the URL on the way into history is the honest resolution. What comes
+ * back is the state a reopened project is already in — the file it was traced
+ * from and the scale it was measured at, with no pixels — which the panel
+ * explains and the user can fix by re-picking the file. The alternative, keeping
+ * every replaced image alive in case an undo wants it, trades a confusing bug
+ * for an unbounded one.
+ *
+ * The cost is that redo also comes back without pixels, even though that image
+ * may still be on screen. That is the smaller of the two surprises.
+ */
+const forgetPixels = (blueprint: Blueprint | null): Blueprint | null =>
+  blueprint === null || blueprint.src === null ? blueprint : { ...blueprint, src: null }
 
 /**
  * Whether the design — as opposed to the way it is being looked at — moved.
@@ -915,7 +938,13 @@ function blueprintChanged(a: Blueprint | null, b: Blueprint | null): boolean {
   if (a === b) return false
   if (!a || !b) return true
   return (
-    a.src !== b.src ||
+    // Which drawing this is. `src` alone used to carry that, but snapshots no
+    // longer hold one (see `forgetPixels`), so swapping one underlay for
+    // another would otherwise look like no change at all and quietly stop
+    // being undoable.
+    a.fileName !== b.fileName ||
+    a.width !== b.width ||
+    a.height !== b.height ||
     a.metresPerPixel !== b.metresPerPixel ||
     a.origin !== b.origin ||
     a.calibration !== b.calibration
