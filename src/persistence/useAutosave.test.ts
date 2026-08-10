@@ -2,7 +2,14 @@ import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDesignStore } from '../store/useDesignStore'
 import { rectangleWalls, resetStore } from '../test/fixtures'
-import { AUTOSAVE_KEY, PROJECT_KEY_PREFIX, readAutosave } from './storage'
+import {
+  AUTOSAVE_KEY,
+  PROJECT_KEY_PREFIX,
+  bootCompleted,
+  bootStarted,
+  lastBootFailed,
+  readAutosave,
+} from './storage'
 import { AUTOSAVE_INTERVAL_MS, __resetRestoredGuard, useAutosave } from './useAutosave'
 
 /**
@@ -179,6 +186,85 @@ describe('a failed write is reported', () => {
     spy.mockRestore()
     tick()
     expect(useDesignStore.getState().autosave.kind).toBe('saved')
+  })
+})
+
+/**
+ * ★ The boot loop.
+ *
+ * Autosave persists whatever is open, including a document that goes on to
+ * crash a render. The restore path then loads it again on the next boot, so the
+ * crash repeats forever with no way in. The guard breaks the cycle: a boot that
+ * never finished mounting means the draft is left unopened once, deliberately,
+ * and said out loud rather than silently dropped.
+ */
+describe('★ a draft that crashed the last boot is not reopened', () => {
+  /** A draft on disk, as a previous session would have left one. */
+  function seedDraft() {
+    useDesignStore.setState({ walls: rectangleWalls() })
+    mountAutosave()
+    tick()
+    resetStore()
+    expect(readAutosave()).not.toBeNull()
+  }
+
+  it('restores normally when the last boot completed', () => {
+    seedDraft()
+    bootCompleted()
+
+    mountAutosave()
+    expect(useDesignStore.getState().walls).toHaveLength(4)
+  })
+
+  it('★ leaves the draft unopened when the last boot never completed', () => {
+    seedDraft()
+    // The previous session raised the flag and crashed before lowering it.
+    bootStarted()
+
+    mountAutosave()
+    expect(
+      useDesignStore.getState().walls,
+      'reopening it would crash again, forever',
+    ).toHaveLength(0)
+  })
+
+  it('★ does not delete the draft it declined to open', () => {
+    seedDraft()
+    bootStarted()
+
+    mountAutosave()
+    expect(readAutosave(), 'the work is held back, not destroyed').not.toBeNull()
+  })
+
+  it('★ says so rather than starting empty in silence', () => {
+    seedDraft()
+    bootStarted()
+
+    mountAutosave()
+    expect(useDesignStore.getState().autosave.kind).toBe('held-back')
+  })
+
+  it('clears the flag so the next boot opens the draft again', () => {
+    seedDraft()
+    bootStarted()
+    mountAutosave()
+
+    // Having declined once, the guard is lowered: a one-off crash must not
+    // lock a design out of the app permanently.
+    expect(lastBootFailed()).toBe(false)
+
+    resetStore()
+    mountAutosave()
+    expect(useDesignStore.getState().walls).toHaveLength(4)
+  })
+
+  it('raises the flag while restoring, and lowers it once mounted', () => {
+    seedDraft()
+    bootCompleted()
+
+    mountAutosave()
+    // renderHook commits, so the effect that lowers it has run.
+    expect(lastBootFailed()).toBe(false)
   })
 })
 

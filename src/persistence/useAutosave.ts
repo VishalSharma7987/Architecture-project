@@ -8,7 +8,10 @@ import {
 } from '../store/useDesignStore'
 import { attachable, serializeDesign } from './schema'
 import {
+  bootCompleted,
+  bootStarted,
   isProjectStorageKey,
+  lastBootFailed,
   readAutosave,
   saveProject,
   writeAutosave,
@@ -56,6 +59,19 @@ export function useAutosave(
     // An empty draft is not worth restoring over a fresh session.
     if (entry.doc.walls.length === 0 && !entry.name) return
 
+    // The previous boot raised the flag and never lowered it, which means it
+    // never finished mounting. Reopening the same draft would reproduce
+    // whatever stopped it, on every reload, forever. So it is left closed for
+    // one boot — and said out loud, because starting empty in silence reads as
+    // the work having been lost rather than held back.
+    if (lastBootFailed()) {
+      bootCompleted()
+      useDesignStore.getState().setAutosave({ kind: 'held-back' })
+      return
+    }
+
+    bootStarted()
+
     useDesignStore.getState().loadDesign({
       name: entry.name,
       walls: entry.doc.walls,
@@ -74,6 +90,21 @@ export function useAutosave(
     })
     savedRef.current = persistedFingerprint(useDesignStore.getState())
   }, [enabled])
+
+  /**
+   * Lowers the boot flag once the app has actually mounted.
+   *
+   * This is the half of the guard that makes it mean anything. React runs
+   * effects only after the whole tree commits, so if any component throws
+   * during render this never runs and the flag survives into the next load —
+   * which is precisely the condition the restore path above tests for.
+   *
+   * Deliberately its own effect with no dependencies: it must run on every
+   * mount, including the ones where nothing was restored.
+   */
+  useEffect(() => {
+    bootCompleted()
+  }, [])
 
   useEffect(() => {
     if (!enabled) return

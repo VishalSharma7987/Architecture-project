@@ -343,12 +343,18 @@ export const emptyFloor = (index: number): FloorData => ({
  * wrong technically, but another tab is writing the same two localStorage keys
  * and whichever saves last wins. The user is the only one who can resolve that,
  * so they have to be told it is happening.
+ *
+ * `held-back` is likewise not a failure: the draft is intact and saving works.
+ * It says the app declined to REOPEN a draft because the previous boot crashed
+ * before it finished — see the boot guard in `persistence/storage.ts`. Starting
+ * empty without saying so would read as the work having been lost.
  */
 export type AutosaveState =
   | { kind: 'idle' }
   | { kind: 'saved'; at: string }
   | { kind: 'failed'; message: string }
   | { kind: 'conflict' }
+  | { kind: 'held-back' }
 
 export type ViewMode = '2d' | '3d'
 

@@ -78,8 +78,12 @@ function AutosaveIndicator() {
   const message =
     autosave.kind === 'failed'
       ? `Not saving — ${autosave.message} Export to keep this work.`
-      : 'This design is open in another tab. Whichever saves last wins — ' +
-        'close one, or export from this one.'
+      : autosave.kind === 'held-back'
+        ? 'The last session did not finish opening, so your draft was left ' +
+          'closed rather than reopened into the same crash. It is still saved — ' +
+          'reload to try it again.'
+        : 'This design is open in another tab. Whichever saves last wins — ' +
+          'close one, or export from this one.'
 
   return (
     <span

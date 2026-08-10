@@ -341,3 +341,32 @@ export function writeAutosave(entry: AutosaveEntry): StorageResult {
 export function clearAutosave(): void {
   removeRaw(AUTOSAVE_KEY)
 }
+
+/* ─── the boot guard ────────────────────────────────────────────────────── */
+
+/**
+ * Raised while a draft is being restored, lowered once the app has mounted.
+ *
+ * Autosave persists whatever is open, including a document that goes on to
+ * throw during render. The restore path then loads it again on the next boot,
+ * so the crash repeats on every reload and the user cannot get back in — the
+ * app is bricked by its own draft, with no error boundary reachable in time to
+ * say so. That is the difference between one bad session and a dead install.
+ *
+ * The signal works because of when React runs effects: only after the whole
+ * tree has committed. A throw during render means no effect runs, so the flag
+ * this stores is still set when the page loads again — which is exactly the
+ * question "did the last boot finish?".
+ */
+export const BOOT_KEY = 'space-design.boot.v1'
+
+/** Did the previous boot begin restoring a draft and never finish mounting? */
+export const lastBootFailed = (): boolean => readRaw(BOOT_KEY) !== null
+
+export function bootStarted(): void {
+  writeRaw(BOOT_KEY, new Date().toISOString())
+}
+
+export function bootCompleted(): void {
+  removeRaw(BOOT_KEY)
+}
