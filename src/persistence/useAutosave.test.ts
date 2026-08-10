@@ -2,7 +2,7 @@ import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDesignStore } from '../store/useDesignStore'
 import { rectangleWalls, resetStore } from '../test/fixtures'
-import { AUTOSAVE_KEY, PROJECTS_KEY, readAutosave } from './storage'
+import { AUTOSAVE_KEY, PROJECT_KEY_PREFIX, readAutosave } from './storage'
 import { AUTOSAVE_INTERVAL_MS, __resetRestoredGuard, useAutosave } from './useAutosave'
 
 /**
@@ -193,9 +193,12 @@ describe('cross-tab conflict', () => {
     expect(useDesignStore.getState().autosave.kind).toBe('conflict')
   })
 
-  it('notices another tab writing the project library', () => {
+  it('notices another tab writing a stored project', () => {
     mountAutosave()
-    window.dispatchEvent(new StorageEvent('storage', { key: PROJECTS_KEY }))
+    // Projects are one key each, so the event carries the project's own key.
+    window.dispatchEvent(
+      new StorageEvent('storage', { key: `${PROJECT_KEY_PREFIX}Villa` }),
+    )
     expect(useDesignStore.getState().autosave.kind).toBe('conflict')
   })
 

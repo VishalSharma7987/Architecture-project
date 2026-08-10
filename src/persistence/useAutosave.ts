@@ -8,8 +8,7 @@ import {
 } from '../store/useDesignStore'
 import { attachable, serializeDesign } from './schema'
 import {
-  AUTOSAVE_KEY,
-  PROJECTS_KEY,
+  isProjectStorageKey,
   readAutosave,
   saveProject,
   writeAutosave,
@@ -138,6 +137,9 @@ export function useAutosave(
    * Whichever writes last wins, and the other tab's work is gone with no sign
    * that anything happened.
    *
+   * Which keys those are is `storage`'s business, not this hook's — projects
+   * are one key each now, so matching them here would mean knowing the prefix.
+   *
    * Merging two divergent designs is not something this app can do, and
    * guessing would be worse than losing one of them. So the honest move is to
    * say it is happening and let the user close a tab or export. The `storage`
@@ -147,7 +149,7 @@ export function useAutosave(
     if (!enabled) return
 
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== AUTOSAVE_KEY && event.key !== PROJECTS_KEY) return
+      if (!isProjectStorageKey(event.key)) return
       useDesignStore.getState().setAutosave({ kind: 'conflict' })
     }
 
