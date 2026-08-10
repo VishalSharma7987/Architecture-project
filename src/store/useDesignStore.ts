@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { createHistory, type History } from './history'
 import {
   DEFAULT_FLOOR_MATERIAL,
   DEFAULT_WALL_MATERIAL,
@@ -863,7 +864,7 @@ const patchWall = (walls: Wall[], id: string, fn: (wall: Wall) => Wall) =>
  * so a snapshot is a handful of pointers, and reference equality is enough to
  * tell a real edit from a view change.
  */
-type DesignSnapshot = Pick<
+export type DesignSnapshot = Pick<
   DesignState,
   | 'walls'
   | 'roomLabels'
@@ -967,22 +968,15 @@ function designChanged(a: DesignSnapshot, b: DesignSnapshot): boolean {
   )
 }
 
-/** Cap on remembered steps, so a long session cannot grow history unbounded. */
-const HISTORY_LIMIT = 100
-
 /**
- * How long edits keep coalescing into one undo step. A drag fires many updates
- * a frame apart, and they should undo as a single move; deliberate clicks are
- * further apart than this, so they stay separate steps.
+ * The undo recorder for this store.
+ *
+ * Assigned immediately after `create` below, because the engine subscribes to
+ * the store it records. The actions read it through the optional call, which
+ * only matters for the instant between the store existing and the engine being
+ * attached — during which `past` is empty and undo had nothing to do anyway.
  */
-const HISTORY_COALESCE_MS = 200
-
-// History bookkeeping, kept in module scope rather than in the store: `applying`
-// must gate the recorder while undo/redo write, and `committed`/`burstTimer`
-// are plumbing the UI never reads.
-let historyApplying = false
-let historyCommitted: DesignSnapshot | null = null
-let historyBurst: ReturnType<typeof setTimeout> | null = null
+let history: History | undefined
 
 export const useDesignStore = create<DesignState>()((set, get) => ({
   viewMode: '2d',
@@ -1022,37 +1016,11 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   past: [],
   future: [],
 
-  undo: () => {
-    const { past } = get()
-    if (past.length === 0) return
-    const previous = past[past.length - 1]
-    const current = snapshotOf(get())
-    // Guard the recorder: this write restores design fields, and must not be
-    // logged as a fresh edit or undo would push its own result onto history.
-    historyApplying = true
-    set({ ...previous, past: past.slice(0, -1), future: [...get().future, current] })
-    historyApplying = false
-    historyCommitted = previous
-    if (historyBurst) {
-      clearTimeout(historyBurst)
-      historyBurst = null
-    }
-  },
+  // Delegated: the engine owns the guard that stops its own writes being
+  // recorded as fresh edits, and the baseline they have to leave behind.
+  undo: () => history?.undo(),
 
-  redo: () => {
-    const { future } = get()
-    if (future.length === 0) return
-    const next = future[future.length - 1]
-    const current = snapshotOf(get())
-    historyApplying = true
-    set({ ...next, future: future.slice(0, -1), past: [...get().past, current] })
-    historyApplying = false
-    historyCommitted = next
-    if (historyBurst) {
-      clearTimeout(historyBurst)
-      historyBurst = null
-    }
-  },
+  redo: () => history?.redo(),
 
   // Leaving 3D always drops out of walk mode — otherwise returning to 3D would
   // silently re-enter first-person with the pointer already captured.
@@ -1577,65 +1545,11 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 // ---- Undo/redo recorder ----
 //
 // Records design edits into `past` as they settle, coalescing a burst (a drag)
-// into one step. It lives outside the store object because it must observe the
-// store and write back to it without being one of its actions.
-
-// Seeded so the first real edit has a baseline to step back to.
-historyCommitted = snapshotOf(useDesignStore.getState())
-// Watched so opening a DIFFERENT document (loading a project, importing,
-// restoring an autosave, opening a share link, starting a new design) resets
-// history instead of leaving an "undo" that would wipe what was just loaded.
-//
-// Deliberately `historyEpoch` and not `viewEpoch`: an edit that merely needs
-// the camera refitted — an assistant edit, a floor switch — must stay
-// undoable. Watching `viewEpoch` here is what used to make an AI result
-// permanent.
-let lastHistoryEpoch = useDesignStore.getState().historyEpoch
-
-useDesignStore.subscribe((state) => {
-  const snap = snapshotOf(state)
-
-  // A different document: adopt it as the new baseline and clear history.
-  if (state.historyEpoch !== lastHistoryEpoch) {
-    lastHistoryEpoch = state.historyEpoch
-    historyCommitted = snap
-    if (historyBurst) {
-      clearTimeout(historyBurst)
-      historyBurst = null
-    }
-    historyApplying = true
-    useDesignStore.setState({ past: [], future: [] })
-    historyApplying = false
-    return
-  }
-
-  // undo/redo are writing: keep the baseline in step, but record nothing.
-  if (historyApplying) {
-    historyCommitted = snap
-    return
-  }
-
-  // A view-only change (panel, tool, selection, camera) touches no design
-  // field, so there is nothing to record.
-  if (historyCommitted && !designChanged(historyCommitted, snap)) return
-
-  // First edit of a burst: push the pre-edit state so it can be returned to,
-  // and drop the redo branch the new edit diverges from. Later edits in the
-  // same burst only extend it; the timer below keeps the burst open.
-  if (!historyBurst && historyCommitted) {
-    const { past } = useDesignStore.getState()
-    const trimmed =
-      past.length >= HISTORY_LIMIT
-        ? past.slice(past.length - HISTORY_LIMIT + 1)
-        : past
-    historyApplying = true
-    useDesignStore.setState({ past: [...trimmed, historyCommitted], future: [] })
-    historyApplying = false
-  }
-
-  historyCommitted = snap
-  if (historyBurst) clearTimeout(historyBurst)
-  historyBurst = setTimeout(() => {
-    historyBurst = null
-  }, HISTORY_COALESCE_MS)
+// into one step. Attached here rather than built in, so the engine is a thing
+// this store HAS and not a thing the module IS — see `history.ts`.
+history = createHistory<DesignSnapshot, DesignState>({
+  store: useDesignStore,
+  snapshotOf,
+  changed: designChanged,
+  epochOf: (state) => state.historyEpoch,
 })

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDesignStore, type Blueprint } from './useDesignStore'
+import { createHistory, type HistoryStore } from './history'
 import { uncalibrated } from '../blueprint/calibration'
 import { rectangleWalls, resetStore } from '../test/fixtures'
 
@@ -170,6 +171,149 @@ describe('replacing a blueprint is still one undo step', () => {
 
     // Opacity is how you are looking at the drawing, not part of the design.
     expect(useDesignStore.getState().past.length).toBe(before)
+  })
+})
+
+/**
+ * ★ M3 — the engine is a thing you make, not a thing there is one of.
+ *
+ * It used to be three mutable variables at module scope beside a bare
+ * `store.subscribe(...)`, which meant it could not be created twice, disposed,
+ * or exercised without reaching through the real store. That is not a tidiness
+ * complaint: it forecloses every feature with two documents in it, and each of
+ * those will be quoted as small by whoever has not read the module. These
+ * cases are the proof that the constraint is gone — none of them can be
+ * written against a singleton.
+ */
+describe('★ createHistory is instantiable, isolated and disposable', () => {
+  type Snapshot = { value: number }
+  type State = Snapshot & { past: Snapshot[]; future: Snapshot[]; epoch: number }
+
+  /** The smallest store the engine will accept. */
+  function fakeStore(): HistoryStore<State> & { set: (value: number) => void } {
+    let state: State = { value: 0, past: [], future: [], epoch: 0 }
+    const listeners = new Set<(s: State) => void>()
+
+    return {
+      getState: () => state,
+      setState: (partial) => {
+        state = { ...state, ...partial }
+        for (const listener of listeners) listener(state)
+      },
+      subscribe: (listener) => {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      set: (value) => {
+        state = { ...state, value }
+        for (const listener of listeners) listener(state)
+      },
+    }
+  }
+
+  const engineFor = (store: HistoryStore<State>) =>
+    createHistory<Snapshot, State>({
+      store,
+      snapshotOf: (s) => ({ value: s.value }),
+      changed: (a, b) => a.value !== b.value,
+      epochOf: (s) => s.epoch,
+    })
+
+  it('records and steps back on its own store', () => {
+    const store = fakeStore()
+    const history = engineFor(store)
+
+    store.set(1)
+    settle()
+    history.undo()
+
+    expect(store.getState().value).toBe(0)
+  })
+
+  it('★ two engines do not share a scrap of state', () => {
+    const a = fakeStore()
+    const b = fakeStore()
+    const historyA = engineFor(a)
+    engineFor(b)
+
+    a.set(1)
+    b.set(99)
+    settle()
+
+    historyA.undo()
+
+    expect(a.getState().value, 'the one that was undone').toBe(0)
+    expect(b.getState().value, 'the one that was not').toBe(99)
+    expect(b.getState().past, 'and it kept its own history').toHaveLength(1)
+  })
+
+  it('stops recording once disposed', () => {
+    const store = fakeStore()
+    const history = engineFor(store)
+    history.dispose()
+
+    store.set(1)
+    settle()
+
+    expect(store.getState().past).toHaveLength(0)
+  })
+
+  it('coalesces a burst into one step', () => {
+    const store = fakeStore()
+    const history = engineFor(store)
+
+    // A drag: many updates a frame apart, one undo step.
+    store.set(1)
+    store.set(2)
+    store.set(3)
+    settle()
+
+    history.undo()
+    expect(store.getState().value).toBe(0)
+  })
+
+  it('honours the coalescing window between deliberate edits', () => {
+    const store = fakeStore()
+    const history = engineFor(store)
+
+    store.set(1)
+    settle()
+    store.set(2)
+    settle()
+
+    history.undo()
+    expect(store.getState().value, 'two clicks are two steps').toBe(1)
+  })
+
+  it('clears history when the document epoch moves', () => {
+    const store = fakeStore()
+    engineFor(store)
+
+    store.set(1)
+    settle()
+    expect(store.getState().past).toHaveLength(1)
+
+    // A different document was opened; the old steps belong to the old one.
+    store.setState({ epoch: 1, value: 50 })
+    expect(store.getState().past).toHaveLength(0)
+  })
+
+  it('caps how much it remembers', () => {
+    const store = fakeStore()
+    createHistory<Snapshot, State>({
+      store,
+      snapshotOf: (s) => ({ value: s.value }),
+      changed: (a, b) => a.value !== b.value,
+      epochOf: (s) => s.epoch,
+      limit: 3,
+    })
+
+    for (let i = 1; i <= 10; i++) {
+      store.set(i)
+      settle()
+    }
+
+    expect(store.getState().past.length).toBeLessThanOrEqual(3)
   })
 })
 
