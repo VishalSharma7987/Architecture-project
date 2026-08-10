@@ -1,0 +1,61 @@
+# Runs the same four gates the project is held to locally, on every push and PR.
+#
+# Each gate is its own step that runs even if an earlier gate failed, so one run
+# reports every failing gate at once rather than stopping at the first. The job
+# still fails if any of them fail — this changes what gets reported, not what
+# counts as a pass. The gates are skipped if `npm ci` itself failed, since
+# without node_modules they would all fail for the same uninformative reason.
+#
+# No secrets are used. The suite is deliberately offline: `vitest.config.ts` is
+# separate from `vite.config.ts` precisely so the app's `aiPlugin` — which reads
+# API keys and mounts middleware — is never loaded by a test run.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch makes an in-flight run obsolete.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: build · test · types · lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # Matches the version the gate is verified against locally (v20.20.0).
+          # Vite 8 and TypeScript 6 both require Node 20.19+.
+          node-version: '20'
+          cache: npm
+
+      # `ci`, not `install`: installs exactly what package-lock.json pins and
+      # fails if the lockfile and package.json disagree.
+      - name: Install
+        id: install
+        run: npm ci
+
+      - name: Types (tsc -b)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npx tsc -b
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run lint
+
+      - name: Tests
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm test
+
+      - name: Build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run build
