@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B8 (partial)** — the shared room-resolution memoisation point, benchmarked before/after |
-| Next task | **B7** — see open question 11: it is a schema change, not performance work |
-| Partially done | **B8** — benchmark and shared memoisation delivered; **spatial indexing deliberately NOT done** (open question 6) |
+| Last completed task | **B7.1 – B7.5** — room identity, detached labels, `DESIGN_VERSION 3`, provenance, `boundaryHint` |
+| Next task | **B7.6** (pass-2 re-attachment) + **B7.7** (transient ids for unnamed spaces) |
+| Partially done | **B7** — 5 of 7 sub-tasks. **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B7 · B9 → B10 → B11 → B12 |
 
 **Clause 4a is closed.** All seven pure modules §7 Stage 1 names are now covered,
@@ -73,17 +73,19 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified on the working tree above `3926d17`, after B8:
+Verified on the working tree above `3926d17`, after B7.1–B7.5:
 
 | Check | Result |
 |---|---|
-| `npm test` | **379 passing / 379** · 19 files / 19 |
+| `npm test` | **432 passing / 432** · 24 files / 24 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
 | `strict` | **`true`** — [`tsconfig.app.json:25`](../tsconfig.app.json#L25) |
 | Key boundary | **intact** — no `ANTHROPIC` / `OPENROUTER` / `sk-ant-` / `sk-or-` in `dist/` |
+| Schema | **`DESIGN_VERSION = 3`** — v1→v2→v3 migrations, round-trip tested |
+| Autosave | **2.37 ms** at 500 walls × 3 storeys, against §9.2's 20 ms |
 
 The 5 lint warnings are genuine advisories, not suppressions: 3 ×
 `react/no-array-index-key`, 2 × `eslint/no-shadow`.
@@ -329,6 +331,44 @@ and a rule with one tolerated exception is a rule nobody enforces. **Three
 actions, three contracts, no defaulting.**
 
 Do not reintroduce a partial `loadDesign` call for any of them.
+
+---
+
+### SD10 — Room identity lives on the LABEL, and `Selection` carries it
+
+Rooms are derived, so an id "on the room" would be minted afresh each pass and
+identify nothing. The label is the user's assertion that a space exists here and
+is called this; that is what persists (L2) and the geometry is computed around
+it (L6).
+
+Stored rooms were considered and rejected: they create a second source of truth
+for geometry, and reconciling them into the store after every wall edit is a
+write from a derived computation into state — which §4 invariant 1 (`designChanged`
+is a pure reference compare) makes structurally hostile.
+
+`Selection` is now `{ kind: 'room'; roomId }` **or** `{ kind: 'space'; anchor }`.
+Two variants, not one with a nullable id.
+
+### SD11 — Provenance is required at the call site, optional in the type
+
+`provenance?: Provenance` on the five element types, because every v2 document
+and every test fixture would otherwise fail to typecheck. But every
+element-creating store action takes one as a REQUIRED argument, and
+[`provenance.test.ts`](../src/store/provenance.test.ts) greps the tree to
+enforce it.
+
+**Never defaulted to `'manual'`.** Two of `addWall`'s three callers are the CV
+path; one of `addOpening`'s three is `detectOpenings`. A default would label
+machine output as hand-drawn — the exact failure L5 exists to prevent.
+
+### SD12 — `boundaryHint` is a save-time field
+
+Written by `serializeDesign`, read by `parseDesign`, never touched during
+editing or rendering. Writing it from inside `resolveRooms` would replace
+`roomLabels` and so break B8's cache, the render loop and the undo recorder at
+once. Only the ACTIVE floor is hinted — the other storeys' walls are frozen in
+`floors[]` and cannot be stale, and resolving all three would blow §9.2's
+autosave budget (open question 13c).
 
 ---
 
@@ -592,7 +632,7 @@ defects.
 claim rests on them. Compounds open question 1: the scorer's sanity gate must not be
 tuned the same way.
 
-### 11. B7 is a schema change, not performance work `OPEN` · **scope correction**
+### 11. B7 is a schema change, not performance work `RESOLVED 2026-08-10`
 
 **Corrected 2026-08-10.** This file previously framed B7 as the room-detection
 performance work and said *"B8 is folded into B7… all six call `resolveRooms`, which
@@ -638,8 +678,41 @@ without it (open question 6).
 |---|---|---|
 | **13a** | **§7 Stage 0.2's exit was never performed.** It reads: *"`npm run build && npm run preview` — the AI panel states its status correctly, and nothing else in the app is degraded."* That is a manual acceptance run. Nobody has done it. | human, ~15 min |
 | **13b** | `RESOLVED 2026-08-10` — [`src/store/phantomEdits.test.ts`](../src/store/phantomEdits.test.ts) asserts that `segmentsToWalls` converts at the measured scale after an AI proposal is refused, at raster scale 1 and 0.5, and that the auto-build refuses with `no-image` when a reopened project has the measurement but not the pixels. *Original:* **§7 Stage 0.3's second exit clause is unasserted.** The exit requires *"`metresPerPixel` is unchanged **and the walls are built at the user's scale**"*. The first half is covered at [`calibration.test.ts:207`](../src/blueprint/calibration.test.ts#L207). The second is asserted nowhere — [`:197`](../src/blueprint/calibration.test.ts#L197) counts stale walls, it does not check built geometry. | agent |
-| **13c** | **§9.2 sets an autosave budget of < 20 ms, non-blocking.** F1/F2's fix restructured exactly that path and was **never measured against it**. §9.2 had already documented the defect — *"Re-validates and re-serialises the entire project library every 4 s"* — with the budget attached; the B13 review rediscovered it from the code without citing it. | agent |
+| **13c** | `RESOLVED 2026-08-10` — **measured, and it passes.** One tick at 500 walls × 3 storeys (265 KiB) is **2.19 ms** against a 20 ms budget; 2.37 ms after B7.5 added `boundaryHint`. F1/F2 did no damage — nobody had checked. Harness [`autosave.bench.ts`](../src/persistence/autosave.bench.ts), figures in [`benchmarks.md`](testing/benchmarks.md#autosave--oq13c-and-b75s-prerequisite). The measurement also *changed* B7.5: hinting all three storeys would have cost ~33 ms, so only the active floor is hinted. *Original:* the path was restructured and never measured. | agent |
 | **13d** | `RESOLVED 2026-08-10` (the `patchWall` half) — `patchWall` now returns the ORIGINAL array when no wall matches, so a write racing a delete no longer records a phantom history step. Demonstrated red: reverting to the bare `map` failed all four patch actions with *"a new-but-identical array is an edit as far as the undo recorder is concerned"*. `forgetPixels` is unchanged and remains safe only because `blueprintChanged` compares fields — that pairing is load-bearing (SD7). *Original:* **§10 rule 10 near-misses.** `patchWall` allocates a new array unconditionally, so a patch against a non-existent id records a **phantom history step**. `forgetPixels` (SD7) allocates a new `Blueprint` on every snapshot — safe **only** because `blueprintChanged` compares fields rather than references. Both are the hazard rule 10 names: *"a `.map()` in the store that returns a structurally-identical new array — the undo recorder compares by reference."* | agent |
+
+### 14. B7.6's thresholds have no validation source yet `OPEN`
+
+Pass-2 re-attachment (bbox IoU ≥ 0.5, area within [0.5×, 2×], hint centroid
+inside the candidate) is **reasoned, not measured**. See the argument at the end
+of this session's report: synthetic edit sequences test the actual question
+(polygon-to-polygon similarity) and are buildable today; the real corpus tests
+the DETECTOR against drawing conventions, which re-attachment never sees.
+
+### 15. Unnamed spaces still have no identity `OPEN` · **B7.7**
+
+Label-identity gives *named*-room identity. An unnamed enclosed space has none,
+which blocks IFC `IfcSpace` for unnamed spaces and per-space BOQ. B7.7 proposes
+transient geometry-derived ids, generation-scoped, never persisted.
+
+**This defers rather than solves collaboration.** Merging two users' edits needs
+persistent ids for every space; B7 does not provide that and does not claim to.
+
+### 16. Two element kinds still carry no provenance `OPEN`
+
+`FloorData` (a storey) and `Plot`. Neither is in §6 v3's list of five, and a
+storey becomes a first-class `Level` in v4 with its own fields — so this is a
+v4 decision, not an omission. The fitness test names `FloorData` explicitly so
+adding it later is a decision rather than an accident of a regex.
+
+### 17. `parseDesign` now imports geometry, in one direction `OPEN` · **watch**
+
+`serializeDesign` calls `withBoundaryHints`, so `persistence/schema.ts` has a
+runtime edge to `rooms/resolve.ts`. That is the SERIALIZE direction and is safe.
+§3 protects the PARSE direction — `Number.isFinite` catching `1e999` before
+geometry — and that is untouched: the migration deliberately does not resolve
+rooms, and `parseBoundaryHint` validates every point through `parsePoint`.
+Worth watching that the two directions do not blur.
 
 ---
 
@@ -713,6 +786,19 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not time `detectRooms` / `resolveRooms` in the benchmark.** They are memoised;
   the algorithm arms must call the `*Uncached` entry points or the numbers are
   fiction.
+- **Do not default an element's provenance to `'manual'`** (SD11). Pass one of
+  `store/provenance.ts`'s constructors explicitly. `addWall`'s callers are
+  two-thirds CV.
+- **Do not give a CV element a `confidence` from `scoreSegments`.** That score is
+  total detected wall length in pixels, unbounded, and ADR 0002 measured a
+  HIGHER score meaning a WORSE reading. Absent means "not assessed", which is
+  the truth until B5b.
+- **Do not write `boundaryHint` outside `serializeDesign`** (SD12). From inside a
+  resolve it breaks B8's cache, the render loop and the undo recorder at once.
+- **Do not resolve rooms for every storey in the autosave path.** ~33 ms at 500
+  walls against a 20 ms budget. Only the active floor can be stale.
+- **Do not use `crypto.randomUUID()` as a parse-time id fallback.** Ids are
+  identity-bearing from v3; the same file must parse to the same ids every time.
 - **Do not re-merge the `loadDesign` / `replaceWalls` split** (SD1).
 - **Do not reopen `activeFloor`-in-snapshot** (SD2) without a user-facing complaint.
 - **Do not enable `noUncheckedIndexedAccess` as a standalone pass** (SD3).
