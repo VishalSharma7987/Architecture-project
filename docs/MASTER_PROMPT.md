@@ -238,12 +238,15 @@ type RoomLabel = {
 // Selection{kind:'room'} carries roomId, not anchor.
 
 type Provenance = {
-  source: 'manual' | 'cv' | 'ai' | 'import-dxf' | 'import-json' | 'copy'
-  confidence: number          // 1.0 for manual and deterministic paths
-  createdAt: string
-  sourceRef?: string
+  source: 'manual' | 'cv' | 'ai' | 'import-dxf' | 'import-json' | 'copy' | 'unknown'
+  confidence?: number         // 1.0 for manual and deterministic paths;
+                              // ABSENT = "not assessed", ≠ 0 = "assessed as worthless"
+  createdAt?: string          // from the document's savedAt when migrated, NEVER from the clock
+  sourceRef?: string          // meaning determined by `source` — see below
 }
 // On every element: Wall, Opening, RoomLabel, FurnitureItem, Stair. Satisfies L5.
+// `sourceRef`: element id for 'copy' · blueprint filename for 'cv' ·
+//              layer + handle for 'import-dxf' · request id for 'ai'.
 ```
 
 **Why room identity first:** without it, room-level quantities, per-room finishes, a finishes schedule, IFC `IfcSpace` export and multi-user editing are all unreachable. Today a room's name silently detaches when a wall moves past its anchor. §6 calls this the deepest change in the roadmap and it is.
@@ -461,6 +464,26 @@ Additional rules:
 **End:** update `STATE.md` — shipped, gate numbers, new decisions, new open questions, blockers — and commit it with the work.
 
 **Standing:** ADRs record *why*. `STATE.md` records *where we are and what is undecided*. This file records *what we are building and what the rules are*. All three rot; all three carry the commit they describe.
+
+---
+
+## 13. SPEC CORRECTIONS
+
+Amendments to this document made after it was written, each with the evidence that forced it. A correction here **overrides** the section it names.
+
+### C1 — §6 v3 `Provenance` · *approved 2026-08-10, applied in B7.3*
+
+Three changes, all applied to §6 above.
+
+1. **`'unknown'` added to `source`.** The v2→v3 migration cannot tell a hand-drawn wall from one `buildWallsFromBlueprint` detected or an AI edit produced — nothing on disk distinguishes them. Writing `'manual'` at confidence 1.0, the obvious default, would assert something unknowable. **L5 exists so the user can judge what to trust, so a false provenance is worse than none.**
+2. **`confidence` is now optional.** Absent means *"not assessed"*, which is a different claim from `0`, meaning *"assessed as worthless"*. A required field forces the migration to invent one of the two.
+3. **`createdAt` is now optional, and comes from the document's `savedAt`.** A `new Date()` in a migration claims the element was created at migration time — false — and makes the same bytes migrate to a *different* document on every run, breaking **L6** and making the round-trip test §6's own migration contract requires unwritable. Omitted when the file has no `savedAt`.
+
+`sourceRef` was declared in §6 with no meaning attached. It is now defined per-source, above.
+
+### C2 — the reachable room-consumer count · *recorded 2026-08-10 in `benchmarks.md`*
+
+§9.2's room budget was assessed against four concurrent consumers. There are **six**: `StatusBar` calls `totalFloorArea` outside the 2D/3D branch, so it is mounted in both, and `RoomSchedulePanel` resolves the active floor twice — directly, and again through `buildAreaStatement`. Pre-B8 the *ordinary* editing case was already over budget, not merely the maximum. Superseded in effect by B8's shared memoisation, which makes the count stop mattering.
 
 ---
 ---

@@ -61,7 +61,9 @@ describe('versioning and migration', () => {
   it('writes the current version', () => {
     const doc = serializeDesign({ name: 'x', walls: [], viewMode: '2d', savedAt: AT })
     expect(doc.version).toBe(DESIGN_VERSION)
-    expect(DESIGN_VERSION).toBe(2)
+    // Pinned so a bump cannot happen without someone reading `MIGRATIONS` and
+    // this file. v2 was Calibration; v3 is room identity + provenance.
+    expect(DESIGN_VERSION).toBe(3)
   })
 
   it('★ opens a v1 file and brings it forward', () => {
@@ -83,7 +85,7 @@ describe('versioning and migration', () => {
     const current = parseDesign(
       serializeDesign({ name: 'x', walls: [], viewMode: '2d', savedAt: AT }),
     )
-    expect(current.ok && current.originalVersion).toBe(2)
+    expect(current.ok && current.originalVersion).toBe(DESIGN_VERSION)
   })
 
   it('keeps every v1 setting through the migration', () => {

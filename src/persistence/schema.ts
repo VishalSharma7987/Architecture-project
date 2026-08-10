@@ -17,6 +17,8 @@ import {
   type FloorData,
   type Plot,
   type Point,
+  type Provenance,
+  type ProvenanceSource,
   type RoomLabel,
   type RoomType,
   type Stair,
@@ -38,8 +40,10 @@ import { isFurnitureType } from '../furniture/catalog'
  *
  * v1 → v2: `blueprint` added. A v1 file has no traced underlay recorded, so it
  *          migrates to `blueprint: null`.
+ * v2 → v3: room identity + provenance. Every element gains an optional
+ *          `Provenance`, and room labels gain stable ids where they had none.
  */
-export const DESIGN_VERSION = 2
+export const DESIGN_VERSION = 3
 
 /**
  * A traced blueprint as it is saved: everything except the pixels.
@@ -181,7 +185,12 @@ function parsePoint(value: unknown): Point | null {
   return x === null || z === null ? null : { x, z }
 }
 
-function parseOpening(value: unknown, ids: Set<string>): Opening | null {
+function parseOpening(
+  value: unknown,
+  /** Position within the document, for the id fallback: "<wall>-<n>". */
+  key: string,
+  ids: Set<string>,
+): Opening | null {
   if (!isRecord(value)) return null
 
   const type = value.type
@@ -191,23 +200,92 @@ function parseOpening(value: unknown, ids: Set<string>): Opening | null {
   const position = num(value.position)
   if (position === null) return null
 
-  return {
-    id: uniqueId(str(value.id), ids),
-    type,
-    position,
-    // Dimensions fall back to the type's defaults rather than failing the
-    // whole import; they are clamped against the wall on load anyway.
-    width: num(value.width) ?? defaults.width,
-    height: num(value.height) ?? defaults.height,
-    sill: num(value.sill) ?? defaults.sill,
-  }
+  return withProvenance<Opening>(
+    {
+      id: uniqueId(str(value.id), ids, `opening-${key}`),
+      type,
+      position,
+      // Dimensions fall back to the type's defaults rather than failing the
+      // whole import; they are clamped against the wall on load anyway.
+      width: num(value.width) ?? defaults.width,
+      height: num(value.height) ?? defaults.height,
+      sill: num(value.sill) ?? defaults.sill,
+    },
+    value,
+  )
 }
 
-/** Keeps ids unique across the document; React keys and selection depend on it. */
-function uniqueId(candidate: string | null, seen: Set<string>): string {
-  const id = candidate && !seen.has(candidate) ? candidate : crypto.randomUUID()
+/**
+ * Keeps ids unique across the document; React keys and selection depend on it.
+ *
+ * The fallback is DERIVED FROM POSITION, not random. It used to be
+ * `crypto.randomUUID()`, which meant an element with no id got a different one
+ * on every load — harmless while ids were decoration, corrupting the moment
+ * they became identity-bearing (v3), because the same file would then diff
+ * against itself and no future merge could line two copies up. Position is
+ * stable for the same bytes, which is exactly the property required.
+ */
+function uniqueId(
+  candidate: string | null,
+  seen: Set<string>,
+  fallback: string,
+): string {
+  let id = candidate && !seen.has(candidate) ? candidate : fallback
+  // The fallback can itself collide with an explicit id elsewhere in the file.
+  for (let n = 2; seen.has(id); n++) id = `${fallback}-${n}`
   seen.add(id)
   return id
+}
+
+const PROVENANCE_SOURCES: ProvenanceSource[] = [
+  'manual',
+  'cv',
+  'ai',
+  'import-dxf',
+  'import-json',
+  'copy',
+  'unknown',
+]
+
+const isProvenanceSource = (value: unknown): value is ProvenanceSource =>
+  typeof value === 'string' &&
+  (PROVENANCE_SOURCES as string[]).includes(value)
+
+/**
+ * Provenance off an untrusted document, or undefined.
+ *
+ * An unrecognised `source` degrades to `'unknown'` rather than dropping the
+ * record: the fact that SOMETHING claimed an origin is itself worth keeping,
+ * and a future version's source name must not silently become "hand-drawn"
+ * when opened in an older build. A missing or malformed `source` drops it
+ * entirely — absent means "not recorded", which is honest.
+ *
+ * `confidence` is only kept when it is a real number in [0, 1]. Out-of-range
+ * values are dropped rather than clamped: a clamp would turn a bug into a
+ * plausible-looking figure, and this one is shown to the user (L5).
+ */
+function parseProvenance(value: unknown): Provenance | undefined {
+  if (!isRecord(value)) return undefined
+  if (value.source === undefined) return undefined
+
+  const provenance: Provenance = {
+    source: isProvenanceSource(value.source) ? value.source : 'unknown',
+  }
+  const confidence = num(value.confidence)
+  if (confidence !== null && confidence >= 0 && confidence <= 1) {
+    provenance.confidence = confidence
+  }
+  const createdAt = str(value.createdAt)
+  if (createdAt) provenance.createdAt = createdAt
+  const sourceRef = str(value.sourceRef)
+  if (sourceRef) provenance.sourceRef = sourceRef
+  return provenance
+}
+
+/** Attaches provenance only when there is some — an absent field stays absent. */
+function withProvenance<T extends object>(element: T, raw: unknown): T {
+  const provenance = parseProvenance(isRecord(raw) ? raw.provenance : null)
+  return provenance ? { ...element, provenance } : element
 }
 
 type WallParse =
@@ -241,8 +319,8 @@ function parseWall(
   }
 
   const openings: Opening[] = []
-  for (const raw of rawOpenings ?? []) {
-    const opening = parseOpening(raw, openingIds)
+  for (const [at, raw] of (rawOpenings ?? []).entries()) {
+    const opening = parseOpening(raw, `${index}-${at}`, openingIds)
     // Silently dropping a bad opening is better than failing an otherwise
     // good file; the caller reports the count as a warning.
     if (opening) openings.push(opening)
@@ -250,18 +328,23 @@ function parseWall(
 
   return {
     ok: true,
-    wall: {
-      id: uniqueId(str(value.id), wallIds),
-      start,
-      end,
-      height: num(value.height) ?? WALL_DEFAULTS.height,
-      thickness: num(value.thickness) ?? WALL_DEFAULTS.thickness,
-      openings,
-      // An unknown material id (older file, hand-edited, renamed palette entry)
-      // falls back rather than failing the import — a wall in the wrong colour
-      // is recoverable; a rejected file is not.
-      material: isMaterialId(value.material) ? value.material : DEFAULT_WALL_MATERIAL,
-    },
+    wall: withProvenance<Wall>(
+      {
+        id: uniqueId(str(value.id), wallIds, `wall-${index}`),
+        start,
+        end,
+        height: num(value.height) ?? WALL_DEFAULTS.height,
+        thickness: num(value.thickness) ?? WALL_DEFAULTS.thickness,
+        openings,
+        // An unknown material id (older file, hand-edited, renamed palette
+        // entry) falls back rather than failing the import — a wall in the
+        // wrong colour is recoverable; a rejected file is not.
+        material: isMaterialId(value.material)
+          ? value.material
+          : DEFAULT_WALL_MATERIAL,
+      },
+      value,
+    ),
   }
 }
 
@@ -284,18 +367,28 @@ const ROOM_TYPES: RoomType[] = [
 const isRoomType = (value: unknown): value is RoomType =>
   typeof value === 'string' && (ROOM_TYPES as string[]).includes(value)
 
-function parseRoomLabel(value: unknown, ids: Set<string>): RoomLabel | null {
+function parseRoomLabel(
+  value: unknown,
+  index: number,
+  ids: Set<string>,
+): RoomLabel | null {
   if (!isRecord(value)) return null
   if (!isRoomType(value.type)) return null
 
   const anchor = parsePoint(value.anchor)
   if (!anchor) return null
 
-  const label: RoomLabel = {
-    id: uniqueId(str(value.id), ids),
-    type: value.type,
-    anchor,
-  }
+  const label: RoomLabel = withProvenance<RoomLabel>(
+    {
+      // Position-derived when the file has no id. From v3 this id IS the
+      // room's identity, so a random fallback would make the same file
+      // disagree with itself between loads.
+      id: uniqueId(str(value.id), ids, `room-${index}`),
+      type: value.type,
+      anchor,
+    },
+    value,
+  )
   // The user's own label, when the saved document carries one.
   if (typeof value.name === 'string' && value.name.trim()) {
     label.name = value.name
@@ -397,33 +490,47 @@ function parseBlueprint(value: unknown): PersistedBlueprint | null {
   }
 }
 
-function parseStair(value: unknown, ids: Set<string>): Stair | null {
+function parseStair(
+  value: unknown,
+  index: number,
+  ids: Set<string>,
+): Stair | null {
   if (!isRecord(value)) return null
   const position = parsePoint(value.position)
   if (!position) return null
 
-  return {
-    id: uniqueId(str(value.id), ids),
-    position,
-    rotation: num(value.rotation) ?? 0,
-    width: num(value.width) ?? STAIR_DEFAULTS.width,
-    run: num(value.run) ?? STAIR_DEFAULTS.run,
-  }
+  return withProvenance<Stair>(
+    {
+      id: uniqueId(str(value.id), ids, `stair-${index}`),
+      position,
+      rotation: num(value.rotation) ?? 0,
+      width: num(value.width) ?? STAIR_DEFAULTS.width,
+      run: num(value.run) ?? STAIR_DEFAULTS.run,
+    },
+    value,
+  )
 }
 
-function parseFurniture(value: unknown, ids: Set<string>): FurnitureItem | null {
+function parseFurniture(
+  value: unknown,
+  index: number,
+  ids: Set<string>,
+): FurnitureItem | null {
   if (!isRecord(value)) return null
   if (!isFurnitureType(value.type)) return null
 
   const position = parsePoint(value.position)
   if (!position) return null
 
-  const item: FurnitureItem = {
-    id: uniqueId(str(value.id), ids),
-    type: value.type,
-    position,
-    rotation: num(value.rotation) ?? 0,
-  }
+  const item: FurnitureItem = withProvenance<FurnitureItem>(
+    {
+      id: uniqueId(str(value.id), ids, `furniture-${index}`),
+      type: value.type,
+      position,
+      rotation: num(value.rotation) ?? 0,
+    },
+    value,
+  )
   // Footprint overrides are optional — kept only when the saved document sets a
   // positive value, so an untouched piece round-trips with no size stored.
   const width = num(value.width)
@@ -455,6 +562,73 @@ const MIGRATIONS: Record<number, (doc: Record<string, unknown>) => Record<string
   // written by a build that never persisted one, so there is nothing to
   // recover and `null` is the honest value — not a fabricated placement.
   1: (doc) => ({ ...doc, blueprint: null, version: 2 }),
+
+  // v2 → v3: room identity + provenance.
+  2: (doc) => {
+    // From the FILE, never from the clock. `new Date()` here would migrate the
+    // same bytes to a different document on each run — breaking L6, and making
+    // the round-trip test below unwritable. Absent when the file has no
+    // `savedAt`: an omitted date is honest, an invented one is not.
+    const createdAt = str(doc.savedAt) ?? undefined
+
+    // `'unknown'`, emphatically not `'manual'`. A v2 file can hold walls that
+    // `buildWallsFromBlueprint` detected or that an AI edit produced, and
+    // nothing on disk distinguishes them. L5 exists so the user can judge what
+    // to trust; a confident lie is worse than an admission of ignorance. No
+    // `confidence` either — absent means "not assessed", which is the truth.
+    const stamp = <T>(element: T): T =>
+      isRecord(element) && element.provenance === undefined
+        ? { ...element, provenance: { source: 'unknown', ...(createdAt && { createdAt }) } }
+        : element
+
+    const stampAll = (raw: unknown): unknown =>
+      Array.isArray(raw) ? raw.map(stamp) : raw
+
+    // Walls carry openings, which are elements in their own right.
+    const stampWalls = (raw: unknown): unknown =>
+      Array.isArray(raw)
+        ? raw.map((wall) =>
+            isRecord(wall)
+              ? stamp({ ...wall, openings: stampAll(wall.openings) })
+              : wall,
+          )
+        : raw
+
+    // Room ids become identity in v3. A label with none used to be handed a
+    // fresh `crypto.randomUUID()` on every load, so the same file disagreed
+    // with itself between sessions. Index-derived is stable for the same bytes.
+    const stampRooms = (raw: unknown): unknown =>
+      Array.isArray(raw)
+        ? raw.map((label, i) =>
+            isRecord(label)
+              ? stamp({ ...label, id: str(label.id) ?? `room-${i}` })
+              : label,
+          )
+        : raw
+
+    const floors = Array.isArray(doc.floors)
+      ? doc.floors.map((floor) =>
+          isRecord(floor)
+            ? {
+                ...floor,
+                walls: stampWalls(floor.walls),
+                furniture: stampAll(floor.furniture),
+                roomLabels: stampRooms(floor.roomLabels),
+                stairs: stampAll(floor.stairs),
+              }
+            : floor,
+        )
+      : doc.floors
+
+    return {
+      ...doc,
+      walls: stampWalls(doc.walls),
+      furniture: stampAll(doc.furniture),
+      rooms: stampRooms(doc.rooms),
+      floors,
+      version: 3,
+    }
+  },
 }
 
 /**
@@ -546,8 +720,8 @@ export function parseDesign(value: unknown): ParseResult {
     if (!Array.isArray(value.furniture)) {
       return { ok: false, error: 'Invalid "furniture" — expected an array.' }
     }
-    for (const raw of value.furniture) {
-      const item = parseFurniture(raw, furnitureIds)
+    for (const [i, raw] of value.furniture.entries()) {
+      const item = parseFurniture(raw, i, furnitureIds)
       if (item) furniture.push(item)
     }
     const dropped = value.furniture.length - furniture.length
@@ -562,8 +736,8 @@ export function parseDesign(value: unknown): ParseResult {
     if (!Array.isArray(value.rooms)) {
       return { ok: false, error: 'Invalid "rooms" — expected an array.' }
     }
-    for (const raw of value.rooms) {
-      const label = parseRoomLabel(raw, roomIds)
+    for (const [i, raw] of value.rooms.entries()) {
+      const label = parseRoomLabel(raw, i, roomIds)
       if (label) rooms.push(label)
     }
     const dropped = value.rooms.length - rooms.length
@@ -591,8 +765,8 @@ export function parseDesign(value: unknown): ParseResult {
       const floorFurniture: FurnitureItem[] = []
       const fFurnitureIds = new Set<string>()
       if (Array.isArray(raw.furniture)) {
-        for (const rawItem of raw.furniture) {
-          const item = parseFurniture(rawItem, fFurnitureIds)
+        for (const [i, rawItem] of raw.furniture.entries()) {
+          const item = parseFurniture(rawItem, i, fFurnitureIds)
           if (item) floorFurniture.push(item)
         }
       }
@@ -600,8 +774,8 @@ export function parseDesign(value: unknown): ParseResult {
       const floorRooms: RoomLabel[] = []
       const fRoomIds = new Set<string>()
       if (Array.isArray(raw.roomLabels)) {
-        for (const rawLabel of raw.roomLabels) {
-          const label = parseRoomLabel(rawLabel, fRoomIds)
+        for (const [i, rawLabel] of raw.roomLabels.entries()) {
+          const label = parseRoomLabel(rawLabel, i, fRoomIds)
           if (label) floorRooms.push(label)
         }
       }
@@ -609,14 +783,20 @@ export function parseDesign(value: unknown): ParseResult {
       const floorStairs: Stair[] = []
       const fStairIds = new Set<string>()
       if (Array.isArray(raw.stairs)) {
-        for (const rawStair of raw.stairs) {
-          const stair = parseStair(rawStair, fStairIds)
+        for (const [i, rawStair] of raw.stairs.entries()) {
+          const stair = parseStair(rawStair, i, fStairIds)
           if (stair) floorStairs.push(stair)
         }
       }
 
       floors.push({
-        id: str(raw.id) ?? crypto.randomUUID(),
+        // Position-derived, for the same reason as every other id here: a
+        // random fallback made the same file parse to a different document on
+        // every load. Storeys are indexed by `activeFloor` today and become
+        // first-class `Level`s in v4, so this one is going to matter more, not
+        // less. Found by the v3 round-trip test, which was comparing two loads
+        // of one fixture and saw only the floor id differ.
+        id: str(raw.id) ?? `floor-${index}`,
         name: str(raw.name) ?? FLOOR_NAMES[index] ?? `Floor ${index}`,
         walls: floorWalls,
         furniture: floorFurniture,

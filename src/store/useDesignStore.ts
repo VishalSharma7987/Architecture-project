@@ -16,11 +16,54 @@ import type { FurnitureType } from '../furniture/catalog'
  */
 export type Point = { x: number; z: number }
 
+/**
+ * Where an element came from. Satisfies L5 — provenance on every element.
+ *
+ * `'unknown'` is not in §6's original list and was added by amendment: the
+ * v2→v3 migration cannot tell a hand-drawn wall from one `buildWallsFromBlueprint`
+ * detected or an AI edit produced, and writing `'manual'` would assert
+ * something unknowable. L5 exists so the user can judge what to trust, and a
+ * false provenance is worse than none.
+ */
+export type ProvenanceSource =
+  | 'manual'
+  | 'cv'
+  | 'ai'
+  | 'import-dxf'
+  | 'import-json'
+  | 'copy'
+  | 'unknown'
+
+export type Provenance = {
+  source: ProvenanceSource
+  /**
+   * How much the source trusted itself, 0–1. OPTIONAL by amendment to §6:
+   * absent means "not assessed", which is a different claim from `0`, meaning
+   * "assessed as worthless". Deterministic paths write 1.0; the detector writes
+   * its score; the migration writes nothing.
+   */
+  confidence?: number
+  /**
+   * When the element came into being. From the document's `savedAt` for
+   * migrated elements, never from the clock — a clock read would migrate the
+   * same file to a different document on each run, breaking L6 and making the
+   * round-trip test unwritable. Absent when even that is unknown.
+   */
+  createdAt?: string
+  /**
+   * A stable reference to the origin, whose meaning is determined by `source`:
+   * the original element id for `'copy'`, the blueprint filename for `'cv'`,
+   * layer + handle for `'import-dxf'`, the request id for `'ai'`.
+   */
+  sourceRef?: string
+}
+
 export type OpeningType = 'door' | 'window'
 
 export type Opening = {
   id: string
   type: OpeningType
+  provenance?: Provenance
   /** Distance in metres from the wall's start to the opening's centre. */
   position: number
   /** Metres. */
@@ -33,6 +76,7 @@ export type Opening = {
 
 export type Wall = {
   id: string
+  provenance?: Provenance
   start: Point
   end: Point
   /** Metres. */
@@ -65,16 +109,6 @@ export type RoomType =
   | 'staircase'
 
 /**
- * A name the user has given to an enclosed space.
- *
- * Rooms themselves are derived from the walls every time they change, so a name
- * cannot be stored "on" a room. It is pinned to `anchor` — a point inside the
- * space when it was named — and re-matched afterwards by testing which detected
- * loop contains that point. Move a wall and the name follows its room; move a
- * wall straight past the anchor and the name detaches, which is the honest
- * outcome since the space the user named no longer exists there.
- */
-/**
  * The identity of a named space, and the only durable handle on one.
  *
  * It lives on the LABEL, not on the room: the room is re-derived from the walls
@@ -85,8 +119,20 @@ export type RoomType =
  */
 export type RoomId = string
 
+/**
+ * A name the user has given to an enclosed space.
+ *
+ * Rooms themselves are derived from the walls every time they change, so a name
+ * cannot be stored "on" a room. It is pinned to `anchor` — a point inside the
+ * space when it was named — and re-matched afterwards by testing which detected
+ * loop contains that point. Move a wall and the name follows its room; move a
+ * wall straight past the anchor and the name DETACHES rather than following the
+ * wrong space: it stays in the document, unresolved, and re-attaches when the
+ * walls close around it again. See `detachedLabels` in `rooms/resolve.ts`.
+ */
 export type RoomLabel = {
   id: RoomId
+  provenance?: Provenance
   type: RoomType
   anchor: Point
   /**
@@ -139,6 +185,7 @@ export const PLOT_DEFAULTS = {
  */
 export type Stair = {
   id: string
+  provenance?: Provenance
   /** Centre of the flight's footprint. */
   position: Point
   /** Rotation about the vertical axis, in radians. Zero ascends toward -z. */
@@ -158,6 +205,7 @@ export const STAIR_DEFAULTS = {
 
 export type FurnitureItem = {
   id: string
+  provenance?: Provenance
   type: FurnitureType
   /** Centre of the piece on the floor plane. */
   position: Point
