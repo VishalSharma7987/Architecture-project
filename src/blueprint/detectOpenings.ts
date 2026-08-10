@@ -17,6 +17,7 @@ import {
   isTimeout,
 } from '../ai/endpoint'
 import { proposeCalibration } from './calibration'
+import { provenance } from '../store/provenance'
 
 /**
  * Largest edge, in pixels, of the image sent for analysis.
@@ -235,7 +236,15 @@ export function placeOpenings(openings: RawOpening[]): PlacedOpenings {
     const hit = pickWall(store.walls, world, SNAP_TOLERANCE_M)
     if (!hit) continue
 
-    const id = store.addOpening(hit.wall.id, opening.type, hit.projection.t)
+    const id = store.addOpening(
+      hit.wall.id,
+      opening.type,
+      hit.projection.t,
+      // 'ai', not 'cv': this module reads the sheet with a VISION MODEL, not
+      // with `detectWalls`'s deterministic binarisation. Its own comments call
+      // the coordinates approximate.
+      provenance.ai(blueprint.fileName),
+    )
     if (!id) continue
 
     const width = sensibleWidth(opening.width * widthPx * mpp, opening.type, hit.wall)
@@ -343,7 +352,11 @@ export function placeRooms(rooms: RawLabel[]): PlacedRooms {
   for (const room of rooms) {
     const type = toRoomType(room.name)
     if (!type) continue
-    store.nameRoom(toWorld(blueprint, room.x, room.y), type)
+    store.nameRoom(
+      toWorld(blueprint, room.x, room.y),
+      type,
+      provenance.ai(blueprint.fileName),
+    )
     named += 1
   }
   return { named }
@@ -371,7 +384,7 @@ export function placeFurniture(items: RawLabel[]): PlacedFurniture {
     if (!type) continue
 
     const point = toWorld(blueprint, item.x, item.y)
-    const id = store.addFurniture(type, point)
+    const id = store.addFurniture(type, point, provenance.ai(blueprint.fileName))
     placed += 1
 
     const room = roomAtPoint(rooms, point)
@@ -407,7 +420,10 @@ function placeFixtures(
       ...room.extraLabels.filter((label) => roomTypes.includes(label.type)),
     ]
     for (const label of matches) {
-      const id = store.addFurniture(furniture, label.anchor)
+      // 'ai' with no sourceRef: the piece itself is a local default seated by
+      // `fitToRoom`, but it exists ONLY because a vision model named this room,
+      // and the user did not place it. 'manual' would be the lie.
+      const id = store.addFurniture(furniture, label.anchor, provenance.ai())
       store.updateFurniture(
         id,
         fitToRoom(furniture, label.anchor, room, store.walls),

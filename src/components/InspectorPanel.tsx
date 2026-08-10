@@ -13,6 +13,7 @@ import type {
   Unit,
 } from '../store/useDesignStore'
 import { furnitureSize, getFurniture } from '../furniture/catalog'
+import { provenance } from '../store/provenance'
 import { ROOM_TYPES, getRoomType, roomDisplayName } from '../rooms/catalog'
 import { resolveRooms, roomAtPoint, roomSize } from '../rooms/resolve'
 import { wallAxis } from '../scene/wallGeometry'
@@ -502,7 +503,12 @@ function RoomInspector({ roomId, anchor }: { roomId?: RoomId; anchor?: Point }) 
     // Naming a bare spot promotes the selection onto the label it just made.
     // Without this the inspector would still be pointing at a point, and the
     // next category click would mint a SECOND label in the same space.
-    if (anchor) select({ kind: 'room', roomId: nameRoom(anchor, type) })
+    if (anchor) {
+      select({
+        kind: 'room',
+        roomId: nameRoom(anchor, type, provenance.manual()),
+      })
+    }
   }
 
   const clearName = label ? () => removeRoomLabel(label.id) : undefined

@@ -6,6 +6,7 @@ import { resetRoomCaches } from '../plan/rooms'
 import { rectangleWalls, resetStore } from '../test/fixtures'
 import { useDesignStore, type RoomLabel, type Wall } from '../store/useDesignStore'
 import { detachedLabels, resolveRooms } from './resolve'
+import { provenance } from '../store/provenance'
 
 /**
  * B7.2 — a name whose room disappeared is KEPT.
@@ -114,7 +115,7 @@ describe('★ B7.2 — the name survives its room', () => {
 
     // Put the missing wall back. Nothing re-attaches it explicitly — pass-1
     // containment simply finds the anchor inside a loop again.
-    useDesignStore.getState().addWall(walls[0].start, walls[0].end)
+    useDesignStore.getState().addWall(walls[0].start, walls[0].end, { provenance: provenance.manual() })
 
     const rooms = currentRooms()
     expect(detachedLabels(rooms, labels())).toHaveLength(0)

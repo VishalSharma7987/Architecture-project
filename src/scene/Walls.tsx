@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import type { ThreeEvent } from '@react-three/fiber'
 import { BoxGeometry, MeshStandardMaterial } from 'three'
 import { useDesignStore, type Wall } from '../store/useDesignStore'
+import { provenance } from '../store/provenance'
 import {
   DEFAULT_WALL_MATERIAL,
   getMaterial,
@@ -225,7 +226,7 @@ function WallMesh({
         x: event.point.x,
         z: event.point.z,
       })
-      const openingId = addOpening(wall.id, tool, t)
+      const openingId = addOpening(wall.id, tool, t, provenance.manual())
       if (openingId) {
         select({ kind: 'opening', wallId: wall.id, openingId })
         // Back to Select, so the next click edits this opening rather than

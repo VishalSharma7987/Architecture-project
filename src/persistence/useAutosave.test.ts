@@ -11,6 +11,7 @@ import {
   readAutosave,
 } from './storage'
 import { AUTOSAVE_INTERVAL_MS, __resetRestoredGuard, useAutosave } from './useAutosave'
+import { provenance } from '../store/provenance'
 
 /**
  * Autosave regression suite.
@@ -57,9 +58,9 @@ describe('the dirty check covers everything that is persisted', () => {
    * trigger a save is the field under test.
    */
   const NON_WALL_EDITS: [name: string, apply: () => void][] = [
-    ['naming a room', () => useDesignStore.getState().nameRoom({ x: 2, z: 1.5 }, 'living')],
-    ['placing furniture', () => useDesignStore.getState().addFurniture('sofa', { x: 2, z: 1 })],
-    ['adding a stair', () => useDesignStore.getState().addStair({ x: 1, z: 1 })],
+    ['naming a room', () => useDesignStore.getState().nameRoom({ x: 2, z: 1.5 }, 'living', provenance.manual())],
+    ['placing furniture', () => useDesignStore.getState().addFurniture('sofa', { x: 2, z: 1 }, provenance.manual())],
+    ['adding a stair', () => useDesignStore.getState().addStair({ x: 1, z: 1 }, provenance.manual())],
     [
       'setting the plot',
       () =>
@@ -129,7 +130,7 @@ describe('the dirty check covers everything that is persisted', () => {
     mountAutosave()
     tick()
 
-    useDesignStore.getState().nameRoom({ x: 2, z: 1.5 }, 'kitchen')
+    useDesignStore.getState().nameRoom({ x: 2, z: 1.5 }, 'kitchen', provenance.manual())
     tick()
 
     expect(readAutosave()!.doc.rooms[0]?.type).toBe('kitchen')

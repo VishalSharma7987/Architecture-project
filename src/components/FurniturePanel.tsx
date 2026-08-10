@@ -5,6 +5,7 @@ import {
   placeToiletFixtures,
 } from "../blueprint/detectOpenings";
 import { useDesignStore, type Point } from "../store/useDesignStore";
+import { provenance } from "../store/provenance";
 import { MaterialPicker } from "./MaterialPicker";
 
 /** MIME type used for the drag payload. Read by both viewport drop handlers. */
@@ -42,13 +43,16 @@ export function FurniturePanel() {
     const { addFurniture, select } = useDesignStore.getState();
     select({
       kind: "furniture",
-      furnitureId: addFurniture(type, centreOfPlan()),
+      furnitureId: addFurniture(type, centreOfPlan(), provenance.manual()),
     });
   };
 
   const addStaircase = () => {
     const { addStair, select } = useDesignStore.getState();
-    select({ kind: "stair", stairId: addStair(centreOfPlan()) });
+    select({
+      kind: "stair",
+      stairId: addStair(centreOfPlan(), provenance.manual()),
+    });
     setNote("Added a staircase in the middle. Drag it into place.");
   };
 

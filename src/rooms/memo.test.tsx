@@ -16,6 +16,7 @@ import { allFloors, useDesignStore } from '../store/useDesignStore'
 import type { RoomLabel } from '../store/useDesignStore'
 import { rectangleWalls, resetStore } from '../test/fixtures'
 import { resolveRooms, resolveRoomsUncached } from './resolve'
+import { provenance } from '../store/provenance'
 
 /**
  * B8 — the shared room-resolution memoisation point.
@@ -43,8 +44,8 @@ function twoRoomPlan() {
     },
   ]
   useDesignStore.setState({ walls })
-  useDesignStore.getState().nameRoom({ x: 2, z: 2 }, 'living')
-  useDesignStore.getState().nameRoom({ x: 6, z: 2 }, 'kitchen')
+  useDesignStore.getState().nameRoom({ x: 2, z: 2 }, 'living', provenance.manual())
+  useDesignStore.getState().nameRoom({ x: 6, z: 2 }, 'kitchen', provenance.manual())
   return useDesignStore.getState()
 }
 
@@ -181,7 +182,7 @@ describe('the cache is keyed on identity, and invalidates with it', () => {
     resolveRooms(before.walls, before.roomLabels)
     expect(roomCacheStats.detectRuns).toBe(1)
 
-    useDesignStore.getState().addWall({ x: 0, z: 0 }, { x: 0, z: -3 })
+    useDesignStore.getState().addWall({ x: 0, z: 0 }, { x: 0, z: -3 }, { provenance: provenance.manual() })
 
     const after = useDesignStore.getState()
     expect(after.walls).not.toBe(before.walls)
@@ -201,7 +202,7 @@ describe('the cache is keyed on identity, and invalidates with it', () => {
     expect(roomCacheStats.detectRuns).toBe(1)
     expect(roomCacheStats.resolveRuns).toBe(1)
 
-    useDesignStore.getState().nameRoom({ x: 6, z: 2 }, 'dining')
+    useDesignStore.getState().nameRoom({ x: 6, z: 2 }, 'dining', provenance.manual())
 
     const after = useDesignStore.getState()
     expect(after.walls).toBe(before.walls)

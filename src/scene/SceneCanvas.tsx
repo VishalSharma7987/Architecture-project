@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { NoToneMapping, PerspectiveCamera, Plane, Raycaster, Vector2, Vector3 } from 'three'
 import { floorElevation, useDesignStore } from '../store/useDesignStore'
+import { provenance } from '../store/provenance'
 import { FURNITURE_DRAG_TYPE } from '../components/FurniturePanel'
 import { isFurnitureType } from '../furniture/catalog'
 import { Building } from './Building'
@@ -95,7 +96,11 @@ export function SceneCanvas() {
     const { addFurniture, select } = useDesignStore.getState()
     select({
       kind: 'furniture',
-      furnitureId: addFurniture(type, { x: hit.x, z: hit.z }),
+      furnitureId: addFurniture(
+        type,
+        { x: hit.x, z: hit.z },
+        provenance.manual(),
+      ),
     })
   }
 

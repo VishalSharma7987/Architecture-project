@@ -1,4 +1,5 @@
 import { useDesignStore } from '../store/useDesignStore'
+import { provenance } from '../store/provenance'
 import { detectWallSegments, segmentsToWalls } from './detectWalls'
 import { rasterise, type RasterResult } from './raster'
 
@@ -79,7 +80,12 @@ export async function buildWallsFromBlueprint(): Promise<BuildResult> {
 
   let count = 0
   for (const wall of walls) {
-    if (store.addWall(wall.start, wall.end, { thickness: wall.thickness })) {
+    if (
+      store.addWall(wall.start, wall.end, {
+        thickness: wall.thickness,
+        provenance: provenance.cv(blueprint.fileName),
+      })
+    ) {
       count += 1
     }
   }

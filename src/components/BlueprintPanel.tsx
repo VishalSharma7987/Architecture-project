@@ -10,6 +10,7 @@ import {
 } from '../blueprint/calibration'
 import { detectWallSegments, segmentsToWalls } from '../blueprint/detectWalls'
 import { detectAndPlaceOpenings } from '../blueprint/detectOpenings'
+import { provenance } from '../store/provenance'
 import { loadBlueprintFromFile } from '../blueprint/load'
 import {
   rasterise,
@@ -246,7 +247,12 @@ export function BlueprintPanel() {
     const { addWall } = useDesignStore.getState()
     let added = 0
     for (const wall of detected) {
-      if (addWall(wall.start, wall.end, { thickness: wall.thickness })) {
+      if (
+        addWall(wall.start, wall.end, {
+          thickness: wall.thickness,
+          provenance: provenance.cv(blueprint?.fileName),
+        })
+      ) {
         added += 1
       }
     }

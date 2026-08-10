@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useDesignStore } from '../store/useDesignStore'
+import { provenance } from '../store/provenance'
 import { DESIGN_VERSION, parseDesign } from '../persistence/schema'
 import {
   AI_TIMEOUT_MS,
@@ -101,7 +102,22 @@ export function useDesignAI() {
       // history epoch, so none of it could be undone. The model is only ever
       // shown walls and can only return walls; everything else is the user's
       // and is none of its business.
-      useDesignStore.getState().replaceWalls(parsed.doc.walls, parsed.doc.name)
+      // Stamped 'ai' here rather than in `replaceWalls`, which is also the
+      // undo/redo restore path — re-stamping a wall on every undo would rewrite
+      // its origin to the moment it was undone.
+      useDesignStore
+        .getState()
+        .replaceWalls(
+          parsed.doc.walls.map((wall) => ({
+            ...wall,
+            provenance: provenance.ai(),
+            openings: wall.openings.map((opening) => ({
+              ...opening,
+              provenance: provenance.ai(),
+            })),
+          })),
+          parsed.doc.name,
+        )
 
       setStatus({
         kind: 'done',

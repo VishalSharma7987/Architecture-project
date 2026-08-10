@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDesignStore, type Point, type Tool } from '../store/useDesignStore'
+import { provenance } from '../store/provenance'
 import {
   clearCalibrationPicks,
   getCalibrationPicks,
@@ -464,7 +465,11 @@ export function FloorPlanEditor() {
 
       // A zero-length segment is rejected by the store, which is what makes the
       // second click of a double-click harmless.
-      if (anchor) useDesignStore.getState().addWall(anchor, point)
+      if (anchor) {
+        useDesignStore
+          .getState()
+          .addWall(anchor, point, { provenance: provenance.manual() })
+      }
 
       anchorRef.current = point
       cursorRef.current = point
@@ -478,7 +483,7 @@ export function FloorPlanEditor() {
     // half a step off the walls it is boxed in by.
     if (tool === 'stair') {
       const { addStair, select } = useDesignStore.getState()
-      const id = addStair(snappedAt(e.clientX, e.clientY))
+      const id = addStair(snappedAt(e.clientX, e.clientY), provenance.manual())
       select({ kind: 'stair', stairId: id })
       return
     }
@@ -609,7 +614,12 @@ export function FloorPlanEditor() {
       return
     }
 
-    const openingId = addOpening(target.wall.id, tool, target.projection.t)
+    const openingId = addOpening(
+      target.wall.id,
+      tool,
+      target.projection.t,
+      provenance.manual(),
+    )
     if (openingId) {
       select({ kind: 'opening', wallId: target.wall.id, openingId })
       // Drop back to Select so the door just placed can be nudged along the
@@ -683,7 +693,11 @@ export function FloorPlanEditor() {
     if (!isFurnitureType(type)) return
 
     const { addFurniture, select } = useDesignStore.getState()
-    const id = addFurniture(type, worldAt(e.clientX, e.clientY))
+    const id = addFurniture(
+      type,
+      worldAt(e.clientX, e.clientY),
+      provenance.manual(),
+    )
     select({ kind: 'furniture', furnitureId: id })
   }
 

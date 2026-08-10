@@ -3,6 +3,7 @@ import { useDesignStore, type Blueprint } from './useDesignStore'
 import { createHistory, type HistoryStore } from './history'
 import { uncalibrated } from '../blueprint/calibration'
 import { rectangleWalls, resetStore } from '../test/fixtures'
+import { provenance } from './provenance'
 
 /**
  * The undo engine, and the blueprint's place in it.
@@ -323,7 +324,7 @@ describe('undo covers the rest of the design as before', () => {
     settle()
     const before = useDesignStore.getState().walls
 
-    useDesignStore.getState().addWall({ x: 0, z: 0 }, { x: 1, z: 0 })
+    useDesignStore.getState().addWall({ x: 0, z: 0 }, { x: 1, z: 0 }, { provenance: provenance.manual() })
     settle()
 
     useDesignStore.getState().undo()
@@ -333,7 +334,7 @@ describe('undo covers the rest of the design as before', () => {
   it('redoes what it undid', () => {
     useDesignStore.setState({ walls: rectangleWalls() })
     settle()
-    useDesignStore.getState().addWall({ x: 0, z: 0 }, { x: 1, z: 0 })
+    useDesignStore.getState().addWall({ x: 0, z: 0 }, { x: 1, z: 0 }, { provenance: provenance.manual() })
     settle()
     const after = useDesignStore.getState().walls
 

@@ -6,6 +6,7 @@ import {
   type MaterialId,
 } from '../materials/palette'
 import type { FurnitureType } from '../furniture/catalog'
+import { provenance } from './provenance'
 
 /**
  * A point on the floor plane, in metres.
@@ -39,8 +40,9 @@ export type Provenance = {
   /**
    * How much the source trusted itself, 0–1. OPTIONAL by amendment to §6:
    * absent means "not assessed", which is a different claim from `0`, meaning
-   * "assessed as worthless". Deterministic paths write 1.0; the detector writes
-   * its score; the migration writes nothing.
+   * "assessed as worthless". Deterministic paths write 1.0. The migration
+   * writes nothing, and so does the wall detector — see `provenance.cv` for
+   * why its score cannot honestly be rescaled into one.
    */
   confidence?: number
   /**
@@ -605,7 +607,7 @@ type DesignState = {
    */
   copyToNextFloor: () => boolean
 
-  addStair: (position: Point) => string
+  addStair: (position: Point, provenance: Provenance) => string
   updateStair: (
     id: string,
     patch: Partial<Pick<Stair, 'position' | 'rotation' | 'width' | 'run'>>,
@@ -620,7 +622,7 @@ type DesignState = {
   setBlueprintCalibrating: (on: boolean) => void
 
   /** Names the space containing `anchor`. Returns the new label's id. */
-  nameRoom: (anchor: Point, type: RoomType) => string
+  nameRoom: (anchor: Point, type: RoomType, provenance: Provenance) => string
   updateRoomLabel: (
     id: string,
     patch: Partial<Pick<RoomLabel, 'type' | 'name'>>,
@@ -654,7 +656,11 @@ type DesignState = {
     >,
   ) => void
 
-  addFurniture: (type: FurnitureType, position: Point) => string
+  addFurniture: (
+    type: FurnitureType,
+    position: Point,
+    provenance: Provenance,
+  ) => string
   updateFurniture: (
     id: string,
     patch: Partial<Pick<FurnitureItem, 'position' | 'rotation' | 'width' | 'depth'>>,
@@ -731,10 +737,18 @@ type DesignState = {
    * with no length has no valid 3D geometry, so keeping it out of the model
    * means nothing downstream has to defend against it.
    */
+  /**
+   * `provenance` is REQUIRED, and deliberately not defaulted to `manual`. Two
+   * of this action's three callers are the CV path — `buildWallsFromBlueprint`
+   * and the blueprint panel's "add detected walls" — so a default would label
+   * machine output as hand-drawn. See `store/provenance.ts`.
+   */
   addWall: (
     start: Point,
     end: Point,
-    options?: Partial<Pick<Wall, 'height' | 'thickness'>>,
+    options: Partial<Pick<Wall, 'height' | 'thickness'>> & {
+      provenance: Provenance
+    },
   ) => string | null
   updateWall: (
     id: string,
@@ -761,10 +775,12 @@ type DesignState = {
    * Places an opening on a wall, centred `position` metres along it. Returns
    * the new opening's id, or `null` if the wall is too short to hold it.
    */
+  /** `provenance` required — `detectOpenings` is one of the three callers. */
   addOpening: (
     wallId: string,
     type: OpeningType,
     position: number,
+    provenance: Provenance,
   ) => string | null
   updateOpening: (
     wallId: string,
@@ -1192,9 +1208,14 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     if (target.walls.length > 0 || target.furniture.length > 0) return false
 
     // Fresh ids throughout: sharing an id across storeys would make selecting a
-    // wall upstairs also select the one below it.
+    // wall upstairs also select the one below it. The original id is kept in
+    // `sourceRef`, which is the one place it stays recoverable.
     const remap = <T extends { id: string }>(items: T[]): T[] =>
-      items.map((item) => ({ ...item, id: crypto.randomUUID() }))
+      items.map((item) => ({
+        ...item,
+        id: crypto.randomUUID(),
+        provenance: provenance.copy(item.id),
+      }))
 
     set((current) => ({
       floors: fileActiveFloor(current).map((floor, index) =>
@@ -1204,6 +1225,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
               walls: current.walls.map((wall) => ({
                 ...wall,
                 id: crypto.randomUUID(),
+                provenance: provenance.copy(wall.id),
                 start: { ...wall.start },
                 end: { ...wall.end },
                 openings: remap(wall.openings).map((o) => ({ ...o })),
@@ -1211,11 +1233,13 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
               furniture: current.furniture.map((item) => ({
                 ...item,
                 id: crypto.randomUUID(),
+                provenance: provenance.copy(item.id),
                 position: { ...item.position },
               })),
               roomLabels: current.roomLabels.map((label) => ({
                 ...label,
                 id: crypto.randomUUID(),
+                provenance: provenance.copy(label.id),
                 anchor: { ...label.anchor },
               })),
               // Stairs are not copied: the flight on this floor already rises
@@ -1229,9 +1253,10 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     return true
   },
 
-  addStair: (position) => {
+  addStair: (position, source) => {
     const stair: Stair = {
       id: crypto.randomUUID(),
+      provenance: source,
       position: { ...position },
       rotation: 0,
       width: STAIR_DEFAULTS.width,
@@ -1304,9 +1329,10 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
   setBlueprintCalibrating: (blueprintCalibrating) => set({ blueprintCalibrating }),
 
-  nameRoom: (anchor, type) => {
+  nameRoom: (anchor, type, provenance) => {
     const label: RoomLabel = {
       id: crypto.randomUUID(),
+      provenance,
       type,
       anchor: { ...anchor },
     }
@@ -1387,9 +1413,10 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
   setPlotFacing: (plotFacing) => set({ plotFacing }),
 
-  addFurniture: (type, position) => {
+  addFurniture: (type, position, provenance) => {
     const item: FurnitureItem = {
       id: crypto.randomUUID(),
+      provenance,
       type,
       position: { ...position },
       rotation: 0,
@@ -1568,6 +1595,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
     const wall: Wall = {
       id: crypto.randomUUID(),
+      provenance: options.provenance,
       start: { ...start },
       end: { ...end },
       height: options?.height ?? WALL_DEFAULTS.height,
@@ -1636,7 +1664,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       selection: null,
     }),
 
-  addOpening: (wallId, type, position) => {
+  addOpening: (wallId, type, position, provenance) => {
     const wall = get().walls.find((w) => w.id === wallId)
     if (!wall) return null
 
@@ -1645,7 +1673,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     if (wallLength(wall) < defaults.width) return null
 
     const opening = constrainOpening(
-      { id: crypto.randomUUID(), type, position, ...defaults },
+      { id: crypto.randomUUID(), provenance, type, position, ...defaults },
       wall,
     )
 
