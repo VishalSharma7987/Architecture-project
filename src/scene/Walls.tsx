@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react'
 import type { ThreeEvent } from '@react-three/fiber'
 import { BoxGeometry, MeshStandardMaterial } from 'three'
-import { useDesignStore, type Wall } from '../store/useDesignStore'
+import { isOpeningTool, useDesignStore, type Wall } from '../store/useDesignStore'
 import { provenance } from '../store/provenance'
 import {
   DEFAULT_WALL_MATERIAL,
@@ -220,7 +220,7 @@ function WallMesh({
       useDesignStore.getState()
     if (readOnly) return
 
-    if (tool === 'door' || tool === 'window') {
+    if (isOpeningTool(tool)) {
       // Place the opening where the click actually landed on the wall.
       const { t } = projectOntoWall(wall, {
         x: event.point.x,

@@ -497,6 +497,12 @@ function drawOpeningSymbol(
     return
   }
 
+  // A cased opening is what is left when both branches are skipped: the wall
+  // already broken across its full thickness by `punchOpening`, closed off by
+  // the jamb lines above. No leaf, no arc, no glass. The symbol was here all
+  // along — it just had no type that could reach it (STATE.md finding 22).
+  if (opening.type === 'cased') return
+
   // Glazing: a thin pair of lines set in from the wall faces.
   const inset = half * 0.45
   ctx.beginPath()

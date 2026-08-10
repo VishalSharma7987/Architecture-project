@@ -759,6 +759,9 @@ export function FloorPlanEditor() {
         )}
         {!calibrating && tool === 'door' && <>Click a wall to place a door</>}
         {!calibrating && tool === 'window' && <>Click a wall to place a window</>}
+        {!calibrating && tool === 'cased' && (
+          <>Click a wall to place a cased opening — no door, no window</>
+        )}
         <span className="ml-2 text-slate-400">
           Scroll to move · pinch or Ctrl-scroll to zoom · Space or drag to pan
         </span>

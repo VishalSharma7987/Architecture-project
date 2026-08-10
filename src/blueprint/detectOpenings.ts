@@ -550,6 +550,13 @@ export async function detectAndPlaceOpenings(): Promise<OpeningsResult> {
 const OPENING_DEFAULT_M: Record<OpeningType, number> = {
   door: 0.9,
   window: 1.2,
+  // UNREACHABLE TODAY, and deliberately not presented as tuned: `classify`
+  // emits only 'door' and 'window', so nothing in the CV path can produce a
+  // cased opening. The entry exists because `OpeningType` widened and this is
+  // a `Record`, which is the mechanism that made the widening visible at all.
+  // If a detector ever learns to read an `O` tag, revalidate on the corpus
+  // (§10 rule 6) before trusting either of these numbers.
+  cased: 1.2,
 }
 
 /**
@@ -559,6 +566,9 @@ const OPENING_DEFAULT_M: Record<OpeningType, number> = {
 const OPENING_BAND_M: Record<OpeningType, [min: number, max: number]> = {
   door: [0.6, 1.4],
   window: [0.5, 3.0],
+  // Wider than a door at both ends — a pass-through can legitimately be most
+  // of a partition — but not unbounded. Unreachable today; see above.
+  cased: [0.7, 2.4],
 }
 
 /**

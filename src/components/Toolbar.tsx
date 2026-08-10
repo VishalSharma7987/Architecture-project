@@ -42,6 +42,18 @@ const TOOLS: (SegOption<Tool> & { planOnly?: boolean })[] = [
   { id: 'wall', label: 'Wall', hint: 'Draw walls', planOnly: true, testId: 'tool-wall' },
   { id: 'door', label: 'Door', hint: 'Click a wall to add a door', testId: 'tool-door' },
   { id: 'window', label: 'Window', hint: 'Click a wall to add a window', testId: 'tool-window' },
+  // A cased opening — a gap with no leaf and no glass, tagged `O` on a plan.
+  // A tool rather than a type selector on the inspector: `updateOpening`'s
+  // patch deliberately excludes `type`, so converting an existing opening
+  // would mean widening that contract and allowing a door to become a window
+  // while keeping its swing. Placing is also the symmetry people expect —
+  // every other opening is "pick a tool, click a wall".
+  {
+    id: 'cased',
+    label: 'Opening',
+    hint: 'Click a wall to add a cased opening — a gap with no door or window',
+    testId: 'tool-cased',
+  },
   // Plan-only for the same reason as Wall: a stair is placed by pointing at a
   // spot on the storey below, which only the plan gives you.
   { id: 'stair', label: 'Stair', hint: 'Click to place a staircase', planOnly: true, testId: 'tool-stair' },

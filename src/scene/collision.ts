@@ -81,7 +81,13 @@ export function wallColliders(walls: Wall[]): Collider[] {
     }
 
     const gaps = wall.openings
-      .filter((o) => o.type === 'door')
+      // A cased opening is a hole with no leaf, so it is at least as walkable
+      // as a doorway — the rule below already says a hole you can see through
+      // must stay a hole you can walk through. Filtering on `'door'` alone
+      // made one a solid wall to the walking figure while the 3D geometry
+      // showed a gap: you would stop dead in an opening you could see through.
+      // A window is still solid, because its sill is not.
+      .filter((o) => o.type === 'door' || o.type === 'cased')
       .map((o) => ({
         t0: Math.max(0, o.position - o.width / 2 - DOOR_CLEARANCE),
         t1: Math.min(length, o.position + o.width / 2 + DOOR_CLEARANCE),

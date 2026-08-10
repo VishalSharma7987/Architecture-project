@@ -205,8 +205,12 @@ function parseOpening(
   if (!isRecord(value)) return null
 
   const type = value.type
-  if (type !== 'door' && type !== 'window') return null
-  const defaults = OPENING_DEFAULTS[type as OpeningType]
+  // No version bump for `'cased'`: a v4 file containing one is still v4, and
+  // a build that predates it rejects the opening rather than misreading it.
+  // Forward-rejection is the correct behaviour here and is already covered —
+  // the parser drops an unknown type with a warning instead of guessing.
+  if (!isOpeningType(type)) return null
+  const defaults = OPENING_DEFAULTS[type]
 
   const position = num(value.position)
   if (position === null) return null
@@ -228,6 +232,15 @@ function parseOpening(
     value,
   )
 }
+
+/**
+ * Derived from `OPENING_DEFAULTS` rather than written out again, so a fourth
+ * opening type cannot be added to the model and silently rejected at the file
+ * boundary — which is what a hand-maintained list of accepted strings would
+ * do, and what the old `type !== 'door' && type !== 'window'` did.
+ */
+const isOpeningType = (value: unknown): value is OpeningType =>
+  typeof value === 'string' && value in OPENING_DEFAULTS
 
 const SWING_HANDS: Swing['hand'][] = ['start', 'end']
 const SWING_SIDES: Swing['side'][] = ['left', 'right']

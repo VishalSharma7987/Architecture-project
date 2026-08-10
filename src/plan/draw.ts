@@ -1369,7 +1369,7 @@ function drawOpening(
     ctx.arc(0, 0, widthPx, Math.min(0, quarter), Math.max(0, quarter))
     ctx.stroke()
     ctx.restore()
-  } else {
+  } else if (opening.type === 'window') {
     // Glazing line down the middle of the opening.
     ctx.beginPath()
     ctx.strokeStyle = symbolColor
@@ -1378,6 +1378,11 @@ function drawOpening(
     ctx.lineTo(b.x, b.y)
     ctx.stroke()
   }
+  // A cased opening gets NEITHER, and that is the whole symbol: the wall
+  // cleared across the span above, closed off by the jamb ticks below. Written
+  // as an explicit `else if` on `'window'` rather than a bare `else`, because
+  // a bare `else` is what silently drew a glazing line through every cased
+  // opening the moment `OpeningType` widened.
 
   // Jamb ticks, so the opening's extent stays readable at any zoom.
   ctx.beginPath()

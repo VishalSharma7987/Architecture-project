@@ -33,8 +33,8 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B22 — COMPLETE.** Swing controls in the opening inspector. **v4's first field now works end to end** |
-| Before that | **B21** — the swing enters the model (`DESIGN_VERSION 4`); **B7** — room identity (B7.1–B7.7) |
+| Last completed task | **B23 — COMPLETE.** `'cased'` is a third `OpeningType`. **v4's opening work is finished** |
+| Before that | **B22** — swing controls; **B21** — the swing enters the model (`DESIGN_VERSION 4`); **B7** — room identity |
 | Next task | **B9** (drafting/snapping) — the largest single gap versus AutoCAD |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
@@ -91,21 +91,22 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B22, at `f7ecd08`+:
+Verified after B23, at `c263019`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **482 passing / 482** · 28 files / 28 |
-| `npm run build` | **pass** (exit 0), 851 ms |
+| `npm test` | **491 passing / 491** · 29 files / 29 |
+| `npm run build` | **pass** (exit 0), 1.65 s |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
 | `strict` | **`true`** — [`tsconfig.app.json:25`](../tsconfig.app.json#L25) |
 | Key boundary | **intact** — no `ANTHROPIC` / `OPENROUTER` / `sk-ant-` / `sk-or-` in `dist/` |
-| Schema | **`DESIGN_VERSION = 4`** — v1→v2→v3→v4 migrations, round-trip tested |
+| Schema | **`DESIGN_VERSION = 4`** — v1→v2→v3→v4 migrations, round-trip tested. **B23 added no version**: widening `OpeningType` does not change the on-disk shape, and an older build correctly rejects the value it does not know |
 | Autosave | **2.37 ms** at 500 walls × 3 storeys, against §9.2's 20 ms |
 
-*Before B21: 451 / 25 files at `8227343`. The 31 new tests are
+*Before B21: 451 / 25 files at `8227343`. The 40 new tests are
+[`casedOpening.test.tsx`](../src/plan/casedOpening.test.tsx) (9),
 [`migrateV4.test.ts`](../src/persistence/migrateV4.test.ts) (11),
 [`doorSwing.test.ts`](../src/scene/doorSwing.test.ts) (11) and
 [`swingInspector.test.tsx`](../src/components/swingInspector.test.tsx) (9).*
@@ -420,6 +421,31 @@ and `provenance.test.ts`.
 **The grep is not sufficient on its own** — it passed while `planSheet.ts` had
 the call but not the import, and `tsc` is what caught that. The two together
 are the check; neither alone is.
+
+### SD16 — a widened union is caught by `Record`, and missed by every `else`
+
+B23 widened `OpeningType` to three. **`tsc` found exactly three sites** — the
+three `Record<OpeningType, …>` tables. It found **none** of the six that were
+silently wrong, because a binary `if door / else` compiles perfectly and
+quietly treats whatever was added as the else case:
+
+| Site | What it did to a cased opening |
+|---|---|
+| `draw.ts` · `planSheet.ts` | drew a **glazing line** through it |
+| `InspectorPanel` ×2 · `DimensionLabels` | called it a **"Window"** |
+| `collision.ts` | left it **solid** to the walking figure |
+
+The last is the one worth remembering: its own comment already read *"a hole
+you can see through must stay a hole you can walk through, whichever opening
+made it"* — the code contradicted its own stated rule, and had done since the
+comment was written. **A comment stating an invariant is not the invariant.**
+
+**The rule going forward:** discriminate on the type you mean, never on its
+complement. `else if (type === 'window')` instead of `else`; a
+`Record<OpeningType, …>` instead of a ternary. B23 converted the three label
+ternaries into `OPENING_LABELS` and `tool === 'door' || tool === 'window'`
+into `isOpeningTool`, so a fourth type is a compile error rather than a
+silent mislabelling.
 
 ### SD15 — a wall-frame fact gets a picture, not a screen-direction label
 
@@ -904,7 +930,13 @@ One missing concept explains three symptoms:
 
 It needs a level to be a height above, so it belongs with v5, not earlier.
 
-### 22. REFERENCE ITEM 6 (cased openings) IS NEARLY FREE `OPEN`
+### 22. REFERENCE ITEM 6 (cased openings) IS NEARLY FREE `RESOLVED 2026-08-10 by B23`
+
+**It was, and the estimate held** — in the sheet the whole symbol was one
+`return` before the door/window branch. What the estimate MISSED is below: the
+symbol was free, but six other sites were quietly wrong.
+
+*Original:*
 
 `punchOpening` ([`planSheet.ts:420-438`](../src/plan/planSheet.ts#L420-L438))
 plus the jamb lines that open `drawOpeningSymbol`
@@ -1071,6 +1103,18 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not hand-write the swing icon's paths.** It calls `doorSwing` on a
   synthetic east-running wall precisely so it cannot drift from the renderers
   (SD14). Four literal SVG paths would be a fifth implementation of the rule.
+- **Do not discriminate an `OpeningType` with a bare `else`** (SD16). Six sites
+  did, and `tsc` caught none of them — a cased opening drew a glazing line,
+  called itself a Window in three places, and stood solid in front of the
+  walking figure. Use `else if (type === 'window')`, or a
+  `Record<OpeningType, …>` like `OPENING_LABELS` / `OPENING_DEFAULTS`.
+- **Do not add an opening tool by listing tool names.** `isOpeningTool` tests
+  membership of `OPENING_DEFAULTS`, so the three opening tools stay named after
+  the three `OpeningType`s and a fourth is placeable the moment it exists.
+- **Do not bump `DESIGN_VERSION` for a widened union.** B23 added `'cased'`
+  with no bump: the on-disk shape is unchanged, and an older build rejects the
+  unknown type with a warning rather than misreading it. That is correct
+  forward-rejection, and it is already tested.
 - **Do not derive a `data-testid` from a display label.** `SwingChoice` takes
   the `Swing` field name for exactly this reason: the label is copy and will
   change, the field is the contract. The first draft derived it from `label`

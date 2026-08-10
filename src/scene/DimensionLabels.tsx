@@ -3,7 +3,7 @@ import { Html } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Vector3 } from 'three'
 import type { Opening } from '../store/useDesignStore'
-import { useDesignStore } from '../store/useDesignStore'
+import { OPENING_LABELS, useDesignStore } from '../store/useDesignStore'
 import { formatLengthCompact } from '../units/length'
 import { SLAB } from './config'
 import { openingCenter, pointAlongWall, wallAxis } from './wallGeometry'
@@ -151,8 +151,7 @@ export function DimensionLabels() {
   )
 }
 
-const openingName = (opening: Opening): string =>
-  opening.type === 'door' ? 'Door' : 'Window'
+const openingName = (opening: Opening): string => OPENING_LABELS[opening.type]
 
 /** A single floating measurement chip: a headline and a smaller detail line. */
 type DimChip = {

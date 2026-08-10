@@ -60,7 +60,7 @@ export type Provenance = {
   sourceRef?: string
 }
 
-export type OpeningType = 'door' | 'window'
+export type OpeningType = 'door' | 'window' | 'cased'
 
 /**
  * Which jamb a door hangs on and which way its leaf sweeps.
@@ -404,6 +404,49 @@ export const OPENING_DEFAULTS: Record<
 > = {
   door: { width: 0.9, height: 2.1, sill: 0 },
   window: { width: 1.2, height: 1.2, sill: 0.9 },
+  /**
+   * A cased opening — a gap with no leaf and no glass, tagged `O` on a plan.
+   * Standard between kitchen and dining in Indian residential work.
+   *
+   * **1.2 m** because a cased opening is a pass-through, not a doorway: it is
+   * deliberately wider than the 0.9 m single leaf beside it, and 1200 is the
+   * width these are commonly drawn at. It coincides with the window default
+   * for an unrelated reason, so changing one must not change the other.
+   *
+   * **Height 2.1 m, sill 0** — the same head as a door, not the full wall.
+   * Openings in one wall share a head height; a cased opening at 2100 lines
+   * up with the doors next to it and leaves the lintel band that is actually
+   * built over it. Floor-to-soffit is the deliberate exception, not the
+   * default.
+   *
+   * ── Why a constant rather than tracking `wall.height` ──
+   * It was considered and rejected. `OPENING_DEFAULTS` is a static table read
+   * by `addOpening`, by `parseOpening`'s per-field fallbacks and by the CV
+   * path; making one entry a function of the wall would change its type for
+   * all three and widen this session well past its scope.
+   *
+   * Nothing is lost by it. A user who wants floor-to-soffit types the wall's
+   * height, and `constrainOpening` clamps to `wall.height - sill`, so the
+   * result is exact. `wallPieces` then computes `head === wall.height`, the
+   * lintel piece gets zero rise and is skipped — a clean full-height void with
+   * no degenerate geometry.
+   */
+  cased: { width: 1.2, height: 2.1, sill: 0 },
+}
+
+/**
+ * What each opening type is called on screen.
+ *
+ * A table rather than three `type === 'door' ? … : 'Window'` expressions,
+ * which is what the inspector header, the inspector's opening list and the 3D
+ * dimension chip each carried. Every one of them called a cased opening a
+ * window — a binary test silently mislabels whatever a widened union adds,
+ * and no compiler catches it. A `Record<OpeningType, …>` does.
+ */
+export const OPENING_LABELS: Record<OpeningType, string> = {
+  door: 'Door',
+  window: 'Window',
+  cased: 'Opening',
 }
 
 /** Keeps edits physically meaningful without fighting the user mid-typing. */
@@ -508,7 +551,20 @@ export type ViewMode = '2d' | '3d'
 export type WalkView = 'first' | 'third'
 
 /** Active pointer tool. `wall` draws; the rest act on existing walls. */
-export type Tool = 'select' | 'wall' | 'door' | 'window' | 'stair'
+export type Tool = 'select' | 'wall' | 'door' | 'window' | 'cased' | 'stair'
+
+/**
+ * Whether this tool places an opening on a wall — and, if so, which type.
+ *
+ * The three opening tools are named after the three `OpeningType`s on purpose,
+ * so the click handlers can pass the tool straight to `addOpening`. Testing
+ * membership of `OPENING_DEFAULTS` rather than listing them means a fourth
+ * opening type is placeable the moment it exists, instead of compiling
+ * cleanly and silently doing nothing when clicked — which is what
+ * `tool === 'door' || tool === 'window'` did.
+ */
+export const isOpeningTool = (tool: Tool): tool is Tool & OpeningType =>
+  tool in OPENING_DEFAULTS
 
 /**
  * A selected space is a selected NAME.

@@ -3,6 +3,7 @@ import {
   DEFAULT_SWING,
   FLOOR_HEIGHT,
   LIMITS,
+  OPENING_LABELS,
   STAIR_DEFAULTS,
   useDesignStore,
 } from '../store/useDesignStore'
@@ -306,11 +307,7 @@ export function InspectorPanel() {
     >
       <header className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
         <h2 className="text-sm font-semibold text-slate-900">
-          {opening
-            ? opening.type === 'door'
-              ? 'Door'
-              : 'Window'
-            : 'Wall'}
+          {opening ? OPENING_LABELS[opening.type] : 'Wall'}
         </h2>
         <button
           type="button"
@@ -430,7 +427,7 @@ export function InspectorPanel() {
                           }
                           className="flex-1 rounded-md px-2 py-1.5 text-left text-xs text-slate-700 hover:bg-slate-100"
                         >
-                          {o.type === 'door' ? 'Door' : 'Window'}
+                          {OPENING_LABELS[o.type]}
                           <span className="ml-2 tabular-nums text-slate-400">
                             {o.width.toFixed(2)} × {o.height.toFixed(2)} m
                           </span>
