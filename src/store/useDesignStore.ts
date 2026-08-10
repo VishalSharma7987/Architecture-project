@@ -1344,10 +1344,10 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
   setBlueprintCalibrating: (blueprintCalibrating) => set({ blueprintCalibrating }),
 
-  nameRoom: (anchor, type, provenance) => {
+  nameRoom: (anchor, type, source) => {
     const label: RoomLabel = {
       id: crypto.randomUUID(),
-      provenance,
+      provenance: source,
       type,
       anchor: { ...anchor },
     }
@@ -1428,10 +1428,10 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
 
   setPlotFacing: (plotFacing) => set({ plotFacing }),
 
-  addFurniture: (type, position, provenance) => {
+  addFurniture: (type, position, source) => {
     const item: FurnitureItem = {
       id: crypto.randomUUID(),
-      provenance,
+      provenance: source,
       type,
       position: { ...position },
       rotation: 0,
@@ -1679,7 +1679,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       selection: null,
     }),
 
-  addOpening: (wallId, type, position, provenance) => {
+  addOpening: (wallId, type, position, source) => {
     const wall = get().walls.find((w) => w.id === wallId)
     if (!wall) return null
 
@@ -1688,7 +1688,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     if (wallLength(wall) < defaults.width) return null
 
     const opening = constrainOpening(
-      { id: crypto.randomUUID(), provenance, type, position, ...defaults },
+      { id: crypto.randomUUID(), provenance: source, type, position, ...defaults },
       wall,
     )
 
