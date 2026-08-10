@@ -4,7 +4,7 @@ import type { Group } from 'three'
 import { useDesignStore, type Opening, type Wall } from '../store/useDesignStore'
 import { avatarState } from './avatarState'
 import { DOOR, SLAB } from './config'
-import { pointAlongWall, wallAxis } from './wallGeometry'
+import { doorSwing, pointAlongWall, wallAxis } from './wallGeometry'
 import { clampDelta } from './walkMotion'
 
 /** Handle position on the leaf: this far along it, at this height in metres. */
@@ -55,25 +55,30 @@ type DoorLeafProps = {
 function DoorLeaf({ wall, opening, live }: DoorLeafProps) {
   const pivot = useRef<Group>(null)
   const angle = useRef(0)
-  const side = useRef(1)
 
   const leaf = useMemo(() => {
-    const { length, ux, uz, rotationY } = wallAxis(wall)
-    // Clamped the same way `wallPieces` clamps its holes, so a leaf can never
-    // hang off the end of the wall it belongs to.
+    const { length } = wallAxis(wall)
     const t0 = Math.max(0, opening.position - opening.width / 2)
     const t1 = Math.min(length, opening.position + opening.width / 2)
+    // Hinge, leaf axis and swing direction all come from the model. This used
+    // to hinge at t0 unconditionally and pick the DIRECTION at runtime from the
+    // avatar's position — so the same saved plan rendered with the door
+    // swinging either way depending on which side you approached from. See
+    // `doorSwing`, and B21 in STATE.md.
+    const swing = doorSwing(wall, opening)
 
     return {
       width: t1 - t0,
       height: Math.min(opening.height, wall.height - opening.sill),
-      /** Hinged at the jamb nearer the wall's start — consistent everywhere. */
-      hinge: pointAlongWall(wall, t0),
+      hinge: swing.hinge,
       centre: pointAlongWall(wall, (t0 + t1) / 2),
-      rotationY,
-      /** Wall normal on the floor plane: the axis the leaf swings across. */
-      nx: -uz,
-      nz: ux,
+      /** Puts the group's local +X on the leaf axis, hinge → free jamb. */
+      rotationY: swing.rotationY,
+      /**
+       * A positive Y rotation carries local +X toward local -Z, which is the
+       * `sweep: +1` direction — so the model's sweep IS the sign of the angle.
+       */
+      sweep: swing.sweep,
     }
   }, [wall, opening])
 
@@ -84,21 +89,11 @@ function DoorLeaf({ wall, opening, live }: DoorLeafProps) {
     const delta = clampDelta(rawDelta)
     const dx = avatarState.x - leaf.centre.x
     const dz = avatarState.z - leaf.centre.z
+    // The figure still decides WHETHER the door opens. It no longer decides
+    // WHICH WAY — that is an architectural fact and it lives in the document.
     const near = live && Math.hypot(dx, dz) < DOOR.triggerRadius
 
-    // The swing side is picked once, as the leaf starts to move, and held until
-    // it has shut again. Re-deciding it every frame would slam the door through
-    // itself the instant the figure stepped across the threshold.
-    if (near && angle.current === 0) {
-      const across = dx * leaf.nx + dz * leaf.nz
-      // A positive Y rotation carries the leaf toward -normal, so a figure
-      // standing on the +normal side sends it away from them. Someone exactly
-      // in the opening gets the +1 default, which keeps unattended doors
-      // opening the same way every time.
-      side.current = across >= 0 ? 1 : -1
-    }
-
-    const target = near ? DOOR.openAngle * side.current : 0
+    const target = near ? DOOR.openAngle * leaf.sweep : 0
     const remaining = target - angle.current
     const step = DOOR.swingSpeed * delta
     angle.current =

@@ -1,4 +1,5 @@
 import type { FurnitureItem, Opening, Point, Wall } from '../store/useDesignStore'
+import { DEFAULT_SWING } from '../store/useDesignStore'
 import { furnitureSize } from '../furniture/catalog'
 import { SLAB } from './config'
 
@@ -30,6 +31,82 @@ export function pointAlongWall(wall: Wall, t: number): Point {
   const { ux, uz } = wallAxis(wall)
   return { x: wall.start.x + ux * t, z: wall.start.z + uz * t }
 }
+
+/** Everything a renderer needs to draw a door leaf, from the model alone. */
+export type DoorSwing = {
+  /** World point the leaf hinges on. */
+  hinge: Point
+  /** World point of the free jamb. The leaf at rest runs `hinge` → `free`. */
+  free: Point
+  /** Unit vector along the leaf at rest, `hinge` → `free`. */
+  axis: { x: number; z: number }
+  /**
+   * Which way the free edge sweeps, as a sign on the axis's perpendicular.
+   * Use `swingDirection` rather than applying it by hand.
+   */
+  sweep: 1 | -1
+  /**
+   * Y rotation putting local +X on `axis`, for a three.js group. Note the
+   * negated z — §4 invariant 3. For `hand: 'start'` this equals the wall's own
+   * `rotationY`, which is what keeps every pre-v4 door exactly where it was.
+   */
+  rotationY: number
+}
+
+/**
+ * Where a door hangs and which way it opens — THE single source of truth,
+ * derived from `Opening.swing` and nothing else.
+ *
+ * ── Why this function exists ──
+ * Four sites used to decide this independently: the canvas arc, the print
+ * sheet's arc, the sheet's `doorSweep` (which reserves page space for the
+ * leaf), and the 3D leaf — which picked its side at RUNTIME from where the
+ * walkthrough figure was standing, so the same saved plan rendered with the
+ * door swinging either way depending on how you walked up to it. Three of the
+ * four were kept in step by comments; the fourth was not in step at all.
+ *
+ * A pure function is only a single source of truth if the call sites call it,
+ * which no type can enforce — `doorSwing.test.ts` greps the tree for that,
+ * the pattern `calibration.test.ts` established.
+ *
+ * ── The fallback is load-bearing ──
+ * An `Opening` with no `swing` gets `DEFAULT_SWING`, which IS the pre-v4
+ * convention. So a v3 fixture, a hand-edited file, or a malformed swing the
+ * parser dropped all still draw, and draw exactly what they always drew.
+ * Without it, `parseSwing` dropping a bad field would cost the user a door.
+ */
+export function doorSwing(wall: Wall, opening: Opening): DoorSwing {
+  const { length, ux, uz } = wallAxis(wall)
+  const { hand, side } = opening.swing ?? DEFAULT_SWING
+
+  // Clamped the same way `wallPieces` clamps its holes, so a hinge can never
+  // sit off the end of the wall it belongs to.
+  const half = opening.width / 2
+  const t0 = Math.max(0, opening.position - half)
+  const t1 = Math.min(length, opening.position + half)
+
+  const atStart = hand === 'start'
+  // +1 when the leaf runs with the wall, -1 when it runs back along it.
+  const handSign = atStart ? 1 : -1
+  const axis = { x: ux * handSign, z: uz * handSign }
+
+  return {
+    hinge: pointAlongWall(wall, atStart ? t0 : t1),
+    free: pointAlongWall(wall, atStart ? t1 : t0),
+    axis,
+    // `side` names a side of the WALL, so it must not move when the leaf is
+    // rehung on the other jamb — and the perpendicular of a reversed axis
+    // points the other way, so the hand's sign has to cancel back out here.
+    sweep: ((side === 'left' ? 1 : -1) * handSign) as 1 | -1,
+    rotationY: Math.atan2(-axis.z, axis.x),
+  }
+}
+
+/** The unit world direction a door's free edge sweeps toward as it opens. */
+export const swingDirection = (swing: DoorSwing) => ({
+  x: swing.axis.z * swing.sweep,
+  z: -swing.axis.x * swing.sweep,
+})
 
 export type WallPiece = {
   key: string

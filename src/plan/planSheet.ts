@@ -9,7 +9,12 @@ import type {
 import { furnitureSize } from '../furniture/catalog'
 import { roomDisplayName } from '../rooms/catalog'
 import { resolveRooms } from '../rooms/resolve'
-import { planBounds, pointAlongWall, wallAxis } from '../scene/wallGeometry'
+import {
+  doorSwing,
+  planBounds,
+  pointAlongWall,
+  wallAxis,
+} from '../scene/wallGeometry'
 import { formatArea, formatLength, METRES_PER_FOOT } from '../units/length'
 
 /**
@@ -272,23 +277,28 @@ function fitExtent(walls: Wall[], furniture: FurnitureItem[]): Extent | null {
 }
 
 /**
- * Points the door leaf sweeps through, hinged at the opening's first jamb and
- * turning from the wall direction onto its normal. Must stay in step with the
- * arc drawn in `drawOpeningSymbol`, which is what these points bound.
+ * Points the door leaf sweeps through, so `fitExtent` can keep the page fit —
+ * and the overall dimension setout — clear of a door swinging off the building.
+ *
+ * This and the arc in `drawOpeningSymbol` must describe the same quarter turn,
+ * 170 lines apart. That used to be asserted by this comment and nothing else,
+ * while both hard-coded the hinge and the direction independently. They now
+ * share `doorSwing`, so the model is what keeps them in step and
+ * `doorSwing.test.ts` fails the build if either stops asking.
  */
 function doorSweep(wall: Wall, opening: Opening): Point[] {
-  const { ux, uz } = wallAxis(wall)
-  const hinge = pointAlongWall(wall, opening.position - opening.width / 2)
+  const swing = doorSwing(wall, opening)
   const steps = 6
   const points: Point[] = []
 
   for (let i = 0; i <= steps; i++) {
     const angle = (Math.PI / 2) * (i / steps)
     const cos = Math.cos(angle)
-    const sin = Math.sin(angle)
+    // The sign is what turns the leaf onto the side the model asked for.
+    const sin = Math.sin(angle) * swing.sweep
     points.push({
-      x: hinge.x + (ux * cos + uz * sin) * opening.width,
-      z: hinge.z + (uz * cos - ux * sin) * opening.width,
+      x: swing.hinge.x + (swing.axis.x * cos + swing.axis.z * sin) * opening.width,
+      z: swing.hinge.z + (swing.axis.z * cos - swing.axis.x * sin) * opening.width,
     })
   }
 
@@ -459,23 +469,29 @@ function drawOpeningSymbol(
   ctx.stroke()
 
   if (opening.type === 'door') {
-    // Leaf hinged at jamb A and swung to the wall's normal: the standard
-    // symbol, and it makes the door's side unambiguous.
+    // From the model, exactly as the canvas and the 3D leaf now take it — and
+    // as `doorSweep` above takes it, so the space this sheet reserves for the
+    // leaf is on the side it actually draws the leaf.
+    const swing = doorSwing(wall, opening)
+    const h = toSheet(layout, swing.hinge)
+    const f = toSheet(layout, swing.free)
+    const quarter = (-Math.PI / 2) * swing.sweep
+
     ctx.save()
-    ctx.translate(a.x, a.y)
-    ctx.rotate(Math.atan2(b.y - a.y, b.x - a.x))
+    ctx.translate(h.x, h.y)
+    ctx.rotate(Math.atan2(f.y - h.y, f.x - h.x))
 
     ctx.beginPath()
     ctx.strokeStyle = INK.symbol
     ctx.lineWidth = 1.8 * u
     ctx.moveTo(0, 0)
-    ctx.lineTo(0, -span)
+    ctx.lineTo(0, -span * swing.sweep)
     ctx.stroke()
 
     ctx.beginPath()
     ctx.strokeStyle = INK.symbol
     ctx.lineWidth = 1 * u
-    ctx.arc(0, 0, span, -Math.PI / 2, 0)
+    ctx.arc(0, 0, span, Math.min(0, quarter), Math.max(0, quarter))
     ctx.stroke()
     ctx.restore()
     return

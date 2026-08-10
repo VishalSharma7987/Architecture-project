@@ -13,7 +13,7 @@ import { furnitureSize } from '../furniture/catalog'
 import { getRoomType, roomDisplayName } from '../rooms/catalog'
 import { selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
 import { SELECTION } from '../scene/config'
-import { planBounds, pointAlongWall } from '../scene/wallGeometry'
+import { doorSwing, planBounds, pointAlongWall } from '../scene/wallGeometry'
 import {
   buildableRect,
   frontEdge,
@@ -1337,26 +1337,36 @@ function drawOpening(
   const widthPx = Math.hypot(b.x - a.x, b.y - a.y)
 
   if (opening.type === 'door') {
-    // Leaf hinged at jamb A, swinging to the wall's normal — the standard plan
-    // symbol, and it makes the door's side unambiguous.
-    const along = Math.atan2(b.y - a.y, b.x - a.x)
+    // The leaf hangs where the MODEL says, not where this renderer prefers.
+    // Until v4 the hinge was always jamb A and the arc always swept one way,
+    // here and in `planSheet.ts` and in `DoorLeaves.tsx` — three copies of a
+    // convention no user could change. See `doorSwing`.
+    const swing = doorSwing(wall, opening)
+    const h = worldToScreen(swing.hinge, vp, width, height)
+    const f = worldToScreen(swing.free, vp, width, height)
+    const along = Math.atan2(f.y - h.y, f.x - h.x)
+    // Screen +y is world +z, so local -Y in this rotated frame is the
+    // sweep direction when `sweep` is +1, and local +Y when it is -1.
+    const quarter = (-Math.PI / 2) * swing.sweep
 
     ctx.save()
-    ctx.translate(a.x, a.y)
+    ctx.translate(h.x, h.y)
     ctx.rotate(along)
 
     ctx.beginPath()
     ctx.strokeStyle = symbolColor
     ctx.lineWidth = selected ? 2.5 : 1.6
     ctx.moveTo(0, 0)
-    ctx.lineTo(0, -widthPx)
+    ctx.lineTo(0, -widthPx * swing.sweep)
     ctx.stroke()
 
     ctx.beginPath()
     ctx.strokeStyle = symbolColor
     ctx.lineWidth = 1
     ctx.globalAlpha = 0.55
-    ctx.arc(0, 0, widthPx, -Math.PI / 2, 0)
+    // A quarter turn either side of the closed position, ordered low-to-high
+    // so the default (anticlockwise: false) sweeps the short way round.
+    ctx.arc(0, 0, widthPx, Math.min(0, quarter), Math.max(0, quarter))
     ctx.stroke()
     ctx.restore()
   } else {

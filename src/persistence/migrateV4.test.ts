@@ -251,7 +251,11 @@ describe('★ B21 — v3 → v4, the door swing', () => {
     // §3's reason for `parseDesign` existing: malformed-vs-odd is a real
     // distinction. A bad swing is ODD — the door is still a door, so it is
     // repaired to the default rather than costing the user an opening.
-    const bad = ['middle', 1e999, null, { hand: 'start' }, []]
+    // `JSON.parse('1e999')` rather than the literal: that is how Infinity
+    // actually reaches the parser — JSON cannot encode it, but `1e999` in a
+    // file parses to it, which is the case `num`'s `Number.isFinite` guard
+    // exists for. Written as a literal here it is also a lint error.
+    const bad = ['middle', JSON.parse('1e999'), null, { hand: 'start' }, []]
 
     for (const hand of bad) {
       const result = parseDesign({
