@@ -1,5 +1,7 @@
 import { Component, Suspense, useEffect, useMemo, useRef } from 'react'
 import type { ReactNode } from 'react'
+import { Component, Suspense, useEffect, useMemo, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useAnimations, useFBX, useGLTF } from '@react-three/drei'
 import { AnimationClip, Box3, Group, Object3D, Quaternion, Vector3 } from 'three'
@@ -183,11 +185,16 @@ function CharacterModel() {
     <group ref={group} scale={scale}>
       <primitive object={model} />
     </group>
+    <group ref={group} scale={scale}>
+      <primitive object={model} />
+    </group>
   )
 }
 
 /** Swallows a load/decode failure so the scene keeps working without a figure. */
+/** Swallows a load/decode failure so the scene keeps working without a figure. */
 class Boundary extends Component<
+  { children: ReactNode },
   { children: ReactNode },
   { failed: boolean }
 > {
@@ -197,6 +204,7 @@ class Boundary extends Component<
   }
   render() {
     return this.state.failed ? null : this.props.children
+    return this.state.failed ? null : this.props.children
   }
 }
 
@@ -204,9 +212,14 @@ class Boundary extends Component<
  * The walkthrough figure. Nothing renders while the model loads or if it fails,
  * so a missing or broken file degrades to an empty follow-camera rather than
  * breaking the scene.
+ * The walkthrough figure. Nothing renders while the model loads or if it fails,
+ * so a missing or broken file degrades to an empty follow-camera rather than
+ * breaking the scene.
  */
 export function CharacterAvatar() {
   return (
+    <Boundary>
+      <Suspense fallback={null}>
     <Boundary>
       <Suspense fallback={null}>
         <CharacterModel />

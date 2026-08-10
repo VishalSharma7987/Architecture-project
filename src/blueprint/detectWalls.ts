@@ -97,6 +97,42 @@ function sizedDefaults(image: RasterLike): typeof DEFAULT_DETECT_OPTIONS {
   }
 }
 
+/**
+ * Longest edge the pixel defaults above were tuned against. Anything else is
+ * scaled from here — see {@link sizedDefaults}.
+ */
+const REFERENCE_LONGEST_PX = 2000
+
+/**
+ * The pixel thresholds, restated for the image actually being read.
+ *
+ * A wall's thickness in pixels is a function of how large the drawing was
+ * rendered, not of the building — the same house at 600 px and at 3000 px draws
+ * walls five times apart. Fixed pixel minimums therefore silently reject every
+ * smaller drawing, which is the single most common reason a plan "isn't read".
+ * Scaling them by the image's longest edge makes one set of numbers describe
+ * both, and leaves the ratios (aspect, fill, gap) alone since those are already
+ * dimensionless.
+ *
+ * The floors are not scaled away entirely: below about two pixels there is no
+ * band left to measure, however small the drawing.
+ */
+function sizedDefaults(image: RasterLike): typeof DEFAULT_DETECT_OPTIONS {
+  const longest = Math.max(image.width, image.height)
+  const k = longest / REFERENCE_LONGEST_PX
+
+  return {
+    ...DEFAULT_DETECT_OPTIONS,
+    minLengthPx: Math.max(12, DEFAULT_DETECT_OPTIONS.minLengthPx * k),
+    minThicknessPx: Math.max(2, DEFAULT_DETECT_OPTIONS.minThicknessPx * k),
+    maxThicknessPx: Math.max(24, DEFAULT_DETECT_OPTIONS.maxThicknessPx * k),
+    junctionTolerancePx: Math.max(
+      2,
+      DEFAULT_DETECT_OPTIONS.junctionTolerancePx * k,
+    ),
+  }
+}
+
 /** An ImageData in all but name, so the detector runs outside a browser too. */
 export type RasterLike = {
   data: Uint8ClampedArray
@@ -764,9 +800,56 @@ export function detectWallSegments(
 ): PixelSegment[] {
   // Defaults sized to this image; anything the caller passes still wins.
   const opts = { ...sizedDefaults(image), ...options }
+  // Defaults sized to this image; anything the caller passes still wins.
+  const opts = { ...sizedDefaults(image), ...options }
   const { width, height } = image
   if (width < 2 || height < 2) return []
 
+  // Read the sheet more than one way and keep whichever finds the most wall.
+  // No single binarisation covers every drawing: luma-and-Otsu is right for ink
+  // on paper, but a plan whose rooms are flooded with a mid-tone colour splits
+  // at the wrong level and collapses floor and wall into one blob, while a
+  // saturated wall colour can sit at the same lightness as a grid line. Scoring
+  // the actual candidates is more honest than guessing the drawing's style up
+  // front, and costs one extra pass over an image already in memory.
+  let best: PixelSegment[] = []
+  let bestScore = -1
+
+  for (const mask of candidateMasks(image)) {
+    const segments = segmentsFromMask(mask, width, height, opts)
+    const score = scoreSegments(segments)
+    if (score > bestScore) {
+      bestScore = score
+      best = segments
+    }
+  }
+
+  return best
+}
+
+/**
+ * How much of a plan a candidate reading found. Total wall length rather than a
+ * count, so a reading that recovers one long exterior run beats one that
+ * shatters the same wall into fragments.
+ */
+function scoreSegments(segments: PixelSegment[]): number {
+  let total = 0
+  for (const s of segments) total += Math.hypot(s.x2 - s.x1, s.y2 - s.y1)
+  return total
+}
+
+/** The ink readings worth trying, cheapest and most common first. */
+function candidateMasks(image: RasterLike): Uint8Array[] {
+  return [inkMask(image), ...paperContrastMasks(image)]
+}
+
+/** Runs the band pipeline over one ink mask. */
+function segmentsFromMask(
+  mask: Uint8Array,
+  width: number,
+  height: number,
+  opts: typeof DEFAULT_DETECT_OPTIONS,
+): PixelSegment[] {
   // Read the sheet more than one way and keep whichever finds the most wall.
   // No single binarisation covers every drawing: luma-and-Otsu is right for ink
   // on paper, but a plan whose rooms are flooded with a mid-tone colour splits
