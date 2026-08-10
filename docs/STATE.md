@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B7.1 – B7.5** — room identity, detached labels, `DESIGN_VERSION 3`, provenance, `boundaryHint` |
-| Next task | **B7.6** (pass-2 re-attachment) + **B7.7** (transient ids for unnamed spaces) |
-| Partially done | **B7** — 5 of 7 sub-tasks. **B8** — spatial indexing deliberately NOT done (open question 6) |
+| Last completed task | **B7 — COMPLETE** (B7.1 – B7.7). Room identity, detached labels, `DESIGN_VERSION 3`, provenance, `boundaryHint`, pass-2 re-attachment, transient space ids |
+| Next task | **B9** (drafting/snapping) or the 2D→3D fidelity audit — Stage 2 is unblocked |
+| Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B7 · B9 → B10 → B11 → B12 |
 
 **Clause 4a is closed.** All seven pure modules §7 Stage 1 names are now covered,
@@ -73,11 +73,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified on the working tree above `3926d17`, after B7.1–B7.5:
+Verified on the working tree above `3926d17`, after B7 complete:
 
 | Check | Result |
 |---|---|
-| `npm test` | **432 passing / 432** · 24 files / 24 |
+| `npm test` | **451 passing / 451** · 25 files / 25 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -681,22 +681,40 @@ without it (open question 6).
 | **13c** | `RESOLVED 2026-08-10` — **measured, and it passes.** One tick at 500 walls × 3 storeys (265 KiB) is **2.19 ms** against a 20 ms budget; 2.37 ms after B7.5 added `boundaryHint`. F1/F2 did no damage — nobody had checked. Harness [`autosave.bench.ts`](../src/persistence/autosave.bench.ts), figures in [`benchmarks.md`](testing/benchmarks.md#autosave--oq13c-and-b75s-prerequisite). The measurement also *changed* B7.5: hinting all three storeys would have cost ~33 ms, so only the active floor is hinted. *Original:* the path was restructured and never measured. | agent |
 | **13d** | `RESOLVED 2026-08-10` (the `patchWall` half) — `patchWall` now returns the ORIGINAL array when no wall matches, so a write racing a delete no longer records a phantom history step. Demonstrated red: reverting to the bare `map` failed all four patch actions with *"a new-but-identical array is an edit as far as the undo recorder is concerned"*. `forgetPixels` is unchanged and remains safe only because `blueprintChanged` compares fields — that pairing is load-bearing (SD7). *Original:* **§10 rule 10 near-misses.** `patchWall` allocates a new array unconditionally, so a patch against a non-existent id records a **phantom history step**. `forgetPixels` (SD7) allocates a new `Blueprint` on every snapshot — safe **only** because `blueprintChanged` compares fields rather than references. Both are the hazard rule 10 names: *"a `.map()` in the store that returns a structurally-identical new array — the undo recorder compares by reference."* | agent |
 
-### 14. B7.6's thresholds have no validation source yet `OPEN`
+### 14. B7.6's thresholds are validated against generated edits, not drawings `PARTLY RESOLVED 2026-08-10`
 
-Pass-2 re-attachment (bbox IoU ≥ 0.5, area within [0.5×, 2×], hint centroid
-inside the candidate) is **reasoned, not measured**. See the argument at the end
-of this session's report: synthetic edit sequences test the actual question
-(polygon-to-polygon similarity) and are buildable today; the real corpus tests
-the DETECTOR against drawing conventions, which re-attachment never sees.
+**Settled: synthetic edit sequences, and the corpus loses its blocking role
+here.** Re-attachment's entire input is two polygons the traversal already
+produced, so the corpus cannot reach the code under test — any failure would
+arrive filtered through `detectRooms` and be indistinguishable from a detector
+failure. The corpus is also static, and re-attachment is defined over a
+transition. [`reattach.test.ts`](../src/rooms/reattach.test.ts) is the suite,
+and it states the limit in its own header.
 
-### 15. Unnamed spaces still have no identity `OPEN` · **B7.7**
+**Still open, as a follow-up rather than a blocker:** the real DISTRIBUTION of
+room shapes. Bbox IoU is a proxy, weakest where rooms are least box-like. If
+real plans are (say) 30% L-shaped rather than the ~0% a grid produces, the
+proxy is worse than the suite suggests. That is a question about how often the
+weak case occurs, not about whether the rule is right.
 
-Label-identity gives *named*-room identity. An unnamed enclosed space has none,
-which blocks IFC `IfcSpace` for unnamed spaces and per-space BOQ. B7.7 proposes
-transient geometry-derived ids, generation-scoped, never persisted.
+**A finding from building it:** condition 3 was unexercised and its stated
+justification was wrong. It does not save the adjacent-twins case — condition 1
+does, on IoU 0. It catches two DIFFERENT SHAPES sharing one bounding box (an L
+against the U around its bite). Each condition now has a test that fails
+without it.
 
-**This defers rather than solves collaboration.** Merging two users' edits needs
-persistent ids for every space; B7 does not provide that and does not claim to.
+### 15. Unnamed spaces have a TRANSIENT id only `RESOLVED IN PART 2026-08-10`
+
+`spaceId(polygon)` — FNV-1a over a ring canonicalised to its smallest vertex and
+quantised to 1 mm. Good for React keys, multi-select within a session, and
+numbering spaces in one export pass. Useless across edits, because it IS the
+geometry, and never persisted.
+
+**This DEFERS rather than solves collaboration.** Merging two users' edits needs
+PERSISTENT ids for every space, including unnamed ones. B7 does not provide
+that and does not claim to. The route, when it is needed, is promoting any space
+the user touches to a real `RoomLabel` — which the `space` → `room` selection
+transition already does.
 
 ### 16. Two element kinds still carry no provenance `OPEN`
 
