@@ -125,6 +125,22 @@ export type Opening = {
   /** Height of the opening's bottom edge above the floor. Doors are 0. */
   sill: number
   /**
+   * The schedule key the user typed — `D1`, `MD`, `W2`, `KW2`, `V`.
+   *
+   * Free text and USER-OWNED (L2): nothing auto-assigns it and nothing
+   * overwrites it. An automatic `D1`/`D2` sequence was considered and is
+   * exactly what L2 forbids — the moment the app mints marks, renumbering on
+   * insert silently rewrites a key the drawing, the schedule and the builder's
+   * order all refer to.
+   *
+   * Repeated marks assert that the openings are IDENTICAL UNITS. The schedule
+   * checks that assertion rather than trusting it; see `openings/schedule.ts`.
+   *
+   * Absent, never empty — `parseOpening` trims and drops a blank, so `''` and
+   * `undefined` cannot both mean "unmarked".
+   */
+  mark?: string
+  /**
    * How the leaf hangs. Meaningful on a door and dropped from a window at the
    * parse boundary — a window that does not swing must not carry a swing into
    * a file.
@@ -954,7 +970,22 @@ function constrainOpening(opening: Opening, wall: Wall): Opening {
   // Half a width of clearance at each end keeps the opening fully on the wall.
   const position = clamp(opening.position, width / 2, length - width / 2)
 
-  return { ...opening, width, height, sill, position }
+  // The mark is trimmed and a blank dropped here as well as in `parseOpening`,
+  // because this is the one funnel every in-memory write passes through. Left
+  // alone, clearing the inspector's field would store `''` — which the
+  // schedule would group as a unit distinct from "no mark", invisibly, until
+  // the document was saved and reloaded.
+  const mark = opening.mark?.trim()
+  const marked = mark ? { ...opening, mark } : omitMark(opening)
+
+  return { ...marked, width, height, sill, position }
+}
+
+/** An opening with no `mark` key at all — not one set to `''` or `undefined`. */
+function omitMark(opening: Opening): Opening {
+  if (opening.mark === undefined) return opening
+  const { mark: _mark, ...rest } = opening
+  return rest
 }
 
 /**

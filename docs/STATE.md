@@ -33,8 +33,8 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B23 — COMPLETE.** `'cased'` is a third `OpeningType`. **v4's opening work is finished** |
-| Before that | **B22** — swing controls; **B21** — the swing enters the model (`DESIGN_VERSION 4`); **B7** — room identity |
+| Last completed task | **B24 — COMPLETE.** Opening marks and the door/window schedule. **§13's schedule gap is closed** |
+| Before that | **B23** — `'cased'`; **B22** — swing controls; **B21** — the swing enters the model (`DESIGN_VERSION 4`); **B7** — room identity |
 | Next task | **B9** (drafting/snapping) — the largest single gap versus AutoCAD |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
@@ -91,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B23, at `c263019`+:
+Verified after B24, at `e7d9b4b`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **491 passing / 491** · 29 files / 29 |
-| `npm run build` | **pass** (exit 0), 1.65 s |
+| `npm test` | **511 passing / 511** · 31 files / 31 |
+| `npm run build` | **pass** (exit 0), 814 ms |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -105,7 +105,9 @@ Verified after B23, at `c263019`+:
 | Schema | **`DESIGN_VERSION = 4`** — v1→v2→v3→v4 migrations, round-trip tested. **B23 added no version**: widening `OpeningType` does not change the on-disk shape, and an older build correctly rejects the value it does not know |
 | Autosave | **2.37 ms** at 500 walls × 3 storeys, against §9.2's 20 ms |
 
-*Before B21: 451 / 25 files at `8227343`. The 40 new tests are
+*Before B21: 451 / 25 files at `8227343`. The 60 new tests are
+[`schedule.test.ts`](../src/openings/schedule.test.ts) (15),
+[`openingSchedule.test.tsx`](../src/components/openingSchedule.test.tsx) (5),
 [`casedOpening.test.tsx`](../src/plan/casedOpening.test.tsx) (9),
 [`migrateV4.test.ts`](../src/persistence/migrateV4.test.ts) (11),
 [`doorSwing.test.ts`](../src/scene/doorSwing.test.ts) (11) and
@@ -421,6 +423,51 @@ and `provenance.test.ts`.
 **The grep is not sufficient on its own** — it passed while `planSheet.ts` had
 the call but not the import, and `tsc` is what caught that. The two together
 are the check; neither alone is.
+
+### SD17 — a mark is a CLAIM, and the schedule checks it rather than trusting it
+
+A repeated mark asserts that those openings are the same unit — that is the
+whole reason a schedule can say "D1 × 6" and a joiner can quote it. The
+assertion is typed by hand, so `openings/schedule.ts` **verifies it**: a mark
+whose openings differ in type, width, height or sill produces one row, both
+values shown, and `conflict: true`.
+
+**Neither collapsing nor splitting was acceptable.** Collapsing to one size
+puts a wrong number in a builder's order; splitting into two rows hides that
+one key names two things. The row shows what the values actually are, because
+you cannot fix a mark conflict without being told.
+
+**The unmarked row is never flagged, and that distinction is the point.**
+Unmarked openings make no claim, so varying sizes among them is not an error —
+they are simply not scheduled yet. Flagging them would put a warning on every
+document in existence (all of them predate `mark`) and teach people to ignore
+warnings.
+
+**`mark` is never auto-assigned** (L2). An automatic `D1`/`D2` sequence was
+considered and is exactly what L2 forbids: renumbering on insert silently
+rewrites a key that the drawing, the schedule and the builder's order all
+point at.
+
+Normalised in TWO places on purpose — `parseOpening` for the file and
+`constrainOpening` for memory. `constrainOpening` is the single funnel every
+in-memory write passes through, and without it clearing the inspector field
+would store `''`, which the schedule would group as a unit distinct from "no
+mark", invisibly, until the document was saved and reloaded.
+
+### SD18 — the two schedules are one deliverable, so they share a panel
+
+The door/window schedule is a second section in `RoomSchedulePanel`, whose
+heading is now **"Schedules"**, rather than a seventh entry in the panels menu.
+
+§5.2 lists the room/area schedule and the door & window schedule as parts of
+one drawing set, and `export/documents.ts` already emits both into one PDF.
+**Two panels for one document's contents is a UI that disagrees with its own
+output.** It also costs nothing: no new store field, no new `planOnly`
+decision, no new `readOnly` surface.
+
+The store field stays `roomPanelOpen` and the test id stays `rooms-toggle`.
+Renaming internals to follow a heading is churn that breaks tests for no
+behavioural gain.
 
 ### SD16 — a widened union is caught by `Record`, and missed by every `else`
 
@@ -1103,6 +1150,14 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not hand-write the swing icon's paths.** It calls `doorSwing` on a
   synthetic east-running wall precisely so it cannot drift from the renderers
   (SD14). Four literal SVG paths would be a fifth implementation of the rule.
+- **Do not auto-assign an `Opening.mark`** (SD17, L2). Renumbering on insert
+  rewrites a key the drawing, the schedule and a builder's order all point at.
+- **Do not collapse or split a mark conflict** (SD17). One row, both values
+  shown, flagged. And **do not flag the unmarked row** — it claims nothing, and
+  every existing document would light up.
+- **Do not use `localeCompare(…, { numeric: true })` for schedule order.** ICU
+  behaviour varies between environments and row order would depend on the
+  machine that rendered it (L6). `compareMarks` is deterministic everywhere.
 - **Do not discriminate an `OpeningType` with a bare `else`** (SD16). Six sites
   did, and `tsc` caught none of them — a cased opening drew a glazing line,
   called itself a Window in three places, and stood solid in front of the

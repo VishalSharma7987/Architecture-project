@@ -1532,7 +1532,10 @@ function drawOpeningDimensions(ctx: CanvasRenderingContext2D, scene: PlanScene) 
       const span = Math.hypot(b.x - a.x, b.y - a.y)
       if (span < DIMENSION.minWallPx) continue
 
-      const text = formatLengthCompact(opening.width, units)
+      // The mark leads when there is one: on a real drawing the schedule key
+      // is what identifies the unit and the width merely describes it.
+      const size = formatLengthCompact(opening.width, units)
+      const text = opening.mark ? `${opening.mark} ${size}` : size
       // Same rule as the wall dimensions: a tag wider than the opening it
       // measures reads as a collision, so it is dropped rather than stacked.
       if (ctx.measureText(text).width + DIMENSION.labelMarginPx * 2 > span) {

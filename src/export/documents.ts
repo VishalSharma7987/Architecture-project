@@ -22,6 +22,9 @@ import {
 } from './statement'
 import { renderPlanSheet } from '../plan/planSheet'
 import { toFileName } from '../persistence/files'
+import { openingSchedule } from '../openings/schedule'
+import { OPENING_LABELS } from '../store/useDesignStore'
+import { formatLength } from '../units/length'
 
 /**
  * The finished documents: the drawing set, the area statement, the CSV.
@@ -102,7 +105,7 @@ export async function downloadPlanPdf(input: DocumentInput): Promise<void> {
     addImagePage(doc, jpeg, { size: A4_LANDSCAPE, margin: 0 })
   }
 
-  addStatementPages(doc, statement)
+  addStatementPages(doc, statement, input.floors, input.units)
   triggerDownload(buildPdf(doc), documentName(statement.projectName, 'plans'))
 }
 
@@ -113,7 +116,7 @@ export async function downloadAreaStatementPdf(
   const statement = toStatement(input, input.date ?? new Date().toISOString())
   const doc = createPdf(documentTitle(statement.projectName, 'area statement'))
 
-  addStatementPages(doc, statement)
+  addStatementPages(doc, statement, input.floors, input.units)
   triggerDownload(
     buildPdf(doc),
     documentName(statement.projectName, 'area-statement'),
@@ -210,7 +213,12 @@ const STATUS_WORD: Record<VastuStatus, string> = {
 }
 
 /** Appends the statement page, and the Vastu page when there is a reading. */
-function addStatementPages(doc: PdfDoc, statement: AreaStatement): void {
+function addStatementPages(
+  doc: PdfDoc,
+  statement: AreaStatement,
+  floors: FloorData[],
+  units: Unit,
+): void {
   const subtitle = `${statement.projectName} — ${displayDate(statement.date)}`
 
   addTextPage(doc, {
@@ -220,6 +228,19 @@ function addStatementPages(doc: PdfDoc, statement: AreaStatement): void {
     blocks: areaBlocks(statement),
   })
 
+  // Its own page, not a section on the area statement: a door and window
+  // schedule is a sheet a builder is handed on its own, and §5.2 lists it as
+  // a deliverable in its own right rather than as part of the area statement.
+  const schedule = scheduleBlocks(floors, units)
+  if (schedule.length > 0) {
+    addTextPage(doc, {
+      title: 'Door & Window Schedule',
+      subtitle,
+      footer: statement.projectName,
+      blocks: schedule,
+    })
+  }
+
   if (statement.vastu) {
     addTextPage(doc, {
       title: 'Vastu Reading',
@@ -228,6 +249,69 @@ function addStatementPages(doc: PdfDoc, statement: AreaStatement): void {
       blocks: vastuBlocks(statement.vastu),
     })
   }
+}
+
+/**
+ * The door and window schedule, one storey per table.
+ *
+ * Per storey rather than one merged table because a mark is scoped to a
+ * drawing: `D1` on the ground floor and `D1` upstairs are two different sheets'
+ * keys, and silently merging them would report a count nobody can check
+ * against either plan.
+ *
+ * A conflicting mark is printed with both sizes and a line saying so. This is
+ * the document a joiner quotes from, so a mark naming two different units has
+ * to be visible on the paper — collapsing it to one size would put a wrong
+ * number in an order, and that is the failure this schedule exists to prevent.
+ */
+function scheduleBlocks(floors: FloorData[], units: Unit): PdfBlock[] {
+  const blocks: PdfBlock[] = []
+
+  for (const floor of floors) {
+    const rows = openingSchedule(floor.walls)
+    if (rows.length === 0) continue
+
+    const sizes = (values: number[]) =>
+      values.map((v) => formatLength(v, units)).join(' / ')
+
+    blocks.push(
+      { kind: 'heading', text: `${floor.name} — doors & windows` },
+      {
+        kind: 'table',
+        columns: [
+          { header: 'Mark', width: 1.2 },
+          { header: 'Type', width: 1.6 },
+          { header: 'No.', width: 0.8, align: 'right' },
+          { header: 'Width', width: 1.6, align: 'right' },
+          { header: 'Height', width: 1.6, align: 'right' },
+          { header: 'Sill', width: 1.4, align: 'right' },
+        ],
+        rows: rows.map((row): PdfCell[] => [
+          // Bold marks the conflict on paper, where a colour tint would not
+          // survive a photocopy and an icon has no font to come from.
+          { text: row.mark ?? 'unmarked', bold: row.conflict },
+          row.types.map((t) => OPENING_LABELS[t]).join(' / '),
+          { text: String(row.count), bold: row.conflict },
+          { text: sizes(row.widths), bold: row.conflict },
+          { text: sizes(row.heights), bold: row.conflict },
+          sizes(row.sills),
+        ]),
+      },
+    )
+
+    const conflicts = rows.filter((row) => row.conflict)
+    if (conflicts.length > 0) {
+      blocks.push({
+        kind: 'text',
+        text:
+          `${conflicts.map((r) => r.mark).join(', ')} — a repeated mark means ` +
+          'an identical unit, and these name more than one. Check the sizes ' +
+          'before ordering.',
+      })
+    }
+  }
+
+  return blocks
 }
 
 function areaBlocks(statement: AreaStatement): PdfBlock[] {

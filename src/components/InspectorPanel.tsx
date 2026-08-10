@@ -109,6 +109,56 @@ function SwingIcon({ swing }: { swing: Swing }) {
   )
 }
 
+/**
+ * The opening's schedule key — `D1`, `MD`, `W2`, `KW2`, `V`.
+ *
+ * Committed on blur and on Enter rather than per keystroke, matching the other
+ * text field in this panel: every keystroke writing to the store would push an
+ * undo step per character, and the recorder coalesces a burst but not a whole
+ * sentence.
+ *
+ * Trimmed here as well as in `parseOpening`, so a mark typed with a trailing
+ * space groups with the same mark typed without one — the schedule keys on the
+ * exact string, and " D1" reading as a second unit is a bug the user cannot see.
+ */
+function MarkField({
+  value,
+  onCommit,
+}: {
+  value: string | undefined
+  onCommit: (mark: string) => void
+}) {
+  const [draft, setDraft] = useState(value ?? '')
+
+  // A different opening selected, or an undo, replaces what is being edited.
+  useEffect(() => setDraft(value ?? ''), [value])
+
+  const commit = () => {
+    const trimmed = draft.trim()
+    setDraft(trimmed)
+    if (trimmed !== (value ?? '')) onCommit(trimmed)
+  }
+
+  return (
+    <label className="flex items-center justify-between gap-3 text-xs">
+      <span className="text-slate-600">Mark</span>
+      <input
+        type="text"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur()
+        }}
+        placeholder="D1"
+        maxLength={12}
+        data-testid="opening-mark"
+        className="w-24 rounded-md border border-slate-200 px-2 py-1 text-right font-mono text-xs text-slate-900 focus:border-blue-400 focus:outline-none"
+      />
+    </label>
+  )
+}
+
 const SWING_BUTTON =
   'flex flex-1 flex-col items-center gap-0.5 rounded-md border px-2 py-1.5 ' +
   'text-[10px] font-semibold transition-colors'
@@ -322,6 +372,14 @@ export function InspectorPanel() {
       <div className="flex-1 space-y-5 overflow-y-auto p-4">
         {opening ? (
           <section className="space-y-3">
+            {/* The schedule key, first: on a real drawing the mark is what
+                identifies the unit, and the sizes describe it. Free text and
+                never auto-assigned — see `Opening.mark` for why an automatic
+                D1/D2 sequence is exactly what L2 forbids. */}
+            <MarkField
+              value={opening.mark}
+              onCommit={(mark) => updateOpening(wall.id, opening.id, { mark })}
+            />
             <NumberField
               label="Width"
               value={opening.width}

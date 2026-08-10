@@ -216,6 +216,7 @@ function parseOpening(
   if (position === null) return null
 
   const swing = parseSwing(value.swing, type)
+  const mark = str(value.mark)?.trim()
 
   return withProvenance<Opening>(
     {
@@ -227,6 +228,10 @@ function parseOpening(
       width: num(value.width) ?? defaults.width,
       height: num(value.height) ?? defaults.height,
       sill: num(value.sill) ?? defaults.sill,
+      // Trimmed, and a blank dropped entirely: `''` and `undefined` must not
+      // both be able to mean "unmarked", or the schedule would show an empty
+      // mark as a distinct unit from no mark at all.
+      ...(mark ? { mark } : {}),
       ...(swing ? { swing } : {}),
     },
     value,
