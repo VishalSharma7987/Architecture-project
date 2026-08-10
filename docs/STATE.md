@@ -1,11 +1,25 @@
 # Project State
 
-Updated: 2026-08-10 · Commit: `c24c432`
+Updated: 2026-08-10 · Commit: `576cbdc`
 
 This file records **where we are and what is still undecided**. The ADRs in
 [`docs/adr/`](adr/) record **why decisions were made**. Neither replaces the other:
 the carried decisions below are the class of knowledge that lives in neither the
 code nor the commit messages, and losing them once already cost a session.
+
+> **`MASTER_PROMPT.md` is now committed and is the authoritative specification.**
+> Every §-reference in this file has been checked against it — the first time that
+> was possible. Several were wrong, and the corrections are folded in below.
+>
+> **The specification itself was corrected in six places** (L1, §10 rule 1, §3's
+> `detectWalls` row, §10's floors rule, §10's binaries figure, §9.2's `nodeAt`
+> prescription). Where the repository proved a clause wrong, the clause changed.
+> See **SPEC CORRECTIONS** at the end of `MASTER_PROMPT.md`.
+>
+> **§10 rules were renumbered.** Old rule 1 was struck; everything below moved up
+> by one. All `§10.N` citations in this file are **post-correction**. Cite §10
+> rules by number *and* a few words of the rule — the numbers are not stable.
+> Cite the spec by section (`§7 Stage 0.3`), never by line.
 
 **Start every session with:** read this file and `docs/adr/`, then verify the gate
 before doing anything.
@@ -18,27 +32,40 @@ with the work.
 
 | | |
 |---|---|
-| Stage | **Stage 1** — not fully exited (see Blockers) |
-| Last completed task | **B13** (adversarial review) **+ its blocking remediation** |
-| Next task | **B7 (+ B8 folded in)** |
-| Upcoming | B9 → B10 → B11 → B12 |
+| Stage | **Stage 1** — **not exited**, on two clauses (see open question 4) |
+| Last completed task | **B13** (adversarial review, all 7 deliverables) **+ its blocking remediation** |
+| Next task | **undecided** — see below |
+| Partially done | **B8** — its benchmark is delivered (open question 12) |
+| Upcoming | B7 · B9 → B10 → B11 → B12 |
 
-Two deliberate departures from the master prompt's task order:
+One deliberate departure from the master prompt's task order:
 
 - **B13 ran before B7.** The store contract, the schema and the persistence layer
   all changed in Stage 0/1. An adversarial pass against the current state was
-  worth more than one against a state already left behind.
-- **B8 is folded into B7.** B8's deliverable is a single shared memoisation point
-  replacing six `useMemo`s. All six call `resolveRooms`, which B7 rewrites. Done
-  separately, the memoisation work happens twice.
+  worth more than one against a state already left behind. Its deliverables 3–7
+  could only be completed once `MASTER_PROMPT.md` was committed.
 
-Revised order: **B13 → B7 (+B8) → B9 → B10 → B11 → B12.**
+**The previous "B7 (+B8 folded in)" handoff was withdrawn on 2026-08-10.** It
+mis-scoped B7 as performance work; B7 is room identity, a schema change needing
+`DESIGN_VERSION = 3`. B8 is the performance task. See open question 11.
+
+**Sequencing question to settle before picking the next task.** §7 Stage 1 says
+*"Nothing after this is safe without it"*, and Stage 1 is not exited. B7 is Stage 2
+work. Three defensible orders:
+
+1. Finish Stage 1 first — `export/pdf.ts` coverage is agent-work; the corpus is not.
+2. Take B8 next — it is §9.2, not a stage, it is already half-done, and it needs no
+   schema change.
+3. Clear the small implementation debt first — open questions 9 and 13, all short.
+
+Option 1 is blocked in part on a human. Option 2 or 3 is the honest reading of
+§7's own sequencing rule.
 
 ---
 
 ## Gate
 
-Verified at `c24c432` on 2026-08-10:
+Verified at `576cbdc` on 2026-08-10 (unchanged by this documentation pass):
 
 | Check | Result |
 |---|---|
@@ -87,9 +114,14 @@ assertion runs before it. Not a failure.
 | **M1** | `b5c71a0` | The checked-out floor invariant enforced by a fitness test instead of a comment | +5 |
 | **M3** | `c24c432` | Undo engine extracted from module scope into `createHistory(...)` | +7 |
 
-**Still open from B13: F5 and M2.** F5 (`resolveRooms` is O(n²) and runs five
-times per edit) *is* B7 — see Open questions 6. M2 (`detectWalls.ts` is protected,
-untyped and circularly tested) is gated on the corpus — see Open questions 7.
+**Still open from B13: F5 and M2.** F5 (`resolveRooms` is O(n²) and recomputes per
+mounted panel) **is B8, not B7** — see open questions 6 and 11. M2 is gated on the
+corpus, and its "deadlock" framing was withdrawn — see open question 7.
+
+**B13 deliverables 3–7** — verifying Stage 0/1 against §7 as written, auditing every
+carried §-reference, and sweeping for §3/§10 contradictions — were completed on
+2026-08-10 once `MASTER_PROMPT.md` was committed. They produced six corrections to
+the specification itself and the doc corrections folded in throughout this file.
 
 Docs: [`adr/0001-stage-0-data-safety.md`](adr/0001-stage-0-data-safety.md) ·
 [`adr/0002-stage-1-changeability.md`](adr/0002-stage-1-changeability.md) ·
@@ -105,15 +137,31 @@ Docs: [`adr/0001-stage-0-data-safety.md`](adr/0001-stage-0-data-safety.md) ·
 
 ### SD1 — `loadDesign` / `replaceWalls` are separate contracts
 
-Master prompt §10 rule 4 says "never call `loadDesign` with a partial field set."
-There are five call sites and one partial call is **correct** — the damaged-share-link
-reset. Rather than keep a rule that flags correct code, the contract was split:
-`loadDesign` for whole documents, `replaceWalls` for the AI paths. The type system
-now enforces what the prose described.
+**§10 rule 3** (*"Call `loadDesign` with a partial field set. It defaults everything
+absent to empty — that is the mechanism of the worst bug in the codebase"*) is the
+governing rule. The split is **compliance with it, not supersession of it.**
 
-**§10 rule 4 is superseded by this. Do not "fix" the split back.**
-⚠ **Unverified** — see the standing principle below; the master prompt has never
-been available to check this against.
+The rule's rationale is that `loadDesign`'s defaults-to-empty is the mechanism of
+the worst bug. Splitting the contract — `loadDesign` for whole documents,
+`replaceWalls` for the AI paths — **removes that mechanism from the AI path**,
+which is exactly what §7 Stage 0.1 demanded. The type system now enforces what the
+prose described.
+
+**Do not "fix" the split back.** That instruction stands and is unaffected by the
+correction below.
+
+**Corrected 2026-08-10.** An earlier version of SD1 claimed *"§10 rule 4 is
+superseded by this"*, on the basis that one partial call is *correct* — the
+damaged-share-link reset. Checking the rule against the spec for the first time,
+that claim fails three ways:
+
+1. **The rule remains in force for every path it was written about.** Compliance is
+   not supersession, and no future reader should be told a numbered prohibition has
+   been retired when it has been satisfied.
+2. **A literal violation still exists** — see open question 9.
+3. **The premise is false.** The reset wants "empty document, read-only, 3D", which
+   is expressible without a partial `loadDesign`. A compliant alternative exists, so
+   no exception needs carving out of the rule.
 
 Code: [`useDesignStore.ts`](../src/store/useDesignStore.ts) — `replaceWalls` and
 `loadDesign`, with the rationale in the doc comment above them.
@@ -133,20 +181,38 @@ losing the stack. Corroborated in
 
 Do not reopen without a concrete user-facing complaint.
 
-### SD3 — `noUncheckedIndexedAccess` is deliberately off
+### SD3 — `noUncheckedIndexedAccess` is deliberately off, and this deviates from §7
 
-`strict` cost **zero** errors. `noUncheckedIndexedAccess` costs **309**, with **212 in
-`detectWalls.ts` alone** — nearly all `array[i]` in provably-safe numeric loops.
-Adding ~300 `!` assertions inside a protected module would teach the next reader
-that `!` is punctuation.
+⚠️ **This is a deviation from a spec instruction, not a judgement call within one.**
+§7 Stage 1 reads *"Turn on `strict`. Fix the fallout in one pass. **Add
+`noUncheckedIndexedAccess` after.**"* — and B6's task text repeats it. We did not.
 
-Reasoning is recorded in [`tsconfig.app.json:17-23`](../tsconfig.app.json#L17-L23)
-so it is found at the point of temptation, and in
-[`adr/0002:72-88`](adr/0002-stage-1-changeability.md#L72-L88).
+**The decision rests on the measured cost and nothing else:** `strict` cost **zero**
+errors; `noUncheckedIndexedAccess` costs **309**, with **212 in `detectWalls.ts`
+alone**, nearly all `array[i]` inside numeric loops whose index is provably in
+range. Silencing them with `!` would add ~300 assertions that each say "trust me"
+and teach the next reader that `!` is punctuation. The rule is worth having on code
+written under it, not retrofitted with a sed script.
 
-**Revisit only when `detectWalls.ts` moves into a Web Worker** — that rewrite
-touches the hot loops anyway, and typed-array access removes most of the 212 for
-free. Not as a standalone pass.
+**Corrected 2026-08-10 — the §3 justification is withdrawn.** SD3 previously argued
+that the fix *"would touch a module §3 marks protect-only"*. **§3 contains no such
+phrase and no such concept.** §3's actual rule is *"Rewriting any of the following
+without a specific, argued reason is a regression, not an improvement. When you
+touch these, extend rather than replace"* — a condition on change, not a
+prohibition. The same fabricated citation had been copied into
+[`tsconfig.app.json`](../tsconfig.app.json) and `adr/0002`; both are corrected.
+
+The conclusion may still be right. The argument had to be rebuilt on the error
+count alone, and the deviation from §7 recorded rather than disguised as compliance.
+
+Reasoning is recorded in [`tsconfig.app.json`](../tsconfig.app.json) so it is found
+at the point of temptation, and in
+[`adr/0002:72-88`](adr/0002-stage-1-changeability.md#L72-L88) with its correction
+appended at the end of that file.
+
+**Revisit at the Web Worker migration (§9.2)** — that rewrite touches the hot loops
+anyway, and typed-array access removes most of the 212 for free. Not as a standalone
+pass.
 
 ### SD4 — Two unshipped CV bugs were caught by the harness on its first run
 
@@ -164,17 +230,26 @@ Full diagnosis: [`adr/0002:37-53`](adr/0002-stage-1-changeability.md#L37-L53).
 
 ### SD5 — Every ★ regression test is demonstrated red before green
 
-**A regression test that was never seen to fail is a test that proves nothing.**
+**A regression test that was never seen to fail is a test that proves nothing —
+and a test that fails for the wrong reason is the same test wearing a disguise.**
 
-This is not ceremony. In this session's F1 work, the first draft of the ★ tests
-*passed against the unfixed code* — they wrote to a key the old implementation
-never touched, so they proved nothing about the bug they named. They were rewritten
-to seed through the legacy blob and assert by scanning stored values rather than a
-known key, at which point three of them went red as intended. **Watch for exactly
-that failure mode**: a test that cannot fail against the bug it describes.
+> **The rule, in full: a ★ test must fail for the REASON THE FINDING NAMES, not
+> merely fail.**
+
+This is not ceremony. In the F1 work the first draft of the ★ tests *passed against
+the unfixed code*: they wrote to a storage key the old implementation never touched,
+so they exercised nothing and proved nothing about the bug they were named for. They
+were rewritten to seed through the legacy blob and to assert by scanning stored
+values rather than a known key — at which point three went red as intended, on the
+actual destruction path.
+
+**Record the red-run symptom** in the test's comment or the commit message, so the
+next reader can check the claim rather than trusting that someone once saw it fail.
+"Demonstrated red" with no recorded symptom is an assertion, not evidence.
 
 For a fitness function with no live violation to catch (M1), demonstrate it by
-introducing a deliberate violation, confirming it is caught, and deleting the probe.
+introducing a deliberate violation, confirming it is caught **by name**, and
+deleting the probe.
 
 ### SD6 — Projects are one key each; the index is a cache, never the record
 
@@ -244,12 +319,29 @@ large total is the signature of sliced annotation, not walls).
 
 **Must land before B11 (DXF)**, which inherits the same trust in the score.
 Not recorded in ADR 0002 — that ADR diagnoses the mechanism but schedules no remedy.
-⚠ Touches `detectWalls.ts`, which the carried notes mark protect-only.
 
-### 2. 11 binary files (~49 MB) are tracked in git history `OPEN` · decision required
+**§3 permits this work.** §3's rule is *"Rewriting any of the following without a
+specific, argued reason is a regression… When you touch these, extend rather than
+replace"* — a condition, not a prohibition. The argued reason already exists: §3's
+own justification for protecting the scoring has been withdrawn as measurably false
+(see SPEC CORRECTIONS A3), and recording that is itself the argument §3 asks for.
+What §3 still protects here is the four-way binarisation **structure** and the
+`mergeWallFaces` → `typicalThickness` ordering (§10 rule 9), neither of which a
+sanity gate touches.
 
-Identified by the B0 triage as junk, then committed anyway in `3ba61fc`. All at repo
-root, none imported by any source file:
+**What §3 and §10 actually require before this can land:** an argued reason
+(exists); a gate that **extends** rather than replaces — added in front of
+`scoreSegments`, keeping the four-way binarisation and the length-based score; the
+ordering preserved; and validation on the **real corpus**, not `samples/` (§10 rule
+6 — see open question 10). The corpus is the only genuine gate, and it is a sourcing
+problem, not a permission problem.
+
+### 2. 11 binary files (~49 MB) are tracked in git history `LOGGED §10 VIOLATION`
+
+**This is a violation of a numbered prohibition, not an open judgement call.**
+§10 rule 13: *"Commit the ~49 MB of unreferenced binaries at the repo root. Once
+committed they are permanent history."* Identified by the B0 triage as junk, then
+committed anyway in `3ba61fc`. All at repo root, none imported by any source file:
 
 `animations.zip` · `blender(construction+worker).blend` (**37.7 MB**) · `blueborder.webp` ·
 `dae.dae` · `fbx.fbx` · `glb.glb` · `obj.mtl` · `obj.obj` · `stl.stl` · `textures.zip` ·
@@ -264,12 +356,41 @@ dedicated session with explicit approval.
 
 **Open decision:** accept the 49 MB permanently, or schedule a rewrite session.
 
+*(The spec said "~4 MB" — a figure inherited from audit Q17 that understated the
+total by roughly 12×. Corrected to ~49 MB on 2026-08-10; `blender(construction+worker).blend`
+alone is 37.7 MB.)*
+
 ### 3. CI `RESOLVED 2026-08-10`
 
 GitHub Actions, running `tsc -b`, `lint`, `test` and `build` on every push and pull
 request — [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
-### 4. The real architect corpus `OPEN` · **Stage 1 blocker** — see Blockers
+### 4. Stage 1 has TWO failing exit clauses `OPEN`
+
+§7 Stage 1's exit is conjunctive: *"`npm test` runs, ≥70% line coverage on the pure
+modules, `strict` is on, CI runs on every push, and the real-drawing corpus exists
+with a published per-tag pass rate."*
+
+| Clause | State |
+|---|---|
+| `npm test` runs | **PASS** |
+| **≥70% line coverage on the pure modules** | **FAIL** — see below |
+| `strict` is on | **PASS** |
+| CI runs on every push | **PASS** (`afb49d9`) |
+| **real-drawing corpus with per-tag pass rate** | **FAIL** — see Blockers |
+
+**4a — `export/pdf.ts` coverage. NOT human-blocked.** §7 Stage 1 names the pure
+modules explicitly and in order: `schema.ts` → `units/length.ts` → `plan/rooms.ts`
+→ `wallGeometry.ts` → **`export/pdf.ts`** → `collision.ts` → `vastu/analyse.ts`.
+`export/pdf.ts` is 881 lines and has **no test file at all**. Weighting ADR 0002's
+own per-module figures across the seven gives roughly **62%**, under the gate; on a
+per-module reading it fails outright at 0%.
+
+ADR 0002 deferred it on a defensible argument — asserting on bytes needs a PDF
+parser, which is its own dependency decision. §7 requires it regardless. **Until
+2026-08-10 this file named the corpus as the sole Stage 1 blocker. That was wrong.**
+
+**4b — the real architect corpus.** Human-blocked — see Blockers.
 
 ### 5. ADR-numbering collision `RESOLVED 2026-08-10`
 
@@ -283,10 +404,24 @@ The carried decisions are now **SD**1–8, so they can no longer be confused wit
 `useMemo`s recompute it whenever walls change, synchronously, mid-drag.
 
 **Measured 2026-08-10 — [`docs/testing/benchmarks.md`](testing/benchmarks.md).**
-At 500 walls one `resolveRooms` is **19.8 ms** against a 16.7 ms frame; the two
-panels ordinarily mounted cost **39.6 ms**, the reachable maximum of four costs
-**79.1 ms**. Between 200 and 500 walls the exponent is **n^1.98** — F5 is
-confirmed by measurement, not by reading the loops.
+At 500 walls one `resolveRooms` is **19.8 ms**; the two panels ordinarily mounted
+cost **39.6 ms**, the reachable maximum of four costs **79.1 ms**. Between 200 and
+500 walls the exponent is **n^1.98** — F5 is confirmed by measurement, not by
+reading the loops.
+
+**§9.2's budget is wall-clock, not complexity:** *"Room recompute after one wall
+edit — **< 50 ms, once**."* At 500 walls a single `resolveRooms` is **19.8 ms**, so
+**the budget is already met for one call.** The violation is purely the word
+*once* — it runs 2–4×.
+
+**Therefore the shared memoisation point ALONE satisfies §9.2 at 500 walls.**
+Spatial indexing is headroom for larger plans, not a §9.2 requirement.
+
+*Corrected 2026-08-10:* this section previously read *"a B7 that leaves the exponent
+at 2 has not addressed F5, whatever the milliseconds say."* **Struck.** That was
+stricter than the specification — §9.2 sets a millisecond budget and says nothing
+about the exponent. Deduplication is the compliance work; indexing is optional
+headroom that should be justified on its own terms.
 
 **Correction to the B13 write-up:** it said *five* `useMemo`s recompute per edit.
 There are five call sites — `FloorPlanEditor`, `InspectorPanel`,
@@ -295,28 +430,46 @@ together, because `FloorPlanEditor` is 2D-only and `RoomLabels` is 3D-only and
 `App` renders one branch or the other. **The reachable maximum is four; the
 ordinary case is two.** Quoting 5× would manufacture a 20% improvement for B8.
 
-**Two notes for B7, both from the B13 review:**
-- Deduplicating four quadratic calls into one quadratic call still leaves it
-  quadratic. Fix `nodeAt` (spatial bucketing on `WELD`) as well as the memoisation.
-  **A B7 that leaves the exponent at 2 has not addressed F5**, whatever the
-  milliseconds say.
-- ~~There is no perf baseline in the repo~~ — **RESOLVED 2026-08-10.** Compare
-  before/after on one machine in one sitting; the absolute figures are bound to
-  that laptop and its thermal state.
+**This is B8, not B7.** See open question 11 for the scope correction.
 
-### 7. M2 — `detectWalls.ts` is the module nobody can safely change `OPEN`
+**Notes for B8:**
+- §9.2 prescribes: a spatial hash for `splitAtIntersections`, and for `nodeAt`
+  **quantised keys plus neighbour probing** — welding is a 1 mm *tolerance* query,
+  which a plain Map cannot answer. (§9.2 originally said "a Map for `nodeAt`";
+  corrected 2026-08-10, SPEC CORRECTIONS A6.)
+- §7's B8 says **"Do not change the algorithm — it is correct."** §3 agrees:
+  *"Optimise the complexity; do not touch the algorithm."*
+- **§9.2 wants these budgets CI-enforced** once Stage 1 lands. `bench:rooms` is
+  deliberately outside CI, and no budget is enforced anywhere. Open.
+- ~~There is no perf baseline in the repo~~ — **RESOLVED 2026-08-10**, and it is
+  B8's own deliverable; see open question 12. Compare before/after on one machine
+  in one sitting; the absolute figures are bound to that laptop's thermal state.
 
-Simultaneously: protect-only, the single largest exclusion from
-`noUncheckedIndexedAccess` (212 of 309 errors, SD3), validated only by fixtures
-co-authored with it, and scored by a heuristic with no sanity gate (B5b). Each
-constraint is defensible; together they mean no confident change is possible.
+### 7. M2 — `detectWalls.ts` is hard to change, but not forbidden `OPEN`
 
-It has already demonstrated this: a bad merge duplicated 83 lines inside it and
-**only the compiler caught it** — not a test, not review.
+**There is no §3 deadlock. Corrected 2026-08-10.** B13's M2 described one —
+"protect-only + type-excluded + circularly tested composes into nobody can change
+the module that most needs changing". Two of those three inputs were wrong:
+
+- **"Protect-only" was never in the specification.** §3 imposes two conditions —
+  *a specific, argued reason* and *extend rather than replace* — and §10 rule 7
+  repeats the same condition for `detectWalls.ts`'s scoring. Neither prohibits
+  change, and neither requires a proof of equivalence.
+- **§3 protects the binarisation structure and the ordering, not the file.**
+  `array[i]` indexing in numeric loops is neither, so §3 was never a reason to
+  decline `noUncheckedIndexedAccess` (SD3, corrected).
+
+What remains true: it is the single largest exclusion from
+`noUncheckedIndexedAccess` (212 of 309 errors), and it is validated only by
+fixtures co-authored with it. A bad merge duplicated 83 lines inside it and **only
+the compiler caught it** — not a test, not review.
+
+**The only genuine gate is the corpus**, and that is a sourcing problem, not a
+permission problem.
 
 **Sequence:** real corpus → B5b's sanity gate → Worker move (taking
-`noUncheckedIndexedAccess` for that directory during the rewrite). Do not attempt
-B11 before the gate.
+`noUncheckedIndexedAccess` for that directory during the rewrite, per SD3's revisit
+trigger). Do not attempt B11 before the gate.
 
 ### 8. Other genuinely unresolved items
 
@@ -325,7 +478,83 @@ B11 before the gate.
 | **8a** | **Asset licensing.** `character.glb` and the two Mixamo FBX clips ship in `public/` with no licence file. Audit Q16 calls this *"the only unresolved licence exposure in the project"*. Compounded by item 2, since the source `.blend` and export formats are committed too. | OPEN — needs a human answer |
 | **8b** | **Production backend.** `aiPlugin` runs only under `vite dev`, and Vercel serves the static build, so **the AI endpoints do not exist in production** — a successful deploy does not mean the AI features work there. Users get B2's degradation path. Whether that is intended is not recorded. | OPEN — audit Q5 |
 | **8c** | **Contradictory AI-policy comments.** `openingDetector.ts` states the project *"deliberately does not use Claude/Anthropic"*, while `designAgent.ts` sets a Claude model id via OpenRouter. One is stale. Documentation defect, not behavioural. | OPEN — audit Q6 |
-| **8d** | **Coverage gaps left deliberately.** `export/pdf.ts` (byte-level — needs a PDF parser, its own dependency decision), `plan/planSheet.ts`, `export/statement.ts`, and most React components. The 121 `data-testid` attributes are waiting. | OPEN |
+| **8d** | **Coverage gaps left deliberately.** `plan/planSheet.ts`, `export/statement.ts`, and most React components. The 121 `data-testid` attributes are waiting. (`export/pdf.ts` is no longer merely a gap — it is a Stage 1 exit failure; see open question 4a.) | OPEN |
+
+### 9. §10 rule 3 is still violated — partial `loadDesign` `OPEN`
+
+[`useSharedDesign.ts:39-44`](../src/persistence/useSharedDesign.ts#L39-L44) calls
+`loadDesign({ name, walls, readOnly, viewMode })`, omitting **eleven** fields:
+`furniture`, `roomLabels`, `stairs`, `floors`, `plot`, `units`, `constructionRate`,
+`northOffset`, `plotFacing`, `floorMaterial`, `blueprint`.
+
+The damaged-share-link path *wants* an empty read-only viewer, so the defaults-to-empty
+behaviour is the intent there — but intent does not make it compliant, and §10 rule 3
+is unconditional. **A compliant alternative exists:** `newDesign()` plus the two view
+flags, or a named `resetToEmpty({ readOnly, viewMode })`. Because a compliant
+alternative exists at a cost of a few lines, **no exception needs carving out of the
+rule** (see SD1).
+
+Scheduled as implementation work, not doc work.
+
+### 10. §10 rule 6 was violated — CV tuned against `samples/` `OPEN`
+
+*"Tune the CV pipeline against `samples/` — those fixtures are generated by
+`gen-blueprint.mjs` and testing against them is circular."*
+
+SD4's two fixes chose constants against exactly those generated fixtures:
+`FACE_LENGTH_RATIO = 0.6` ([`adr/0002:51`](adr/0002-stage-1-changeability.md#L51))
+and the `distThreshold` predicate ([`adr/0002:47`](adr/0002-stage-1-changeability.md#L47)).
+ADR 0002 concedes the circularity in its own closing section and ships them anyway
+— which was right at the time, since the alternative was shipping two known CV
+defects.
+
+**Both constants must be revalidated against the real corpus** before any accuracy
+claim rests on them. Compounds open question 1: the scorer's sanity gate must not be
+tuned the same way.
+
+### 11. B7 is a schema change, not performance work `OPEN` · **scope correction**
+
+**Corrected 2026-08-10.** This file previously framed B7 as the room-detection
+performance work and said *"B8 is folded into B7… all six call `resolveRooms`, which
+B7 rewrites."* That mis-scopes the next task.
+
+§7's PART B is explicit:
+
+- **B7 = "Room identity (model v2)"** — stable `RoomId`s, `Selection{kind:'room'}`
+  carrying `roomId` **instead of `anchor`**, `boundaryHint` for label re-attachment
+  after edits, the open-plan multi-label case, and how `resolveRooms` changes.
+  *"This blocks multi-select, room quantities, finishes schedules and IFC export."*
+- **B8 = "Room detection performance"** — the indexing and the single shared
+  memoisation point. A separate task.
+
+§6 calls room identity **"the deepest change in the whole roadmap"**. None of
+`RoomId`, `boundaryHint`, the `Selection` change, or a migration appeared in the
+previous handoff.
+
+**Version offset — record this.** §6 defines *its* v2 as provenance on every element
+**plus** RoomIds **plus** Calibration. B3 shipped **only** Calibration and consumed
+`DESIGN_VERSION = 2`. **B7 therefore needs `DESIGN_VERSION = 3`, not 2**, and every
+§6 version number is offset from the code by one. L7 and §6's migration contract
+apply: an old-format fixture, an expected new-format fixture, and a round-trip test.
+
+Folding B8 into B7 may still be sensible — both touch `resolveRooms` — but it is a
+decision to take deliberately, not an assumption inherited from a mis-scoped note.
+
+### 12. Benchmark recorded as B8 partial progress `RESOLVED 2026-08-10`
+
+[`docs/testing/benchmarks.md`](testing/benchmarks.md) (`576cbdc`) is **B8's own
+deliverable**, not unscoped preparatory work: §7's B8 asks for *"the benchmark that
+proves it, at 50 / 200 / 500 walls"* — exactly those three sizes. B8 is now partially
+complete: benchmark done, indexing and shared memoisation outstanding.
+
+### 13. Budgets and exit criteria with no evidence behind them `OPEN`
+
+| | Item | Owner |
+|---|---|---|
+| **13a** | **§7 Stage 0.2's exit was never performed.** It reads: *"`npm run build && npm run preview` — the AI panel states its status correctly, and nothing else in the app is degraded."* That is a manual acceptance run. Nobody has done it. | human, ~15 min |
+| **13b** | **§7 Stage 0.3's second exit clause is unasserted.** The exit requires *"`metresPerPixel` is unchanged **and the walls are built at the user's scale**"*. The first half is covered at [`calibration.test.ts:207`](../src/blueprint/calibration.test.ts#L207). The second is asserted nowhere — [`:197`](../src/blueprint/calibration.test.ts#L197) counts stale walls, it does not check built geometry. | agent |
+| **13c** | **§9.2 sets an autosave budget of < 20 ms, non-blocking.** F1/F2's fix restructured exactly that path and was **never measured against it**. §9.2 had already documented the defect — *"Re-validates and re-serialises the entire project library every 4 s"* — with the budget attached; the B13 review rediscovered it from the code without citing it. | agent |
+| **13d** | **§10 rule 10 near-misses.** `patchWall` allocates a new array unconditionally, so a patch against a non-existent id records a **phantom history step**. `forgetPixels` (SD7) allocates a new `Blueprint` on every snapshot — safe **only** because `blueprintChanged` compares fields rather than references. Both are the hazard rule 10 names: *"a `.map()` in the store that returns a structurally-identical new array — the undo recorder compares by reference."* | agent |
 
 ---
 
@@ -371,12 +600,17 @@ Neither `corpus/` nor a manifest exists yet.
 
 ## Do not
 
-- **Do not redo Stage 0 or Stage 1.** Verified clean at `c24c432` on 2026-08-10.
+- **Do not redo Stage 0 or Stage 1.** Gate verified clean at `576cbdc` on
+  2026-08-10. Note that "clean gate" is not "stage exited" — Stage 1 has two
+  failing §7 exit clauses (open question 4).
 - **Do not restart the roadmap.**
 - **Do not rewrite history** — no `reset`, `rebase`, or force-push — without explicit
   approval. This includes the 49 MB of binaries in open question 2.
-- **Do not modify `detectWalls.ts`** unless the work is explicitly authorised. It is
-  marked protect-only and is the subject of open questions 1 and 7.
+- **Do not rewrite `detectWalls.ts`'s scoring, or the four-way binarisation
+  structure, without an argued reason** (§3, §10 rule 7) — and **never** reorder
+  `mergeWallFaces` / `typicalThickness` (§10 rule 9). Change is permitted with an
+  argument and by extension; it is not forbidden. Do not repeat the "protect-only"
+  framing — that phrase was never in the specification.
 - **Do not rewrite or "clean up" `CharacterAvatar.tsx`** without a concrete, current
   issue. It was corrupted once by a bad merge and has already been repaired.
 - **Do not claim real-world detection accuracy without the real corpus.** The golden
@@ -392,6 +626,13 @@ Neither `corpus/` nor a manifest exists yet.
   `fileName`/`width`/`height` from `blueprintChanged` — that pairing is load-bearing.
 - **Do not move undo state back to module scope** (M3). The engine is a factory so a
   second document is possible later.
+- **Do not cite the specification by line number** — cite by section. §10 rule
+  numbers shifted by one on 2026-08-10 and will shift again.
+- **Do not claim a §-reference without opening `MASTER_PROMPT.md`.** Roughly one in
+  three carried citations was wrong when they were finally checked, and one was a
+  phrase that did not exist.
+- **Do not describe B7 as performance work** (open question 11), and **do not assume
+  `DESIGN_VERSION = 2` is free** — B3 consumed it.
 
 ---
 
@@ -403,23 +644,33 @@ Neither `corpus/` nor a manifest exists yet.
 > limitation and scope claims to the evidence that is actually available. Do not
 > silently fill gaps.**
 
-Concretely: **`MASTER_PROMPT.md` has never been available** — not as
-`space-designer-master-prompt-v2.md`, not as `docs/MASTER_PROMPT.md`, across four
-sessions. Every reference to §3, §7, §9.2 and §10 in this file and in the ADRs is
-carried forward and **has not been verified against the source document**. SD1's
-claim that §10 rule 4 is superseded is, at present, unfalsifiable.
+**`MASTER_PROMPT.md` is now committed** and every carried §-reference has been
+checked. This principle is retained because of what the check found, not as a
+precaution.
 
-Note that a carried citation is now compiled into
-[`tsconfig.app.json:20`](../tsconfig.app.json#L20), which tells every future reader
-that `detectWalls.ts` is protect-only. Each repetition makes it more load-bearing
-and no more true.
+Across four sessions the specification was unavailable, and §-references were
+written from memory and repeated until they read as settled. When the document
+finally arrived, **the carried citations were wrong at a rate of roughly one in
+three** — and the most consequential of them, *"§3 marks `detectWalls.ts`
+protect-only"*, was a **phrase that appears nowhere in the specification.** It had
+been copied from a chat message into an ADR, into `tsconfig.app.json`, and into four
+places in this file, where it manufactured a deadlock that did not exist and
+justified declining a §7 Stage 1 instruction.
 
-**Highest-value fix available:** commit the master prompt to `docs/MASTER_PROMPT.md`.
-It is the only referenced authority in this project not under version control.
+Nothing about that was dishonest. Each repetition was a good-faith citation of the
+previous one. **That is the failure mode: a claim gets more load-bearing with every
+repetition and no more true.** A citation compiled into a config file is not
+evidence; it is the same assertion with better distribution.
 
-B13's deliverables 3, 4 and 5 — verifying Stage 0/1 against §7 as written, auditing
-every carried §-reference, and sweeping for §3/§10 contradictions — **remain
-undelivered** for this reason, and must not be attempted from memory.
+The corrections are recorded in SPEC CORRECTIONS (`MASTER_PROMPT.md`), in the
+appended CORRECTIONS section of `adr/0002`, and inline throughout this file.
+
+**Still unverified, and it should stay labelled:** §1 GROUND TRUTH is audited at
+commit `8e1d02d` and is now substantially stale — `strict` is on, tests and CI
+exist, `DESIGN_VERSION` is 2, `Blueprint` carries `calibration`, and the history
+engine is no longer four module-scope variables. §1 itself says *"Do not contradict
+this section from memory; if you believe something here is stale, verify in the code
+and say what you checked."* Treat §1 as a snapshot of `8e1d02d`, not of HEAD.
 
 ### A contradiction is a finding, not something to smooth over
 

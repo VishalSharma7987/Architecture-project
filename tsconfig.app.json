@@ -17,10 +17,18 @@
      * `noUncheckedIndexedAccess` is deliberately NOT enabled. It produces 309
      * errors, 212 of them in `blueprint/detectWalls.ts` alone, and almost all
      * are `array[i]` inside numeric loops whose index is provably in range.
-     * Silencing those with `!` would touch a module §3 marks protect-only, add
-     * ~300 assertions that each say "trust me", and teach the next reader that
-     * `!` is punctuation. The rule is worth having on code written under it,
-     * not retrofitted with a sed script. Revisit per-directory.
+     * Silencing them with `!` would add ~300 assertions that each say "trust
+     * me" and teach the next reader that `!` is punctuation. The rule is worth
+     * having on code written under it, not retrofitted with a sed script.
+     *
+     * This DEVIATES from MASTER_PROMPT §7 Stage 1, which instructs "Add
+     * `noUncheckedIndexedAccess` after". The deviation rests on the error count
+     * above and nothing else. An earlier version of this comment claimed §3
+     * marks `detectWalls.ts` protect-only; §3 says no such thing, and that
+     * justification has been withdrawn — see docs/STATE.md SD3.
+     *
+     * Revisit at the Web Worker migration (§9.2): that rewrite touches the hot
+     * loops anyway, and typed-array access removes most of the 212 for free.
      */
     "strict": true,
 

@@ -11,6 +11,9 @@
 > 3. Use **PART B** task prompts for daily work.
 > 4. Re-run the audit prompt after Stage 1 and diff the completion matrix. That diff is your only honest progress metric.
 
+> **How to cite this document**
+> Line-number citations into this file are unstable across edits. **Cite by section — `§7 Stage 0.3` — never by line — `§7:338`.** Numbered rules inside §10 are also unstable: rule 1 was struck on 2026-08-10 and everything below it shifted up by one, silently invalidating every existing `§10.N` citation. When citing a §10 rule, quote a few words of the rule alongside its number. The corrections are recorded in **SPEC CORRECTIONS** at the end of this file.
+
 ---
 ---
 
@@ -123,7 +126,7 @@ These are absolute. If any instruction you receive later conflicts with one, fla
 
 | # | Law |
 |---|---|
-| **L1** | **No model — LLM or vision — ever produces a coordinate, length, angle, area, or scale factor that reaches the document.** Classification, naming, explanation and prose are permitted. Numbers are not. |
+| **L1** | **No model output may become the AUTHORITY for a coordinate, length, angle, area or scale.** Model-derived numbers may enter the document only through a ranked, labelled, user-overridable channel that no automated process can escalate — see §8. Classification, naming, explanation and prose are unrestricted. *(Corrected 2026-08-10 — see SPEC CORRECTIONS. The original absolute ban contradicted §8 and §7 Stage 0.3.)* |
 | **L2** | **User input outranks everything.** A manually set scale, wall length, or room name can never be overwritten by an automated process. Ever. Silently or otherwise. |
 | **L3** | **The app must be fully usable with every AI service disabled.** Verified by an actual test, not by inspection. |
 | **L4** | **No destructive operation without a confirmation, an undo, or both.** "Destructive" means: any write that removes user-authored data the user cannot immediately restore. |
@@ -141,7 +144,7 @@ The audit found real quality here. Rewriting any of the following without a spec
 |---|---|---|
 | **`parseDesign`** — `src/persistence/schema.ts:325-499` | One validator for file import, localStorage, share links **and LLM output**. The malformed-vs-odd distinction (reject the file / drop the element and warn) is real and consistently applied. `Number.isFinite` catches `1e999` before it reaches geometry. **This is the single decision that keeps the AI blast radius contained.** | It is also the natural home for the migration table (L7) and for provenance validation (L5). |
 | **`plan/rooms.ts` planar-graph face traversal** | Textbook-correct: split at T-junctions, weld at 1 mm, prune dangles to a fixed point, trace half-edges in angular order, discard the outer face by winding sign. Handles L- and U-shaped rooms. | It is **O(n²) twice over** and runs 6+ times per wall edit. Optimise the complexity; do not touch the algorithm. |
-| **`blueprint/detectWalls.ts` four-way binarisation** | Runs four ink readings and **scores the candidates by total detected wall length** rather than guessing the drawing's style. `mergeWallFaces` fuses the two drawn faces of an outlined wall. | Ordering is load-bearing: `mergeWallFaces` **must** run before `typicalThickness`. Reordering two lines silently degrades every downstream filter. |
+| **`blueprint/detectWalls.ts` four-way binarisation** | The **structure** is good: four independent ink readings, each run through the same band pipeline, so no single binarisation has to be right for every drawing style. `mergeWallFaces` fuses the two drawn faces of an outlined wall. ⚠️ **The scoring is NOT protected.** This row previously praised "scores the candidates by total detected wall length"; ADR 0002:43 measured that same score preferring **75 imaginary walls totalling 77,592 px to 7 real walls totalling 6,300 px**, with two of three fixtures detecting **zero** real walls. The property this module was protected for is the property that failed. A sanity gate in front of the scorer is wanted, not forbidden — see B5b. | Ordering is load-bearing: `mergeWallFaces` **must** run before `typicalThickness`. Reordering two lines silently degrades every downstream filter. |
 | **`rooms/resolve.ts` label placement** | Area-weighted centroid, **then tested for containment**, with a widest-interior-chord fallback for L-shapes. Exact for rectilinear plans. | The half-open PIP comparisons are deliberate. Changing `<` to `<=` makes labels flicker between adjacent rooms. |
 | **`sensibleWidth`** — `detectOpenings.ts:496-511` | AI-reported widths are trusted **only inside a real-world plausibility band** per opening type, else replaced with a physical default, then capped at 90% of the wall. | This is exactly the pattern missing from `applyPlanScale` twelve lines earlier in the same file. Copy it there. |
 | **`export/pdf.ts`** | A hand-rolled PDF writer with byte offsets measured off emitted chunks rather than predicted, a documented "what it does not do" block, and a deliberate ₹→`Rs.` transliteration. | WinAnsi only. Indic scripts become `?`. That is a product bug (§7 S4), not a code-quality one. |
@@ -449,7 +452,7 @@ Internal unit is **metres, float64** — already true, keep it. Introduce one sh
 | Autosave | < 20 ms, non-blocking | **Re-validates and re-serialises the entire project library every 4 s** — `storage.ts:47-68` |
 | 3D rebuild after moving one opening | only the touched wall | Rebuilds every material and re-clones every texture — `Walls.tsx:127-141` |
 
-Fixes in order of value: memoise `resolveRooms` **once** at a shared level rather than in six independent `useMemo`s → index the room graph (spatial hash for `splitAtIntersections`, a Map for `nodeAt`) → move CV into a Web Worker → make `readProjects` incremental.
+Fixes in order of value: memoise `resolveRooms` **once** at a shared level rather than in six independent `useMemo`s → index the room graph (spatial hash for `splitAtIntersections`; for `nodeAt`, **quantised keys plus neighbour probing** — welding is a 1 mm *tolerance* query, which a plain Map cannot answer) → move CV into a Web Worker → make `readProjects` incremental.
 
 ### 9.3 Reliability
 Crash-safe autosave covering the whole snapshot · version history with named milestones · undo depth ≥ 200 with the blueprint included · cross-tab coordination (`storage` event or a lock) · a share-link size check before the link is produced · `AbortController` on every network call.
@@ -461,20 +464,21 @@ Drawings are client-confidential. Keep the `server/`↔`src/` boundary exactly a
 
 ## 10. NEVER DO THIS
 
-1. Ask a model for a coordinate, length, angle, area, or scale.
-2. Write `metresPerPixel` from anywhere except `CalibrationService`.
-3. Call an AI-derived scale "calibrated" in any UI string, return value, or log.
-4. Call `loadDesign` with a partial field set. It defaults everything absent to empty — that is the mechanism of the worst bug in the codebase.
-5. Add a feature that breaks when the network is down.
-6. Ship a schema change without a migration and a round-trip test.
-7. Tune the CV pipeline against `samples/` — those fixtures are generated by `gen-blueprint.mjs` and testing against them is circular.
-8. Rewrite `parseDesign`, `plan/rooms.ts`, `detectWalls.ts`'s scoring, `rooms/resolve.ts`'s PIP, or `export/pdf.ts` without an argued reason.
-9. Read `state.floors` directly instead of `allFloors(state)`.
-10. Reorder `mergeWallFaces` and `typicalThickness` in `detectWalls.ts`.
-11. Introduce a `.map()` in the store that returns a structurally-identical new array — the undo recorder compares by reference.
-12. Reverse-engineer DWG. Licence it or defer it.
-13. Build more AI features before Stage 2 is loved.
-14. Commit the ~4 MB of unreferenced binaries currently staged at the repo root. Once committed they are permanent history.
+> ⚠️ **Renumbered 2026-08-10.** The old rule 1 ("Ask a model for a coordinate, length, angle, area, or scale") was struck as a stricter duplicate of L1 than §8 permits. Everything below it moved up by one. Old `§10.N` citations are off by one for N ≥ 2 — see SPEC CORRECTIONS for the map.
+
+1. Write `metresPerPixel` from anywhere except `CalibrationService`.
+2. Call an AI-derived scale "calibrated" in any UI string, return value, or log.
+3. Call `loadDesign` with a partial field set. It defaults everything absent to empty — that is the mechanism of the worst bug in the codebase.
+4. Add a feature that breaks when the network is down.
+5. Ship a schema change without a migration and a round-trip test.
+6. Tune the CV pipeline against `samples/` — those fixtures are generated by `gen-blueprint.mjs` and testing against them is circular.
+7. Rewrite `parseDesign`, `plan/rooms.ts`, `detectWalls.ts`'s scoring, `rooms/resolve.ts`'s PIP, or `export/pdf.ts` without an argued reason.
+8. Act on `state.floors` as if it were current. `floors[activeFloor]` is deliberately stale while that storey is open. It may be read **only** to feed `allFloors(state)` — which takes it as an argument, so "never read it directly" is literally unsatisfiable and was the wrong rule. Enforced by `src/store/floors.test.ts`.
+9. Reorder `mergeWallFaces` and `typicalThickness` in `detectWalls.ts`.
+10. Introduce a `.map()` in the store that returns a structurally-identical new array — the undo recorder compares by reference.
+11. Reverse-engineer DWG. Licence it or defer it.
+12. Build more AI features before Stage 2 is loved.
+13. Commit the ~49 MB of unreferenced binaries at the repo root. Once committed they are permanent history.
 
 ---
 
@@ -568,3 +572,69 @@ Each assumes Part A is loaded. Run roughly in order.
 
 **B13 — Adversarial review.**
 > You are a hostile principal engineer doing Series A technical due diligence on this repo. Find the five things that break at 1,000 concurrent architects and the three that make this unmaintainable in 18 months. Reference the audit. Be brutal and specific.
+
+---
+---
+
+# SPEC CORRECTIONS
+
+This document is authoritative, not infallible. Where the repository has proved
+a clause wrong, the clause changes and the change is recorded here — so a future
+reader can tell an original clause from a corrected one, and can see what the
+original said.
+
+All entries below are from the B13 deliverables 3–7 verification pass, the first
+time this specification was checked against the code rather than quoted from
+memory.
+
+### 2026-08-10
+
+| # | Clause | Change | Why |
+|---|---|---|---|
+| **A1** | **L1** | **Substantive reversal.** Was: *"No model — LLM or vision — ever produces a coordinate, length, angle, area, or scale factor that reaches the document. Classification, naming, explanation and prose are permitted. Numbers are not."* Now: no model output may become the **authority** for those quantities; model numbers may enter only through a ranked, labelled, user-overridable channel per §8. | The absolute ban contradicted two other parts of this same document. §8 grants `ai` **rank 6** in the authority ladder, and a rank **is** a permission to write. §7 Stage 0.3 instructs *relabelling* `applyPlanScale` from "calibrated" to "estimated" — an instruction that is meaningless if the path were forbidden outright. Read literally, L1 would delete `applyPlanScale` and all AI opening, room and furniture placement — features §3 and §7 both treat as things to **improve**. The code implements §8 correctly; L1 was over-stated. The protection users actually need is not "no model numbers" but "no model number outranks a human measurement", which is what `proposeCalibration` enforces and `calibration.test.ts` tests. |
+| **A2** | **§10 rule 1** | **Struck.** Was: *"Ask a model for a coordinate, length, angle, area, or scale."* Remaining rules renumbered; see the map below. | A stricter duplicate of L1 than §8 permits. Fell with A1. |
+| **A3** | **§3, `detectWalls.ts` row** | Removed the claim that scoring candidates by **total detected wall length** is a virtue. The row now protects the four-way binarisation **structure** and the `mergeWallFaces` → `typicalThickness` ordering, and states that the scoring is explicitly **not** protected. | ADR 0002:43 measured the praised score preferring **75 imaginary walls totalling 77,592 px to 7 real walls totalling 6,300 px**; `blueprint-detailed.png` and `blueprint-dark.png` detected **zero** real walls. The property the module was protected for is the property that failed. Leaving the claim in place made a needed fix look like a prohibited rewrite. |
+| **A4** | **§10 rule 9 → rule 8** | Reworded from *"Read `state.floors` directly instead of `allFloors(state)`"* to a ban on **acting** on the raw array. | `allFloors(state)` takes `floors` as an argument, so the original was literally unsatisfiable: `Building.tsx`, `Toolbar.tsx` and `RoomSchedulePanel.tsx` **must** read it to call the accessor. The wording was defective; the code was correct. Now enforced by `src/store/floors.test.ts`. |
+| **A5** | **§10 rule 14 → rule 13** | `~4 MB` → `~49 MB`. | The figure was inherited from audit Q17 and understated the total by roughly 12×. `blender(construction+worker).blend` alone is 37.7 MB. |
+| **A6** | **§9.2** | *"a Map for `nodeAt`"* → **quantised keys plus neighbour probing**. | Under-specified. Welding is a 1 mm **tolerance** query; a plain Map answers exact-key lookups only and cannot express it. |
+
+### §10 renumbering map (A2)
+
+| Old | New | Rule |
+|---|---|---|
+| 1 | — | *struck* (ask a model for a coordinate/length/angle/area/scale) |
+| 2 | **1** | `metresPerPixel` only from `CalibrationService` |
+| 3 | **2** | never call an AI scale "calibrated" |
+| 4 | **3** | no partial `loadDesign` |
+| 5 | **4** | nothing that breaks offline |
+| 6 | **5** | no schema change without migration + round-trip test |
+| 7 | **6** | do not tune CV against `samples/` |
+| 8 | **7** | do not rewrite the protected modules without an argued reason |
+| 9 | **8** | do not act on raw `state.floors` |
+| 10 | **9** | do not reorder `mergeWallFaces` / `typicalThickness` |
+| 11 | **10** | no structurally-identical `.map()` in the store |
+| 12 | **11** | do not reverse-engineer DWG |
+| 13 | **12** | no more AI before Stage 2 is loved |
+| 14 | **13** | do not commit the root binaries |
+
+### Clauses checked and found CORRECT
+
+Recorded so they are not re-litigated: §9.2's Web Worker item (cited by SD3),
+§4-3 `atan2(-dz, dx)`, §4-4 `formatLength`/`parseLength` asymmetry, §4-5 Vastu
+frame order, §4-6 the collision degenerate branch, §8's `[1e-5, 1]` clamp, and
+§3's `parseDesign` row naming itself the natural home for the migration table.
+
+### Known-wrong things NOT corrected here
+
+- **§10 rule 3** (partial `loadDesign`) is still violated by
+  `src/persistence/useSharedDesign.ts:39-44`. The rule is right and the code is
+  wrong; the fix is scheduled, not spec work.
+- **§3's `sensibleWidth` row** instructs *"Copy it there"* — copy the per-type
+  plausibility band into `applyPlanScale`. Only the §8 clamp was implemented.
+  The instruction stands; it has not been carried out.
+- **§1 GROUND TRUTH** is audited at commit `8e1d02d` and is now substantially
+  stale: `strict` is on, tests exist, CI exists, `DESIGN_VERSION` is 2,
+  `Blueprint` carries `calibration`, and the history engine is no longer four
+  module-scope variables. §1 says *"Do not contradict this section from memory;
+  if you believe something here is stale, verify in the code and say what you
+  checked."* Treat §1 as a snapshot of `8e1d02d`, not of HEAD.
