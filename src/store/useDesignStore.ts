@@ -143,6 +143,21 @@ export type RoomLabel = {
    * still drives the zone colour while the caption can read as anything.
    */
   name?: string
+  /**
+   * The polygon this name last resolved to, for re-attaching it after the walls
+   * move (B7.6). Written at SERIALIZE time and read at parse time — never
+   * during editing or rendering.
+   *
+   * That timing is the whole design, not an optimisation. Writing it from
+   * inside `resolveRooms` would replace `roomLabels`, which (a) gives B8's
+   * cache a new key on every call so it never hits, (b) triggers a render,
+   * which resolves, which writes — an infinite loop, and (c) is seen by
+   * `designChanged`, a pure reference compare, so every resolve would record an
+   * undo step the user cannot see (§4 invariant 1, §10 rule 10). Computed at
+   * save time instead, `resolveRooms` stays a pure function of its arguments
+   * and the hint is still durable across the reload it exists for.
+   */
+  boundaryHint?: Point[]
 }
 
 /**

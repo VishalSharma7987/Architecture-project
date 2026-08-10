@@ -228,6 +228,48 @@ export function detachedLabels(
   return labels.filter((label) => !attached.has(label.id))
 }
 
+/**
+ * `labels`, each carrying the polygon it currently resolves to.
+ *
+ * Called at SAVE time only — see `RoomLabel.boundaryHint` for why never during
+ * editing. Returns the ORIGINAL array unchanged when no hint would change,
+ * so a save cannot hand the store a new `roomLabels` identity and make the
+ * undo recorder think something was edited (§10 rule 10).
+ *
+ * Detection here is the memoised `resolveRooms`, so on the storey the user is
+ * editing this is a `WeakMap` hit and costs nothing. Only the active floor is
+ * hinted: the other storeys' walls are frozen in `floors[]` and cannot have
+ * moved, so their hints cannot have gone stale. That is also what keeps
+ * autosave inside §9.2's 20 ms — three uncached resolves at 500 walls would be
+ * ~35 ms against a measured 2.2 ms baseline.
+ */
+export function withBoundaryHints(
+  walls: Wall[],
+  labels: RoomLabel[],
+): RoomLabel[] {
+  if (labels.length === 0) return labels
+
+  const rooms = resolveRooms(walls, labels)
+  const polygonFor = new Map<RoomId, Point[]>()
+  for (const room of rooms) {
+    if (room.label) polygonFor.set(room.label.id, room.polygon)
+    for (const extra of room.extraLabels) polygonFor.set(extra.id, room.polygon)
+  }
+
+  let changed = false
+  const hinted = labels.map((label) => {
+    const polygon = polygonFor.get(label.id)
+    // A detached label keeps the hint it already had — that hint is precisely
+    // what B7.6 will use to find its way back, so overwriting it with nothing
+    // would throw away the only record of where the room used to be.
+    if (!polygon || polygon === label.boundaryHint) return label
+    changed = true
+    return { ...label, boundaryHint: polygon }
+  })
+
+  return changed ? hinted : labels
+}
+
 /** The room containing a point, or null. Used for click-to-name. */
 export function roomAtPoint(
   rooms: ResolvedRoom[],

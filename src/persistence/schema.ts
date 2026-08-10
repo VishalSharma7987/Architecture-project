@@ -33,6 +33,7 @@ import {
   type MaterialId,
 } from '../materials/palette'
 import { isFurnitureType } from '../furniture/catalog'
+import { withBoundaryHints } from '../rooms/resolve'
 
 /**
  * Bump when the on-disk shape changes, and add an entry to `MIGRATIONS`.
@@ -141,7 +142,13 @@ export function serializeDesign(input: {
     },
     walls: input.walls,
     furniture: input.furniture ?? [],
-    rooms: input.roomLabels ?? [],
+    // Hinted HERE, at save time, and nowhere else — see `RoomLabel.boundaryHint`
+    // for why writing it during a resolve would break B8's cache, the render
+    // loop and the undo recorder at once. Only the active storey: the other
+    // floors' walls are frozen in `floors[]`, so their hints cannot be stale,
+    // and resolving all three would take autosave from a measured 2.2 ms to
+    // ~35 ms against §9.2's 20 ms budget.
+    rooms: withBoundaryHints(input.walls, input.roomLabels ?? []),
     plot: input.plot ?? null,
     floors: input.floors ?? [],
     blueprint: input.blueprint ? stripSrc(input.blueprint) : null,
@@ -348,6 +355,27 @@ function parseWall(
   }
 }
 
+/**
+ * A saved `boundaryHint`, or undefined.
+ *
+ * Three points minimum — fewer is not a polygon, and a hint that cannot bound
+ * anything is worse than none because B7.6's matcher would still try to use it.
+ * Every coordinate goes through `parsePoint`, so `1e999` is caught here rather
+ * than in the geometry (§3).
+ */
+function parseBoundaryHint(value: unknown): Point[] | undefined {
+  if (!Array.isArray(value) || value.length < 3) return undefined
+  const points: Point[] = []
+  for (const raw of value) {
+    const point = parsePoint(raw)
+    // All or nothing: a ring with a hole punched in it describes a shape the
+    // user never had.
+    if (!point) return undefined
+    points.push(point)
+  }
+  return points
+}
+
 const ROOM_TYPES: RoomType[] = [
   'living',
   'bedroom',
@@ -393,6 +421,8 @@ function parseRoomLabel(
   if (typeof value.name === 'string' && value.name.trim()) {
     label.name = value.name
   }
+  const hint = parseBoundaryHint(value.boundaryHint)
+  if (hint) label.boundaryHint = hint
   return label
 }
 

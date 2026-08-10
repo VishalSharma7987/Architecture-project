@@ -261,6 +261,60 @@ benchmark could have caught it.
 
 ---
 
+# Autosave — OQ13c, and B7.5's prerequisite
+
+Recorded 2026-08-10, same machine, same sitting.
+Harness: [`src/persistence/autosave.bench.ts`](../../src/persistence/autosave.bench.ts).
+
+§9.2 budgets autosave at **< 20 ms, non-blocking**. F1/F2 restructured exactly
+that path and never measured it against the budget — [`STATE.md` open question
+13c](../STATE.md). B7.5 wanted to add a room resolve to that path, so it had to
+be measured **before** anything was added.
+
+One tick is the body of the `setInterval` in
+[`useAutosave.ts:111`](../../src/persistence/useAutosave.ts#L111): the dirty
+check, `allFloors`, `serializeDesign`, then `JSON.stringify` and two
+`localStorage.setItem`s.
+
+> "Non-blocking" cannot mean the tick yields — it does not. `localStorage` is
+> synchronous and the whole tick runs on the main thread. It can only mean
+> "short enough not to be felt", which is what the 20 ms is.
+
+| Walls | Storeys | Payload | Before B7.5 | After B7.5 | Budget |
+|---|---|---|---|---|---|
+| 50 | 1 | 13 KiB | 0.139 ms | 0.135 ms | ✅ |
+| 50 | 3 | 26 KiB | 0.224 ms | 0.239 ms | ✅ |
+| 200 | 1 | 53 KiB | 0.429 ms | 0.527 ms | ✅ |
+| 200 | 3 | 106 KiB | 0.867 ms | 0.917 ms | ✅ |
+| 500 | 1 | 132 KiB | 1.101 ms | 1.237 ms | ✅ |
+| **500** | **3** | **265 KiB** | **2.187 ms** | **2.368 ms** | ✅ **8.5× under** |
+
+**OQ13c is answered: the path was never over budget.** At the largest case it
+uses 11% of it. F1/F2 did no damage; nobody had checked.
+
+### What the measurement changed about B7.5
+
+The design report proposed writing `boundaryHint` for every storey at save
+time. This table is why it does not.
+
+At 500 walls a `resolveRooms` is ~16.5 ms. Three storeys means the active
+floor's resolve hits B8's cache and the **other two do not** — 2 × 16.5 ≈ 33 ms
+of new work on a path with a 2.2 ms baseline and a 20 ms ceiling. That is
+**~75% over budget**, added by a feature whose whole purpose is bookkeeping.
+
+So only the **active floor** is hinted. The other storeys' walls are frozen in
+`floors[]` and cannot have moved, so their hints cannot have gone stale — the
+work was never needed, only assumed. Measured cost: **+0.18 ms**, 8%.
+
+**One caveat on that figure.** The harness warms up before sampling, so the
+active floor's resolve is a cache hit — which is the real case, since some
+consumer (`StatusBar`, the plan canvas, `RoomLabels`) has always resolved by
+the time a tick fires. A genuinely cold save at 500 walls would add one
+uncached resolve: ~16.5 + 2.4 ≈ **18.9 ms**, still under 20 but with little
+room. If B8's spatial indexing is ever argued for, this is a second reason.
+
+---
+
 ## Caveats — what this does not measure
 
 - **Node, not the browser.** No React reconciliation, no canvas redraw, no
@@ -280,6 +334,9 @@ benchmark could have caught it.
 - **Still not through React.** The per-edit arms model N consumers as N calls.
   What they cannot show is a consumer whose `useMemo` invalidates for an
   unrelated reason. `memo.test.tsx` covers that; the benchmark does not.
+- **jsdom's `localStorage`, not a browser's.** The autosave figures use an
+  in-memory implementation. A real browser's `setItem` is disk-backed and
+  synchronous, so it is likely SLOWER — these are a floor, not a ceiling.
 - **Cache eviction is untested here.** The `WeakMap` releases each generation
   when it is collected, and nothing measures GC pressure from holding one
   result array per live design generation.
