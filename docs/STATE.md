@@ -734,6 +734,122 @@ Worth watching that the two directions do not blur.
 
 ---
 
+## Findings from the 2D→3D fidelity audit (2026-08-10)
+
+Recorded as findings, **not as scheduled work**. Each was verified against the
+code and against four real residential floor plans used as the reference set.
+Nothing here is committed to a stage until it is scoped as its own task.
+
+### 18. THE THREE-RENDERER FINDING `OPEN` · **the headline**
+
+[`plan/draw.ts`](../src/plan/draw.ts), [`plan/planSheet.ts`](../src/plan/planSheet.ts)
+and `scene/*` have drifted to **three different levels of architectural
+fidelity, with no shared code**.
+
+| | canvas `plan/draw.ts` | sheet `plan/planSheet.ts` | 3D `scene/*` |
+|---|---|---|---|
+| Wall | stroked centreline | **poché quad with real faces** | box per run |
+| Corners | vertex dot masks the overlap | **half-thickness pad at shared vertices** | interpenetrating boxes |
+| Window | one centre line | **two lines inset from the faces** | void only |
+| Overall dimensions | none | **bottom + left, set out past door swings** | none |
+| Room caption | name — area | name — area | **name — area — W×L** |
+
+**The sheet is the most architecturally correct; the canvas is the least.** The
+user sees the canvas while drawing and the sheet only after exporting a PDF.
+
+§7 Stage 4 asks *"`plan/draw.ts` and `plan/planSheet.ts` are already two
+independent renderers sharing no code. Decide whether a third is acceptable or
+whether they converge first."* **The answer is that there are already three,
+and they have measurably drifted.** That is the decision, made by accident.
+
+### 19. PHASE 6 IS RESCOPED AND PROMOTED `OPEN`
+
+Not *"write `resolveJoins`"*. The work is:
+
+> Promote `sharedEnds` ([`planSheet.ts:333-344`](../src/plan/planSheet.ts#L333-L344))
+> and `fillWallBody` ([`:375-399`](../src/plan/planSheet.ts#L375-L399)) into a
+> shared module, extend to T-junctions, and give the canvas and 3D the same call.
+
+Closes reference items 2, 3, 5, 10 and 12 **on the canvas at once**. §3's
+*extend rather than replace* is satisfied by construction — the implementation
+already exists and ships; it is reached by one consumer instead of three.
+
+### 20. THE T-JUNCTION GAP `OPEN`
+
+`vertexKey` is **exact-coordinate matching**, so the sheet's corner pad only
+fires when two walls share an endpoint precisely. A wall ending **mid-span** of
+another shares no vertex, gets no pad and gets no join — and that is how every
+interior partition in every reference drawing meets the shell.
+
+**Grid snap has been hiding it.** Endpoint sharing is common because drawing
+snaps to `GRID_STEP`, so the L-joins close and the T-joins quietly do not.
+
+### 20b. THE SHEET RESERVES SPACE FOR A SWING IT DOES NOT DRAW `RESOLVED 2026-08-10 by B21`
+
+`doorSweep` ([`planSheet.ts:279-296`](../src/plan/planSheet.ts#L279-L296)) is a
+**second** swing implementation inside `planSheet.ts`: it traces the leaf's
+footprint so `fitExtent` ([`:253`](../src/plan/planSheet.ts#L253)) can keep the
+page fit and the overall dimension setout clear of a door swinging off the
+south wall. Its own comment reads *"Must stay in step with the arc drawn in
+`drawOpeningSymbol`"* — **a coupling enforced by hope, in prose, across 170
+lines.** Exactly the drift finding 18 describes, inside one file.
+
+Found while verifying line numbers for finding 22, not by the audit sweep. It
+took the swing site count from three to four and is why B21 introduces a shared
+`doorSwing()` rather than editing three call sites in place.
+
+### 21. THE CUT PLANE `OPEN` · schedule with Phase 7 (levels), not before
+
+One missing concept explains three symptoms:
+
+- no stair break above 1200 mm — the plan symbol draws the whole flight
+  ([`draw.ts:704-726`](../src/plan/draw.ts#L704-L726)); the reference draws the
+  run below the cut solid and the flight above it **dashed**;
+- no dashed high-sill window — `Opening.sill` reaches 3D but nothing in 2D
+  tests it against a cut height;
+- no plan-graphics-derived-from-3D at all (§5.3).
+
+It needs a level to be a height above, so it belongs with v5, not earlier.
+
+### 22. REFERENCE ITEM 6 (cased openings) IS NEARLY FREE `OPEN`
+
+`punchOpening` ([`planSheet.ts:420-438`](../src/plan/planSheet.ts#L420-L438))
+plus the jamb lines that open `drawOpeningSymbol`
+([`:451-458`](../src/plan/planSheet.ts#L451-L458)) **already are** the
+cased-opening symbol: the wall broken across its full thickness, closed off at
+both ends, with no leaf and no glazing.
+
+**Note it so the `'cased'` session does not rebuild it.** In the sheet that
+session is a `return` before the door/window branch.
+
+### 23. REFERENCE ITEM 2 (hatch) IS DOWNGRADED `OPEN`
+
+The references use **two** wall conventions, not one: hatch (two drawings) and
+**solid poché** (two drawings). The sheet already does poché correctly
+([`planSheet.ts:367-399`](../src/plan/planSheet.ts#L367-L399)).
+
+Hatch is therefore a `WallType` **property** for v4 — §6 already declares
+`hatch: HatchId` there — not a missing representation. Lower priority than a
+first reading of the drawings suggests.
+
+### 24. REFERENCE ITEM 11 (running dimensions) HAS A HIDDEN DEPENDENCY `OPEN`
+
+The interior strings on the reference (`5'-4"`, `8'-6"`, `12'-10"`, `9'-6"`)
+measure **clear spans between wall FACES**, at points the drafter chose. They
+are not wall lengths.
+
+The only face-aware code in the tree is `fillWallBody`'s half-thickness offset
+and `pickWall`'s click tolerance
+([`wallGeometry.ts:214`](../src/scene/wallGeometry.ts#L214)); everything else —
+wall dimensions ([`draw.ts:1426`](../src/plan/draw.ts#L1426)) and room areas
+([`rooms.ts:31-38`](../src/plan/rooms.ts#L31-L38)) — is centreline.
+
+**Item 11 is blocked on wall-face snap, not merely on a `Dimension` type.**
+Adding the object without the snap target produces dimensions that measure the
+wrong thing.
+
+---
+
 ## Blockers
 
 ### The real architect-drawing corpus — Stage 1 cannot exit without it
