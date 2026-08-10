@@ -76,7 +76,7 @@ describe('★ N mounted consumers trigger exactly one detection', () => {
     twoRoomPlan()
     // A room selection, so the inspector renders its room branch rather than
     // returning null — an inspector showing nothing resolves nothing.
-    useDesignStore.getState().select({ kind: 'room', anchor: { x: 2, z: 2 } })
+    useDesignStore.getState().select({ kind: 'space', anchor: { x: 2, z: 2 } })
     useDesignStore.getState().setRoomPanelOpen(true)
     useDesignStore.getState().setVastuPanelOpen(true)
     resetRoomCaches()

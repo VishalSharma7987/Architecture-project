@@ -74,8 +74,19 @@ export type RoomType =
  * wall straight past the anchor and the name detaches, which is the honest
  * outcome since the space the user named no longer exists there.
  */
+/**
+ * The identity of a named space, and the only durable handle on one.
+ *
+ * It lives on the LABEL, not on the room: the room is re-derived from the walls
+ * on every edit, so an id stored "on the room" would be minted afresh each pass
+ * and identify nothing. The label is the user's assertion that a space exists
+ * here and is called this — that assertion is what persists (L2), and the
+ * geometry is computed around it (L6).
+ */
+export type RoomId = string
+
 export type RoomLabel = {
-  id: string
+  id: RoomId
   type: RoomType
   anchor: Point
   /**
@@ -371,9 +382,26 @@ export type WalkView = 'first' | 'third'
 /** Active pointer tool. `wall` draws; the rest act on existing walls. */
 export type Tool = 'select' | 'wall' | 'door' | 'window' | 'stair'
 
+/**
+ * A selected space is a selected NAME.
+ *
+ * Rooms are derived from the walls, so there is nothing durable to point at
+ * except the label the user attached. `room` therefore carries a `RoomId` and
+ * `space` carries a point, and the two are separate variants rather than one
+ * variant with a nullable id — because they mean different things and the
+ * inspector does different work for each.
+ *
+ * This replaced a single `{ kind: 'room'; anchor: Point }` whose `anchor` meant
+ * a label's own anchor when the schedule panel set it and a raw click point
+ * when the plan set it. `RoomInspector` told them apart by comparing both
+ * coordinates as floats, which only ever matched the first — so clicking an
+ * open-plan zone in the plan and renaming it rewrote the enclosure's PRIMARY
+ * name instead. See `rooms/identity.test.tsx`.
+ */
 export type Selection =
   | { kind: 'wall'; wallId: string }
-  | { kind: 'room'; anchor: Point }
+  | { kind: 'room'; roomId: RoomId }
+  | { kind: 'space'; anchor: Point }
   | { kind: 'stair'; stairId: string }
   | { kind: 'opening'; wallId: string; openingId: string }
   | { kind: 'furniture'; furnitureId: string }

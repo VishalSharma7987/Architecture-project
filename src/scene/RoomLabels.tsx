@@ -3,8 +3,13 @@ import { Html } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import { Vector3 } from 'three'
 import { roomDisplayName } from '../rooms/catalog'
-import { resolveRooms, roomSize } from '../rooms/resolve'
-import type { Point } from '../store/useDesignStore'
+import {
+  resolveRooms,
+  roomSize,
+  selectedRoomOf,
+  type ResolvedRoom,
+} from '../rooms/resolve'
+import type { Point, RoomId } from '../store/useDesignStore'
 import { useDesignStore } from '../store/useDesignStore'
 import {
   formatArea,
@@ -43,7 +48,6 @@ const CHIP_SELECTED =
   'whitespace-nowrap rounded-md bg-blue-50 px-2 py-0.5 text-[11px] ' +
   'leading-tight shadow-md ring-2 ring-blue-500 select-none'
 
-const sameAnchor = (a: Point, b: Point) => a.x === b.x && a.z === b.z
 
 /**
  * The name and floor area of every enclosed space, floating over its centroid
@@ -95,10 +99,11 @@ export function RoomLabels() {
       out.push({
         key: room.label?.id ?? `space-${index}`,
         at: room.centroid,
-        // The anchor the schedule panel selects this row with, so the chip can
-        // tell when it is the one picked. A named primary carries its label's
-        // anchor; an unnamed space is selected by its centroid.
-        selectAnchor: room.label?.anchor ?? room.centroid,
+        // The label this chip stands for, so it can tell when it is the one
+        // picked. Null means an unnamed space, which is selected as a `space`
+        // rather than by id — see `selectedIndex`.
+        labelId: room.label?.id ?? null,
+        room,
         name: room.label ? roomDisplayName(room.label) : null,
         area: room.area,
         // Overall length × width, carried on the primary chip only; the whole
@@ -110,7 +115,8 @@ export function RoomLabels() {
         out.push({
           key: extra.id,
           at: extra.anchor,
-          selectAnchor: extra.anchor,
+          labelId: extra.id,
+          room,
           name: roomDisplayName(extra),
           area: null,
           size: null,
@@ -121,11 +127,18 @@ export function RoomLabels() {
     return out
   }, [rooms])
 
-  // Which chip, if any, matches the current room selection.
+  // Which chip, if any, matches the current room selection. A named zone
+  // matches by id; a bare `space` matches the unnamed chip of the enclosure it
+  // landed in, since there is no id to compare.
   const selectedIndex = useMemo(() => {
-    if (selection?.kind !== 'room') return -1
-    return captions.findIndex((c) => sameAnchor(c.selectAnchor, selection.anchor))
-  }, [captions, selection])
+    if (selection?.kind !== 'room' && selection?.kind !== 'space') return -1
+    const selected = selectedRoomOf(rooms, selection)
+    return captions.findIndex((c) =>
+      selection.kind === 'room'
+        ? c.labelId === selection.roomId
+        : c.labelId === null && c.room === selected,
+    )
+  }, [captions, rooms, selection])
 
   // Largest room first, so when two chips collide the bigger space keeps its
   // caption and the smaller one yields — the same rule a person would apply by
@@ -238,8 +251,10 @@ type Caption = {
   key: string
   /** Floor-plane point the chip floats over. */
   at: Point
-  /** The anchor the schedule panel selects this caption with. */
-  selectAnchor: Point
+  /** The label this caption stands for; null for an unnamed space. */
+  labelId: RoomId | null
+  /** The enclosure it belongs to, for matching a bare `space` selection. */
+  room: ResolvedRoom
   /** Overall footprint for the size line; only the primary caption carries it. */
   size: { width: number; length: number } | null
   name: string | null

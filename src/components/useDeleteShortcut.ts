@@ -37,8 +37,9 @@ export function useDeleteShortcut() {
 
       // A room is an enclosed space, not an object: deleting it would mean
       // deleting the walls that form it, which is never what Delete means here.
-      // Clearing its name is done from the inspector.
-      if (selection.kind === 'room') return
+      // Clearing its name is done from the inspector. `space` is the same
+      // enclosure with no name yet, so it has even less to delete.
+      if (selection.kind === 'room' || selection.kind === 'space') return
 
       e.preventDefault()
       if (selection.kind === 'stair') {

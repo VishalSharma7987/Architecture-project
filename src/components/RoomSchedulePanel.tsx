@@ -6,9 +6,13 @@ import {
 } from '../export/statement'
 import type { AreaStatement } from '../export/statement'
 import { roomDisplayName } from '../rooms/catalog'
-import { resolveRooms, roomAtPoint, totalBuiltUpArea } from '../rooms/resolve'
+import {
+  resolveRooms,
+  selectedRoomOf,
+  totalBuiltUpArea,
+} from '../rooms/resolve'
 import type { ResolvedRoom } from '../rooms/resolve'
-import type { Point } from '../store/useDesignStore'
+import type { RoomId } from '../store/useDesignStore'
 import { allFloors, useDesignStore } from '../store/useDesignStore'
 import { formatArea, formatLength } from '../units/length'
 import { planBounds } from '../scene/wallGeometry'
@@ -96,14 +100,12 @@ export function RoomSchedulePanel() {
 
   if (!open) return null
 
-  const selected =
-    selection?.kind === 'room' ? roomAtPoint(rooms, selection.anchor) : null
-  const selectedAnchor = selection?.kind === 'room' ? selection.anchor : null
-  // One space can now list several rows — the primary name with its area, and
-  // an open plan's extra zone names beneath it. This is the single anchor whose
-  // row reads as selected: the one the selection points at, or the primary row
-  // when the click landed elsewhere inside the space.
-  const currentAnchor = currentRowAnchor(selected, selectedAnchor)
+  const selected = selectedRoomOf(rooms, selection)
+  // One space can list several rows — the primary name with its area, and an
+  // open plan's extra zone names beneath it. The selection names exactly one
+  // of them by id; a bare `space` selection names none and falls to the
+  // primary.
+  const selectedLabelId = selection?.kind === 'room' ? selection.roomId : null
   const total = totalBuiltUpArea(rooms)
   // The whole floor's footprint, in plan orientation — width across (X), length
   // down (Z) — so it reads like the overall dimension on a blueprint.
@@ -139,19 +141,23 @@ export function RoomSchedulePanel() {
             </h3>
             <ul className="space-y-1">
               {rooms.map((room, index) => {
-                const primaryAnchor = room.label?.anchor ?? room.centroid
+                const current = primaryRowSelected(room, selected, selectedLabelId)
                 return (
                   <Fragment key={roomKey(room, index)}>
                     <li>
                       <button
                         type="button"
                         onClick={() =>
-                          select({ kind: 'room', anchor: primaryAnchor })
+                          select(
+                            room.label
+                              ? { kind: 'room', roomId: room.label.id }
+                              : { kind: 'space', anchor: room.centroid },
+                          )
                         }
                         data-testid={`room-row-${index}`}
-                        aria-current={primaryAnchor === currentAnchor}
+                        aria-current={current}
                         className={`flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
-                          primaryAnchor === currentAnchor
+                          current
                             ? 'border-blue-500 bg-blue-50 text-slate-900 ring-1 ring-blue-500'
                             : 'border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                         }`}
@@ -177,11 +183,11 @@ export function RoomSchedulePanel() {
                         <button
                           type="button"
                           onClick={() =>
-                            select({ kind: 'room', anchor: extra.anchor })
+                            select({ kind: 'room', roomId: extra.id })
                           }
-                          aria-current={extra.anchor === currentAnchor}
+                          aria-current={extra.id === selectedLabelId}
                           className={`flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
-                            extra.anchor === currentAnchor
+                            extra.id === selectedLabelId
                               ? 'border-blue-500 bg-blue-50 text-slate-900 ring-1 ring-blue-500'
                               : 'border-slate-200 text-slate-700 hover:border-slate-300 hover:bg-slate-50'
                           }`}
@@ -266,29 +272,25 @@ const roomKey = (room: ResolvedRoom, index: number) =>
   room.label ? room.label.id : `unnamed-${index}`
 
 /**
- * Which of a space's rows should read as selected — returned by reference, so
- * a row highlights when its own anchor is the answer.
+ * Whether a space's PRIMARY row reads as selected.
  *
- * A space that lists open-plan zones has several rows; the selection points at
- * one anchor. That anchor's row wins when it is one of them, and the primary
- * row wins otherwise — a plan click lands anywhere inside the space, not on a
- * particular zone's anchor, and the space still needs to read as chosen.
+ * A space that lists open-plan zones has several rows and the selection names
+ * exactly one of them, so an extra row simply compares its own id. The primary
+ * row is the one with a second job: it also lights up when the selection is a
+ * bare spot inside this space, because a plan click that landed on unnamed
+ * floor still has to show which space was chosen.
+ *
+ * This replaced a helper that compared anchor coordinates as floats and
+ * returned a `Point` by reference for the caller to compare again. Ids made
+ * both comparisons unnecessary.
  */
-function currentRowAnchor(
-  room: ResolvedRoom | null,
-  selectedAnchor: Point | null,
-): Point | null {
-  if (!room) return null
-
-  const primaryAnchor = room.label?.anchor ?? room.centroid
-  if (!selectedAnchor) return primaryAnchor
-
-  const anchors = [primaryAnchor, ...room.extraLabels.map((e) => e.anchor)]
-  return (
-    anchors.find(
-      (a) => a.x === selectedAnchor.x && a.z === selectedAnchor.z,
-    ) ?? primaryAnchor
-  )
+function primaryRowSelected(
+  room: ResolvedRoom,
+  selectedRoom: ResolvedRoom | null,
+  selectedLabelId: RoomId | null,
+): boolean {
+  if (room !== selectedRoom) return false
+  return selectedLabelId === null || selectedLabelId === room.label?.id
 }
 
 type CostSectionProps = {

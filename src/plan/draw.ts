@@ -11,7 +11,7 @@ import type {
 } from '../store/useDesignStore'
 import { furnitureSize } from '../furniture/catalog'
 import { getRoomType, roomDisplayName } from '../rooms/catalog'
-import { roomAtPoint, type ResolvedRoom } from '../rooms/resolve'
+import { selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
 import { SELECTION } from '../scene/config'
 import { planBounds, pointAlongWall } from '../scene/wallGeometry'
 import {
@@ -839,17 +839,20 @@ function screenRoom(room: ResolvedRoom, scene: PlanScene): ScreenRoom | null {
 }
 
 /**
- * The room the selection points at, found by containment.
+ * The enclosure the selection points at, or null.
  *
- * A room selection carries the point the user clicked rather than an id,
- * because rooms are derived from the walls afresh on every edit and so have no
- * identity to hold on to. Matching through `roomAtPoint` is what keeps the
- * highlight on the same space while its walls move around it.
+ * A room selection carries a `RoomId` — the id of the LABEL the user picked.
+ * The room itself is still re-derived from the walls on every edit and still
+ * has no identity of its own; what persists is the name, and the highlight
+ * follows whichever loop that name currently resolves to. So the fill stays on
+ * the same space while its walls move around it, and goes out when the loop
+ * opens, which is the honest signal that the space is no longer enclosed.
+ *
+ * (Before B7.1 the selection carried the clicked POINT and this matched by
+ * containment. That could not tell two names in one open-plan enclosure apart.)
  */
 function selectedRoom(scene: PlanScene): ResolvedRoom | null {
-  const { selection } = scene
-  if (selection?.kind !== 'room') return null
-  return roomAtPoint(scene.rooms, selection.anchor)
+  return selectedRoomOf(scene.rooms, scene.selection)
 }
 
 /** Lays the room's ring down as a closed path, ready to fill or clip. */

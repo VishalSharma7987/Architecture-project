@@ -1,4 +1,9 @@
-import type { Point, RoomLabel, Wall } from '../store/useDesignStore'
+import type {
+  Point,
+  RoomLabel,
+  Selection,
+  Wall,
+} from '../store/useDesignStore'
 import { detectRooms, detectRoomsUncached, roomCacheStats } from '../plan/rooms'
 
 /** A detected space, married to the name the user gave it. */
@@ -132,6 +137,72 @@ export function resolveRooms(
   const rooms = matchLabels(detectRooms(walls), labels)
   byLabels.set(labels, rooms)
   return rooms
+}
+
+/**
+ * What clicking at `point` selects.
+ *
+ * Three outcomes, and each is a different kind of thing:
+ *
+ * - **a named zone** — the point is inside an enclosure that carries at least
+ *   one name, so the NEAREST of that enclosure's anchors wins. Nearest, not
+ *   primary: an open plan draws each zone's caption at its own anchor
+ *   (`draw.ts`), so a click near "Dining" must select Dining. Selecting the
+ *   primary regardless is precisely the bug this replaced.
+ * - **an unnamed space** — inside an enclosure with no names. There is no id to
+ *   carry yet, so the point rides along until the user names it.
+ * - **nothing** — outside every enclosure.
+ *
+ * Deterministic on ties: equidistant anchors resolve to the earlier one in
+ * `roomLabels`, which is append order, so the answer does not depend on how the
+ * rooms happened to be traversed.
+ */
+export function roomSelectionAt(
+  rooms: ResolvedRoom[],
+  point: Point,
+): Selection {
+  const room = roomAtPoint(rooms, point)
+  if (!room) return null
+
+  const names = room.label ? [room.label, ...room.extraLabels] : []
+  if (names.length === 0) return { kind: 'space', anchor: point }
+
+  let nearest = names[0]
+  let best = Infinity
+  for (const label of names) {
+    const distance = Math.hypot(
+      label.anchor.x - point.x,
+      label.anchor.z - point.z,
+    )
+    if (distance < best) {
+      best = distance
+      nearest = label
+    }
+  }
+
+  return { kind: 'room', roomId: nearest.id }
+}
+
+/**
+ * The enclosure a selection currently resolves to, or null.
+ *
+ * Null is a real state, not an error: a `roomId` whose walls have opened is a
+ * DETACHED label, and every caller has to render that rather than crash. See
+ * B7.2.
+ */
+export function selectedRoomOf(
+  rooms: ResolvedRoom[],
+  selection: Selection,
+): ResolvedRoom | null {
+  if (selection?.kind === 'space') return roomAtPoint(rooms, selection.anchor)
+  if (selection?.kind !== 'room') return null
+  return (
+    rooms.find(
+      (room) =>
+        room.label?.id === selection.roomId ||
+        room.extraLabels.some((extra) => extra.id === selection.roomId),
+    ) ?? null
+  )
 }
 
 /** The room containing a point, or null. Used for click-to-name. */

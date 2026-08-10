@@ -5,7 +5,7 @@ import {
   STAIR_DEFAULTS,
   useDesignStore,
 } from '../store/useDesignStore'
-import type { Point, RoomType, Unit } from '../store/useDesignStore'
+import type { Point, RoomId, RoomType, Unit } from '../store/useDesignStore'
 import { furnitureSize, getFurniture } from '../furniture/catalog'
 import { ROOM_TYPES, getRoomType, roomDisplayName } from '../rooms/catalog'
 import { resolveRooms, roomAtPoint, roomSize } from '../rooms/resolve'
@@ -39,6 +39,9 @@ export function InspectorPanel() {
     return <FurnitureInspector furnitureId={selection.furnitureId} />
   }
   if (selection.kind === 'room') {
+    return <RoomInspector roomId={selection.roomId} />
+  }
+  if (selection.kind === 'space') {
     return <RoomInspector anchor={selection.anchor} />
   }
   if (selection.kind === 'stair') {
@@ -449,19 +452,26 @@ function FurnitureInspector({ furnitureId }: { furnitureId: string }) {
 }
 
 /**
- * The space under the clicked point: its area, and the name to give it.
+ * A named space, or a spot waiting to be named: its area, and the name.
  *
  * Nothing here edits a room, because a room is not a thing that can be
- * edited — it is re-derived from the walls every render. What is edited is
- * the `RoomLabel` pinned to `anchor`, which lands in whichever space encloses
- * that point today. So a wall dragged past the anchor leaves the label
- * unresolved rather than wrong, and the panel says so.
+ * edited — it is re-derived from the walls every render. What is edited is the
+ * `RoomLabel`, and the label is reached by ID. Everything the caller passes in
+ * is one of two things: a `roomId` naming a label that exists, or an `anchor`
+ * naming a spot that has no label yet.
+ *
+ * The label is NOT recovered by comparing anchors. It used to be, by float
+ * equality on both coordinates, and that only matched selections the schedule
+ * panel had made — a plan click carried the click point, missed, and fell back
+ * to the enclosure's primary, so renaming an open-plan zone rewrote the wrong
+ * name. `rooms/identity.test.tsx` holds that shut.
  */
-function RoomInspector({ anchor }: { anchor: Point }) {
+function RoomInspector({ roomId, anchor }: { roomId?: RoomId; anchor?: Point }) {
   const walls = useDesignStore((s) => s.walls)
   const roomLabels = useDesignStore((s) => s.roomLabels)
   const units = useDesignStore((s) => s.units)
   const nameRoom = useDesignStore((s) => s.nameRoom)
+  const select = useDesignStore((s) => s.select)
   const updateRoomLabel = useDesignStore((s) => s.updateRoomLabel)
   const removeRoomLabel = useDesignStore((s) => s.removeRoomLabel)
 
@@ -471,31 +481,26 @@ function RoomInspector({ anchor }: { anchor: Point }) {
     [walls, roomLabels],
   )
 
-  const room = roomAtPoint(rooms, anchor)
-  // Edit the exact label that was selected — the one sitting on this anchor —
-  // not merely the enclosing room's primary. Without this, selecting an
-  // open-plan zone (an extra label) and renaming it silently rewrote the room's
-  // first label instead. Matched by coordinates so it survives being copied
-  // into and out of the selection. Falls back to the primary when the anchor is
-  // a bare point (naming a room by clicking inside it).
-  const label =
-    roomLabels.find(
-      (l) => l.anchor.x === anchor.x && l.anchor.z === anchor.z,
-    ) ??
-    room?.label ??
-    null
+  const label = roomId ? (roomLabels.find((l) => l.id === roomId) ?? null) : null
+  const room = label
+    ? roomAtPoint(rooms, label.anchor)
+    : anchor
+      ? roomAtPoint(rooms, anchor)
+      : null
 
   if (!room) {
     return (
-      <PanelShell title="Room">
-        <p
-          className="text-[11px] leading-relaxed text-slate-400"
+      <PanelShell title={label ? roomDisplayName(label) : 'Room'}>
+        <div
+          className="space-y-3 text-[11px] leading-relaxed text-slate-400"
           data-testid="room-inspector"
         >
-          This spot is not inside an enclosed space any more — a wall moved
-          past it, or the loop is open. Close the walls around it, or click
-          inside a room to name that one.
-        </p>
+          <p>
+            This spot is not inside an enclosed space any more — a wall moved
+            past it, or the loop is open. Close the walls around it, or click
+            inside a room to name that one.
+          </p>
+        </div>
       </PanelShell>
     )
   }
@@ -508,8 +513,14 @@ function RoomInspector({ anchor }: { anchor: Point }) {
   ).length
 
   const setType = (type: RoomType) => {
-    if (label) updateRoomLabel(label.id, { type })
-    else nameRoom(anchor, type)
+    if (label) {
+      updateRoomLabel(label.id, { type })
+      return
+    }
+    // Naming a bare spot promotes the selection onto the label it just made.
+    // Without this the inspector would still be pointing at a point, and the
+    // next category click would mint a SECOND label in the same space.
+    if (anchor) select({ kind: 'room', roomId: nameRoom(anchor, type) })
   }
 
   return (

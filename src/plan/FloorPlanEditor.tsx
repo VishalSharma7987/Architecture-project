@@ -8,7 +8,11 @@ import {
 } from '../blueprint/calibration'
 import { FURNITURE_DRAG_TYPE } from '../components/FurniturePanel'
 import { isFurnitureType } from '../furniture/catalog'
-import { resolveRooms, roomAtPoint, type ResolvedRoom } from '../rooms/resolve'
+import {
+  resolveRooms,
+  roomSelectionAt,
+  type ResolvedRoom,
+} from '../rooms/resolve'
 import {
   pickFurniture,
   pickOpening,
@@ -592,11 +596,10 @@ export function FloorPlanEditor() {
 
       // Last, so everything built keeps priority: a click that has missed the
       // furniture, the openings and the walls has landed on open floor, and
-      // open floor inside a loop is a room the user can name. The clicked
-      // point becomes the anchor rather than the room's centre, so the name
-      // stays pinned to the part of the space that was pointed at.
-      const hitRoom = roomAtPoint(roomsRef.current, point)
-      select(hitRoom ? { kind: 'room', anchor: point } : null)
+      // open floor inside a loop is a space the user can name. A named zone
+      // resolves to its label's id; unnamed floor keeps the clicked point, so
+      // the name lands where it was pointed at rather than at the centre.
+      select(roomSelectionAt(roomsRef.current, point))
       return
     }
 

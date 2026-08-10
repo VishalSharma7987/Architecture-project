@@ -3,7 +3,7 @@ import type { RoomVerdict, VastuStatus } from '../vastu/analyse'
 import type { ResolvedRoom } from '../rooms/resolve'
 import { analyseVastu } from '../vastu/analyse'
 import { getRoomType } from '../rooms/catalog'
-import { resolveRooms, roomAtPoint } from '../rooms/resolve'
+import { resolveRooms, selectedRoomOf } from '../rooms/resolve'
 import { useDesignStore } from '../store/useDesignStore'
 import { zoneLabel } from '../vastu/ruleset'
 
@@ -79,8 +79,7 @@ export function VastuPanel() {
   if (!open) return null
 
   const rooms = report.rooms.map((verdict) => verdict.room)
-  const selected =
-    selection?.kind === 'room' ? roomAtPoint(rooms, selection.anchor) : null
+  const selected = selectedRoomOf(rooms, selection)
   const scored = report.counts.good + report.counts.okay + report.counts.avoid
 
   return (
@@ -238,10 +237,11 @@ export function VastuPanel() {
                   <button
                     type="button"
                     onClick={() =>
-                      select({
-                        kind: 'room',
-                        anchor: verdict.room.label?.anchor ?? verdict.room.centroid,
-                      })
+                      select(
+                        verdict.room.label
+                          ? { kind: 'room', roomId: verdict.room.label.id }
+                          : { kind: 'space', anchor: verdict.room.centroid },
+                      )
                     }
                     data-testid={`vastu-row-${index}`}
                     aria-current={verdict.room === selected}
