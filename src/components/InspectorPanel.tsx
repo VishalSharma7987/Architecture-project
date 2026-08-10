@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
+  DEFAULT_SWING,
   FLOOR_HEIGHT,
   LIMITS,
   STAIR_DEFAULTS,
@@ -10,17 +11,250 @@ import type {
   RoomId,
   RoomLabel,
   RoomType,
+  Swing,
   Unit,
+  Wall,
 } from '../store/useDesignStore'
+import { DEFAULT_WALL_MATERIAL } from '../materials/palette'
 import { furnitureSize, getFurniture } from '../furniture/catalog'
 import { provenance } from '../store/provenance'
 import { ROOM_TYPES, getRoomType, roomDisplayName } from '../rooms/catalog'
 import { resolveRooms, roomAtPoint, roomSize } from '../rooms/resolve'
-import { wallAxis } from '../scene/wallGeometry'
+import { doorSwing, swingDirection, wallAxis } from '../scene/wallGeometry'
 import { formatArea, formatLength, parseLength } from '../units/length'
 import { LengthField } from './LengthField'
 import { MaterialPicker } from './MaterialPicker'
 import { NumberField } from './NumberField'
+
+/**
+ * The little plan symbol the swing buttons carry, sized in its own viewBox
+ * units so world x is svg x and world z is svg y with no conversion.
+ *
+ * The wall runs left→right with its START on the left. That is the frame
+ * `Swing` is defined in, so showing it is the honest way to make "left" and
+ * "right" mean something — see `SwingControls` for why the obvious labels
+ * ("left jamb", "opens up") are wrong.
+ */
+const SWING_ICON = { wallStart: 2, wallEnd: 38, y: 16, jambA: 10, jambB: 22 }
+
+const ICON_WALL: Wall = {
+  id: 'swing-icon',
+  start: { x: SWING_ICON.wallStart, z: SWING_ICON.y },
+  end: { x: SWING_ICON.wallEnd, z: SWING_ICON.y },
+  height: 3,
+  thickness: 0.2,
+  openings: [],
+  material: DEFAULT_WALL_MATERIAL,
+}
+
+/** Centred in the wall, spanning `jambA`→`jambB`. */
+const ICON_DOOR = {
+  id: 'swing-icon-door',
+  type: 'door' as const,
+  position: (SWING_ICON.jambA + SWING_ICON.jambB) / 2 - SWING_ICON.wallStart,
+  width: SWING_ICON.jambB - SWING_ICON.jambA,
+  height: 2.1,
+  sill: 0,
+}
+
+/**
+ * This swing, drawn as the plan symbol.
+ *
+ * Geometry comes from `doorSwing` rather than from four hand-written paths, so
+ * the icon cannot disagree with what the canvas, the sheet and the 3D leaf
+ * actually do — SD14's rule applied to a picture. Get this wrong and the
+ * control is worse than no control: it would confidently show the opposite of
+ * what the drawing does.
+ */
+function SwingIcon({ swing }: { swing: Swing }) {
+  const s = doorSwing(ICON_WALL, { ...ICON_DOOR, swing })
+  const direction = swingDirection(s)
+  const tip = {
+    x: s.hinge.x + direction.x * ICON_DOOR.width,
+    z: s.hinge.z + direction.z * ICON_DOOR.width,
+  }
+
+  return (
+    <svg viewBox="0 0 40 32" className="h-7 w-9" aria-hidden focusable="false">
+      {/* The wall, broken by the opening. */}
+      <path
+        d={`M ${SWING_ICON.wallStart} ${SWING_ICON.y} H ${SWING_ICON.jambA}
+            M ${SWING_ICON.jambB} ${SWING_ICON.y} H ${SWING_ICON.wallEnd}`}
+        className="stroke-current"
+        strokeWidth={3}
+        strokeLinecap="butt"
+        fill="none"
+      />
+      {/* The leaf, shown open — the standard symbol. */}
+      <path
+        d={`M ${s.hinge.x} ${s.hinge.z} L ${tip.x} ${tip.z}`}
+        className="stroke-current"
+        strokeWidth={2}
+        fill="none"
+      />
+      {/* The quarter arc it sweeps. `sweep` is +1 anticlockwise in world
+          terms, which is svg's sweep-flag 1 because svg y runs down exactly
+          as world z does. */}
+      <path
+        d={`M ${tip.x} ${tip.z} A ${ICON_DOOR.width} ${ICON_DOOR.width} 0 0 ${
+          s.sweep > 0 ? 1 : 0
+        } ${s.free.x} ${s.free.z}`}
+        className="stroke-current"
+        strokeWidth={1.25}
+        strokeOpacity={0.55}
+        fill="none"
+      />
+    </svg>
+  )
+}
+
+const SWING_BUTTON =
+  'flex flex-1 flex-col items-center gap-0.5 rounded-md border px-2 py-1.5 ' +
+  'text-[10px] font-semibold transition-colors'
+
+/** One two-way swing toggle: an icon of each outcome, and a word under it. */
+function SwingChoice<T extends string>({
+  field,
+  label,
+  hint,
+  value,
+  options,
+  iconFor,
+  onChange,
+}: {
+  /**
+   * The `Swing` field this toggle writes. Names the test id, deliberately
+   * rather than deriving it from `label` — the label is copy and is expected
+   * to change as the wording is improved; the model field is the contract.
+   */
+  field: keyof Swing
+  label: string
+  hint: string
+  value: T
+  options: { id: T; caption: string; description: string }[]
+  iconFor: (id: T) => Swing
+  onChange: (id: T) => void
+}) {
+  return (
+    <div>
+      <h4 className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+        {label}
+      </h4>
+      <div className="flex gap-1.5" role="group" aria-label={hint}>
+        {options.map((option) => {
+          const active = option.id === value
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => onChange(option.id)}
+              aria-pressed={active}
+              aria-label={option.description}
+              title={option.description}
+              data-testid={`swing-${field}-${option.id}`}
+              className={`${SWING_BUTTON} ${
+                active
+                  ? 'border-blue-500 bg-blue-50 text-blue-700'
+                  : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700'
+              }`}
+            >
+              <SwingIcon swing={iconFor(option.id)} />
+              {option.caption}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Which jamb a door hangs on and which way it opens.
+ *
+ * ── Why the obvious labels are not used ──
+ * "Left jamb / right jamb" and "opens up / opens down" both name a SCREEN
+ * direction for a fact stored in the WALL's frame, and they are wrong for
+ * about half of all walls. A wall drawn east-to-west has its start jamb on the
+ * screen's RIGHT; a north-south wall has no up or down side at all, only east
+ * and west. Labelling that way would reintroduce, in words, exactly the
+ * confusion SD13 keeps out of the data.
+ *
+ * So each button carries the plan symbol of the outcome, drawn in the wall's
+ * own frame and generated by `doorSwing` itself, with the wall-relative word
+ * under it and the full sentence in its title and accessible name. The picture
+ * is what carries the meaning; the words only have to be honest.
+ *
+ * The real feedback loop is the drawing: the canvas arc, the sheet arc and the
+ * 3D leaf all move as these are clicked, because all four now read one field.
+ *
+ * ── The absent case ──
+ * An `Opening` with no `swing` shows `DEFAULT_SWING` selected, not an empty
+ * state. The v3→v4 migration gives every door one, so an absent swing on a
+ * door is a BUG rather than a case to design for — but `doorSwing` falls back
+ * to the same default, so this shows what is actually being drawn instead of
+ * suggesting the door has no swing at all.
+ */
+function SwingControls({
+  swing,
+  onChange,
+}: {
+  swing: Swing | undefined
+  onChange: (swing: Swing) => void
+}) {
+  const current = swing ?? DEFAULT_SWING
+
+  return (
+    <section className="space-y-2.5" data-testid="swing-controls">
+      <SwingChoice
+        field="hand"
+        label="Hinge"
+        hint="Which jamb the door hangs on"
+        value={current.hand}
+        options={[
+          {
+            id: 'start',
+            caption: 'Start',
+            description: "Hinge at the jamb nearer the wall's start",
+          },
+          {
+            id: 'end',
+            caption: 'End',
+            description: "Hinge at the jamb nearer the wall's end",
+          },
+        ]}
+        iconFor={(hand) => ({ ...current, hand })}
+        onChange={(hand) => onChange({ ...current, hand })}
+      />
+
+      <SwingChoice
+        field="side"
+        label="Opens"
+        hint="Which side of the wall the leaf sweeps into"
+        value={current.side}
+        options={[
+          {
+            id: 'left',
+            caption: 'Left',
+            description: "Opens to the wall's left, looking from start to end",
+          },
+          {
+            id: 'right',
+            caption: 'Right',
+            description: "Opens to the wall's right, looking from start to end",
+          },
+        ]}
+        iconFor={(side) => ({ ...current, side })}
+        onChange={(side) => onChange({ ...current, side })}
+      />
+
+      <p className="text-[11px] leading-relaxed text-slate-400">
+        Each symbol is this door as the plan draws it, on a wall running left to
+        right from its start. Left and right are that wall&rsquo;s, not the
+        screen&rsquo;s.
+      </p>
+    </section>
+  )
+}
 
 /**
  * Right-hand properties panel for the current selection.
@@ -125,6 +359,14 @@ export function InspectorPanel() {
                 updateOpening(wall.id, opening.id, { position })
               }
             />
+            {opening.type === 'door' && (
+              <SwingControls
+                swing={opening.swing}
+                onChange={(swing) =>
+                  updateOpening(wall.id, opening.id, { swing })
+                }
+              />
+            )}
             <p className="text-[11px] leading-relaxed text-slate-400">
               Sill 0 puts the opening on the floor. Values are clamped to fit
               the wall.

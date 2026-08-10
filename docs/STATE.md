@@ -33,24 +33,28 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B21 — COMPLETE.** A door's swing is in the model. `DESIGN_VERSION 4`, and four sites that invented it now read it |
-| Before that | **B7 — COMPLETE** (B7.1 – B7.7). Room identity, detached labels, `DESIGN_VERSION 3`, provenance, `boundaryHint`, pass-2 re-attachment, transient space ids |
-| Next task | **B22** — the swing's inspector controls. Deliberately split out of B21 (see below) |
+| Last completed task | **B22 — COMPLETE.** Swing controls in the opening inspector. **v4's first field now works end to end** |
+| Before that | **B21** — the swing enters the model (`DESIGN_VERSION 4`); **B7** — room identity (B7.1–B7.7) |
+| Next task | **B9** (drafting/snapping) — the largest single gap versus AutoCAD |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
-| Upcoming | B22 → B9 (drafting/snapping) → B10 → B11 → B12 |
+| Upcoming | B9 → B10 → B11 → B12 |
 
 **The 2D→3D fidelity audit ran on 2026-08-10** against four real residential
 floor plans. Its findings are recorded as **18–24** below, and the one P0 it
 found that was non-deterministic rather than merely missing — the door swing —
 was closed the same day as **B21**.
 
-**B21 shipped the model and the renderers, and NOT the UI.** A user still
-cannot flip a door's swing; nothing writes the field but `addOpening` and the
-migration. That is deliberate: model + migration + four call sites is already
-the widest mechanical change one session should carry, and the field being
-right is what the inspector will depend on. **B22 is the toggle**, and it is
-small — `updateOpening` already accepts `swing`, so it is two controls and a
-test.
+**B21 shipped the model and the renderers; B22 shipped the controls.** The
+split was deliberate — model + migration + four call sites was already the
+widest mechanical change one session should carry — and it cost nothing: B22
+needed no store change at all, because `updateOpening` already took
+`Partial<Omit<Opening, 'id' | 'type'>>` and `swing` was in it.
+
+**`Opening.swing` is now the one field in the model that is complete end to
+end:** a user sets it, it survives save and load, it migrates, and all four
+sites that draw a door read it. Nothing else added since v3 can say that —
+`mark`, `'cased'` and `openBoundary` are still unbuilt, and `boundaryHint`
+(v3) is written by the app rather than by a user.
 
 **Clause 4a is closed.** All seven pure modules §7 Stage 1 names are now covered,
 lowest 85.6% against a ≥70% gate. `export/pdf.ts` went 0% → 92.8% and
@@ -87,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B21, at `ebb2595`:
+Verified after B22, at `f7ecd08`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **473 passing / 473** · 27 files / 27 |
-| `npm run build` | **pass** (exit 0), 794 ms |
+| `npm test` | **482 passing / 482** · 28 files / 28 |
+| `npm run build` | **pass** (exit 0), 851 ms |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -101,9 +105,10 @@ Verified after B21, at `ebb2595`:
 | Schema | **`DESIGN_VERSION = 4`** — v1→v2→v3→v4 migrations, round-trip tested |
 | Autosave | **2.37 ms** at 500 walls × 3 storeys, against §9.2's 20 ms |
 
-*Before B21: 451 / 25 files at `8227343`. The 22 new tests are
-[`migrateV4.test.ts`](../src/persistence/migrateV4.test.ts) (11) and
-[`doorSwing.test.ts`](../src/scene/doorSwing.test.ts) (11).*
+*Before B21: 451 / 25 files at `8227343`. The 31 new tests are
+[`migrateV4.test.ts`](../src/persistence/migrateV4.test.ts) (11),
+[`doorSwing.test.ts`](../src/scene/doorSwing.test.ts) (11) and
+[`swingInspector.test.tsx`](../src/components/swingInspector.test.tsx) (9).*
 
 The 5 lint warnings are genuine advisories, not suppressions: 3 ×
 `react/no-array-index-key`, 2 × `eslint/no-shadow`.
@@ -415,6 +420,39 @@ and `provenance.test.ts`.
 **The grep is not sufficient on its own** — it passed while `planSheet.ts` had
 the call but not the import, and `tsc` is what caught that. The two together
 are the check; neither alone is.
+
+### SD15 — a wall-frame fact gets a picture, not a screen-direction label
+
+`Swing` is stated in the wall's own frame (SD13), and the obvious labels for
+it are all screen directions. **Both of the labellings first proposed for B22
+are wrong for about half of all walls:**
+
+| Proposed | Counterexample |
+|---|---|
+| Hinge: *"Left jamb" / "Right jamb"* | a wall drawn east→west has its START jamb on the screen's **right** |
+| Opens: *"Up" / "Down"* | a north–south wall has no up or down side — only east and west |
+
+Labelling that way would reintroduce in words exactly the confusion SD13 keeps
+out of the data, and it would be *confidently* wrong, which is worse than
+vague.
+
+**What shipped instead:** each button carries the plan symbol of its own
+outcome, drawn in the wall's frame — and generated by calling `doorSwing`
+rather than by four hand-written SVG paths, so the icon cannot disagree with
+what the canvas, the sheet and the 3D leaf actually draw. SD14's rule applied
+to a picture. The words under the icons are wall-relative and honest
+("Start"/"End", "Left"/"Right"), the full sentence is in each button's title
+and accessible name, and one line of helper text names the frame.
+
+**The real feedback loop is the drawing**, which updates live as the buttons
+are clicked, because all four sites now read one field.
+
+**Follow-on, and the genuinely right long-term answer: name the side by what
+is on it** — *"Opens into Bedroom 1"* / *"Opens into Corridor"*. That is what
+an architect actually cares about and it is orientation-free. It needs
+`resolveRooms` plus containment on each side of the wall, and a fallback for
+sides that are unnamed or outside every loop, so it is its own task. B7 made
+it reachable; nothing schedules it yet.
 
 ### SD12 — `boundaryHint` is a save-time field
 
@@ -1027,6 +1065,16 @@ Neither `corpus/` nor a manifest exists yet.
   `DEFAULT_SWING`, which IS the pre-v4 convention, so a v3 fixture or a
   hand-edited file still draws what it always drew. That fallback is what lets
   `parseSwing` drop a malformed field without costing the user a door.
+- **Do not label a wall-frame field with a screen direction** (SD15) — not
+  "left jamb", not "opens up". Both are wrong for half of all walls. Show the
+  plan symbol and let the drawing be the feedback.
+- **Do not hand-write the swing icon's paths.** It calls `doorSwing` on a
+  synthetic east-running wall precisely so it cannot drift from the renderers
+  (SD14). Four literal SVG paths would be a fifth implementation of the rule.
+- **Do not derive a `data-testid` from a display label.** `SwingChoice` takes
+  the `Swing` field name for exactly this reason: the label is copy and will
+  change, the field is the contract. The first draft derived it from `label`
+  and the whole suite missed by `hinge` vs `hand`.
 
 ---
 
