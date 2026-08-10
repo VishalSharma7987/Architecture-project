@@ -77,14 +77,156 @@ function matchLabels(
     extraLabels: [],
   }))
 
+  // ── pass 1: containment ──
+  // The anchor is still inside a loop. Resolves the overwhelming majority,
+  // including every open-plan zone, and is the ONLY pass that can produce an
+  // `extraLabels` entry — a second name joins a space by being inside it, never
+  // by resembling it.
+  const unplaced: RoomLabel[] = []
   for (const label of labels) {
     const room = roomAtPoint(rooms, label.anchor)
-    if (!room) continue
+    if (!room) {
+      unplaced.push(label)
+      continue
+    }
     if (room.label === null) room.label = label
     else room.extraLabels.push(label)
   }
 
+  // ── pass 2: the boundary hint ──
+  // Only for names pass 1 could not place, and only against spaces no name has
+  // claimed. Runs in `labels` order, so a tie goes to the earlier name.
+  for (const label of unplaced) {
+    const room = reattach(label, rooms)
+    if (room) room.label = label
+  }
+
   return rooms
+}
+
+/** How similar two rings are, judged cheaply. See `reattach`. */
+const IOU_FLOOR = 0.5
+const AREA_BAND: [number, number] = [0.5, 2.0]
+
+/**
+ * The space a detached name belongs to, judged against the polygon it last
+ * resolved to, or null.
+ *
+ * ── The rule ──
+ * A candidate matches when ALL THREE hold:
+ *   1. bounding-box IoU against the hint ≥ 0.5
+ *   2. area within [0.5x, 2.0x] of the hint's
+ *   3. the hint's centroid falls inside the candidate
+ * Best IoU wins.
+ *
+ * ── Why three, and what each one actually catches ──
+ * Conditions 1 and 2 say "roughly the same box, roughly the same size". Between
+ * two adjacent near-identical bedrooms, condition 1 alone already refuses:
+ * side-by-side boxes do not overlap, so their IoU is 0.
+ *
+ * Condition 3 is for the case the box CANNOT see — two different shapes sharing
+ * one bounding box. An L and the U that surrounds its bite have identical
+ * bounds and similar areas, so 1 and 2 both pass and the box proxy is blind.
+ * Testing the hint's centroid against the candidate's real outline is what
+ * separates them, because that is the one check that reads the polygon rather
+ * than its bounds.
+ *
+ * (The first draft of this comment claimed condition 3 was what saved the
+ * adjacent-twins case. It is not — removing the condition left the whole suite
+ * green, which is how the real justification, and the test below it, were
+ * found.)
+ *
+ * All three failing means DETACHED, and that is the right way to be wrong: a
+ * false attachment silently relabels a room with no signal to the user, while a
+ * detachment is visible in the schedule, keeps the name, and heals itself when
+ * the walls come back (B7.2).
+ *
+ * ── Why bounding boxes and not real polygon overlap ──
+ * Exact IoU needs a general clipper: rooms are L- and U-shaped, so
+ * Sutherland–Hodgman is out and Greiner–Hormann is ~150 lines inside a path
+ * that runs on every edit. The box is a PROXY, and it is weakest exactly where
+ * the shapes are least box-like — which is why the L, U and T cases are in the
+ * test suite deliberately rather than incidentally.
+ *
+ * ── What validates the constants ──
+ * Generated edit sequences (`reattach.test.ts`), not the real corpus. The
+ * corpus validates the DETECTOR against drawing conventions; re-attachment
+ * never sees a drawing, only two polygons the traversal already produced, so a
+ * corpus failure here could not be told apart from a detector failure. What the
+ * corpus would still add is the real DISTRIBUTION of room shapes — how often
+ * the weak case occurs — which is open question 14, not a blocker.
+ */
+function reattach(label: RoomLabel, rooms: ResolvedRoom[]): ResolvedRoom | null {
+  const hint = label.boundaryHint
+  if (!hint || hint.length < 3) return null
+
+  const hintBox = boundsOf(hint)
+  const hintArea = Math.abs(ringArea(hint))
+  if (hintArea <= 0) return null
+
+  const hintCentroid = areaCentroid(hint)
+  if (!hintCentroid) return null
+
+  let best: ResolvedRoom | null = null
+  let bestIou = 0
+
+  for (const room of rooms) {
+    // Unclaimed only. A space that already has a name is not looking for one.
+    if (room.label !== null) continue
+
+    const ratio = room.area / hintArea
+    if (ratio < AREA_BAND[0] || ratio > AREA_BAND[1]) continue
+
+    const iou = boxIou(hintBox, boundsOf(room.polygon))
+    if (iou < IOU_FLOOR || iou <= bestIou) continue
+
+    if (!containsPoint(room.polygon, hintCentroid)) continue
+
+    best = room
+    bestIou = iou
+  }
+
+  return best
+}
+
+type Box = { minX: number; maxX: number; minZ: number; maxZ: number }
+
+function boundsOf(ring: Point[]): Box {
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  for (const p of ring) {
+    if (p.x < minX) minX = p.x
+    if (p.x > maxX) maxX = p.x
+    if (p.z < minZ) minZ = p.z
+    if (p.z > maxZ) maxZ = p.z
+  }
+  return { minX, maxX, minZ, maxZ }
+}
+
+/** Intersection over union of two axis-aligned boxes. 0 when they miss. */
+function boxIou(a: Box, b: Box): number {
+  const overlapX = Math.min(a.maxX, b.maxX) - Math.max(a.minX, b.minX)
+  const overlapZ = Math.min(a.maxZ, b.maxZ) - Math.max(a.minZ, b.minZ)
+  if (overlapX <= 0 || overlapZ <= 0) return 0
+
+  const intersection = overlapX * overlapZ
+  const areaA = (a.maxX - a.minX) * (a.maxZ - a.minZ)
+  const areaB = (b.maxX - b.minX) * (b.maxZ - b.minZ)
+  const union = areaA + areaB - intersection
+  return union > 0 ? intersection / union : 0
+}
+
+/** Shoelace area, signed. Sign is discarded by every caller here. */
+function ringArea(ring: Point[]): number {
+  let sum = 0
+  for (let i = 0; i < ring.length; i++) {
+    const p = ring[i]
+    const q = ring[(i + 1) % ring.length]
+    sum += p.x * q.z - q.x * p.z
+  }
+  return sum / 2
 }
 
 /**
@@ -286,6 +428,64 @@ export function roomAtPoint(
 
   return found
 }
+
+/**
+ * A handle on a space that has no name — derived from its geometry, stable for
+ * one generation of the design, and **never persisted**.
+ *
+ * ⚠ This is NOT a `RoomId`. A `RoomId` identifies the user's assertion that a
+ * space exists and is called something, and survives edits because the
+ * assertion does. This survives nothing: move any wall of the space and it
+ * changes, because it IS the geometry. It is good for React keys, for
+ * multi-select within a session, and for numbering spaces in a single export
+ * pass. It is useless for anything that has to outlive an edit, and putting it
+ * in a document would be a lie — `DesignDocument` has no field for it and must
+ * not gain one.
+ *
+ * Any space the user actually touches gets promoted to a persisted `RoomLabel`
+ * (the `space` → `room` selection transition), which is the real answer.
+ *
+ * ── Determinism (L6) ──
+ * The ring is rotated to start at its lexicographically smallest vertex before
+ * hashing, so the same polygon hashes the same however the face traversal
+ * happened to enter it. Coordinates are quantised to a millimetre — the same
+ * tolerance `plan/rooms.ts` welds at — so a value that differs only in
+ * floating-point noise does not produce a different id.
+ *
+ * FNV-1a, not `crypto`: it must be synchronous, and a collision here costs a
+ * duplicate React key, not a correctness failure.
+ */
+export function spaceId(polygon: Point[]): string {
+  const mm = (n: number) => Math.round(n * 1000)
+
+  // Rotate to a canonical start so entry order cannot change the answer.
+  let start = 0
+  for (let i = 1; i < polygon.length; i++) {
+    const a = polygon[i]
+    const b = polygon[start]
+    if (mm(a.x) < mm(b.x) || (mm(a.x) === mm(b.x) && mm(a.z) < mm(b.z))) {
+      start = i
+    }
+  }
+
+  let hash = 0x811c9dc5
+  for (let i = 0; i < polygon.length; i++) {
+    const p = polygon[(start + i) % polygon.length]
+    for (const value of [mm(p.x), mm(p.z)]) {
+      hash ^= value & 0xffffffff
+      hash = Math.imul(hash, 0x01000193)
+    }
+  }
+
+  return `space-${(hash >>> 0).toString(16).padStart(8, '0')}`
+}
+
+/**
+ * The stable handle for a room this generation: its name's id when it has one,
+ * otherwise its geometric id. What an export numbers spaces by.
+ */
+export const roomKeyOf = (room: ResolvedRoom): string =>
+  room.label ? room.label.id : spaceId(room.polygon)
 
 /** Total of every enclosed space, in square metres. */
 export function totalBuiltUpArea(rooms: ResolvedRoom[]): number {

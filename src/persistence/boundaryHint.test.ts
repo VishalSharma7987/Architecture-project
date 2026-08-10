@@ -65,13 +65,16 @@ describe('★ B7.5 — the hint round-trips', () => {
     // The hint is the ONLY record of where the room used to be, so it is what
     // B7.6 will re-attach from. Blanking it on save would throw that away
     // exactly when it becomes useful.
+    // Far away and far too small to re-attach — B7.6's pass 2 must not claim
+    // it, or this stops testing what it says it tests.
     const withHint: RoomLabel = {
       ...KITCHEN,
       anchor: { x: 40, z: 40 },
       boundaryHint: [
-        { x: 0, z: 0 },
-        { x: 4, z: 0 },
-        { x: 4, z: 3 },
+        { x: 40, z: 40 },
+        { x: 41, z: 40 },
+        { x: 41, z: 41 },
+        { x: 40, z: 41 },
       ],
     }
     const doc = saved(rectangleWalls(), [withHint])
