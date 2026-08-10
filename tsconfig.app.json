@@ -43,6 +43,11 @@
   // globals, and pulling `@types/node` into the app project would quietly
   // legitimise importing node built-ins from client code. They are typechecked
   // by `tsconfig.test.json` instead, which `tsc -b` still runs.
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**"],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.bench.ts",
+    "src/test/**"
+  ],
   "include": ["src"]
 }

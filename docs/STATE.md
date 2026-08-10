@@ -276,18 +276,33 @@ request — [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 The carried decisions are now **SD**1–8, so they can no longer be confused with ADR
 0002's internal D1–D6.
 
-### 6. F5 — room detection is O(n²) and runs five times per edit `OPEN` · **this is B7**
+### 6. F5 — room detection is O(n²) and recomputes per mounted panel `OPEN` · **this is B7**
 
 `splitAtIntersections` tests every segment against every segment; `buildGraph`'s
-`nodeAt` is a linear scan per endpoint over the *post-split* count. Five independent
-`useMemo`s recompute it whenever walls change — `FloorPlanEditor`, `InspectorPanel`,
-`RoomSchedulePanel`, `RoomLabels`, `VastuPanel` — synchronously, mid-drag.
+`nodeAt` is a linear scan per endpoint over the *post-split* count. Independent
+`useMemo`s recompute it whenever walls change, synchronously, mid-drag.
+
+**Measured 2026-08-10 — [`docs/testing/benchmarks.md`](testing/benchmarks.md).**
+At 500 walls one `resolveRooms` is **19.8 ms** against a 16.7 ms frame; the two
+panels ordinarily mounted cost **39.6 ms**, the reachable maximum of four costs
+**79.1 ms**. Between 200 and 500 walls the exponent is **n^1.98** — F5 is
+confirmed by measurement, not by reading the loops.
+
+**Correction to the B13 write-up:** it said *five* `useMemo`s recompute per edit.
+There are five call sites — `FloorPlanEditor`, `InspectorPanel`,
+`RoomSchedulePanel`, `RoomLabels`, `VastuPanel` — but five can never mount
+together, because `FloorPlanEditor` is 2D-only and `RoomLabels` is 3D-only and
+`App` renders one branch or the other. **The reachable maximum is four; the
+ordinary case is two.** Quoting 5× would manufacture a 20% improvement for B8.
 
 **Two notes for B7, both from the B13 review:**
-- Deduplicating five quadratic calls into one quadratic call still leaves it
+- Deduplicating four quadratic calls into one quadratic call still leaves it
   quadratic. Fix `nodeAt` (spatial bucketing on `WELD`) as well as the memoisation.
-- **There is no perf baseline in the repo**, so B7 currently has no way to prove it
-  helped. Establish one first.
+  **A B7 that leaves the exponent at 2 has not addressed F5**, whatever the
+  milliseconds say.
+- ~~There is no perf baseline in the repo~~ — **RESOLVED 2026-08-10.** Compare
+  before/after on one machine in one sitting; the absolute figures are bound to
+  that laptop and its thermal state.
 
 ### 7. M2 — `detectWalls.ts` is the module nobody can safely change `OPEN`
 

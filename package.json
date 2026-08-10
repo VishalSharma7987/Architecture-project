@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "bench:rooms": "vitest run --config vitest.bench.config.ts --disable-console-intercept"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",

@@ -31,7 +31,12 @@
   },
   "overrides": [
     {
-      "files": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/test/**"],
+      "files": [
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "src/**/*.bench.ts",
+        "src/test/**"
+      ],
       "rules": { "no-console": "off" }
     },
     {
