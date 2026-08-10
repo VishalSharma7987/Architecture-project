@@ -33,10 +33,24 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B7 — COMPLETE** (B7.1 – B7.7). Room identity, detached labels, `DESIGN_VERSION 3`, provenance, `boundaryHint`, pass-2 re-attachment, transient space ids |
-| Next task | **B9** (drafting/snapping) or the 2D→3D fidelity audit — Stage 2 is unblocked |
+| Last completed task | **B21 — COMPLETE.** A door's swing is in the model. `DESIGN_VERSION 4`, and four sites that invented it now read it |
+| Before that | **B7 — COMPLETE** (B7.1 – B7.7). Room identity, detached labels, `DESIGN_VERSION 3`, provenance, `boundaryHint`, pass-2 re-attachment, transient space ids |
+| Next task | **B22** — the swing's inspector controls. Deliberately split out of B21 (see below) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
-| Upcoming | B7 · B9 → B10 → B11 → B12 |
+| Upcoming | B22 → B9 (drafting/snapping) → B10 → B11 → B12 |
+
+**The 2D→3D fidelity audit ran on 2026-08-10** against four real residential
+floor plans. Its findings are recorded as **18–24** below, and the one P0 it
+found that was non-deterministic rather than merely missing — the door swing —
+was closed the same day as **B21**.
+
+**B21 shipped the model and the renderers, and NOT the UI.** A user still
+cannot flip a door's swing; nothing writes the field but `addOpening` and the
+migration. That is deliberate: model + migration + four call sites is already
+the widest mechanical change one session should carry, and the field being
+right is what the inspector will depend on. **B22 is the toggle**, and it is
+small — `updateOpening` already accepts `swing`, so it is two controls and a
+test.
 
 **Clause 4a is closed.** All seven pure modules §7 Stage 1 names are now covered,
 lowest 85.6% against a ≥70% gate. `export/pdf.ts` went 0% → 92.8% and
@@ -73,19 +87,23 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified on the working tree above `3926d17`, after B7 complete:
+Verified after B21, at `ebb2595`:
 
 | Check | Result |
 |---|---|
-| `npm test` | **451 passing / 451** · 25 files / 25 |
-| `npm run build` | **pass** (exit 0) |
+| `npm test` | **473 passing / 473** · 27 files / 27 |
+| `npm run build` | **pass** (exit 0), 794 ms |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
 | `strict` | **`true`** — [`tsconfig.app.json:25`](../tsconfig.app.json#L25) |
 | Key boundary | **intact** — no `ANTHROPIC` / `OPENROUTER` / `sk-ant-` / `sk-or-` in `dist/` |
-| Schema | **`DESIGN_VERSION = 3`** — v1→v2→v3 migrations, round-trip tested |
+| Schema | **`DESIGN_VERSION = 4`** — v1→v2→v3→v4 migrations, round-trip tested |
 | Autosave | **2.37 ms** at 500 walls × 3 storeys, against §9.2's 20 ms |
+
+*Before B21: 451 / 25 files at `8227343`. The 22 new tests are
+[`migrateV4.test.ts`](../src/persistence/migrateV4.test.ts) (11) and
+[`doorSwing.test.ts`](../src/scene/doorSwing.test.ts) (11).*
 
 The 5 lint warnings are genuine advisories, not suppressions: 3 ×
 `react/no-array-index-key`, 2 × `eslint/no-shadow`.
@@ -360,6 +378,43 @@ enforce it.
 **Never defaulted to `'manual'`.** Two of `addWall`'s three callers are the CV
 path; one of `addOpening`'s three is `detectOpenings`. A default would label
 machine output as hand-drawn — the exact failure L5 exists to prevent.
+
+### SD13 — a swing is stated in the WALL's frame, never in world space
+
+`Swing = { hand: 'start' | 'end', side: 'left' | 'right' }`, where `hand` names
+a jamb by its position along the wall and `side` names a side of the wall.
+Neither is a world direction, and that is the whole design.
+
+A swing stored as a world vector — or as a boolean "flipped" against whatever
+the renderer happened to compute — **silently reverses when a wall is redrawn
+end-to-start.** The wall looks identical on the page and its doors turn round.
+Nothing would catch it, because the drawing is still a valid drawing.
+
+Left and right are as seen standing at `wall.start` looking toward `wall.end`
+in plan, so `right = (-uz, ux)`. **That naming is pinned by test, not by
+comment** — [`doorSwing.test.ts`](../src/scene/doorSwing.test.ts) asserts both
+directions against an explicit east-running wall, in world coordinates, for
+both hands. Reading it backwards is the same hazard as §4 invariant 3 and has
+the same symptom: invisible on a symmetric plan.
+
+### SD14 — `doorSwing` is the only thing allowed to answer "which way?"
+
+Four sites used to answer it independently, and the count was found to be four
+rather than three only while checking line numbers for a doc edit — see
+finding 20b. Three were kept in step by comments; the fourth (`DoorLeaves`)
+was not in step at all, deciding the direction per-frame from the avatar.
+
+`doorSwing(wall, opening)` in
+[`scene/wallGeometry.ts`](../src/scene/wallGeometry.ts) is now the single
+answer, and a **source-tree fitness test** enforces that the call sites call
+it. That is deliberate and not belt-and-braces: a pure function is a single
+source of truth only if it is actually reached, which no type can express. It
+is the third use of the `calibration.test.ts` pattern, after `floors.test.ts`
+and `provenance.test.ts`.
+
+**The grep is not sufficient on its own** — it passed while `planSheet.ts` had
+the call but not the import, and `tsc` is what caught that. The two together
+are the check; neither alone is.
 
 ### SD12 — `boundaryHint` is a save-time field
 
@@ -955,7 +1010,23 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not claim `export/pdf.ts` needs a PDF parser to test.** It does not; the xref
   offsets are checkable with byte arithmetic, and that is now the ★ test.
 - **Do not describe B7 as performance work** (open question 11), and **do not assume
-  `DESIGN_VERSION = 2` is free** — B3 consumed it.
+  `DESIGN_VERSION = 2` is free** — B3 consumed it. **`3` and `4` are consumed too**
+  (B7 and B21); the next schema change is **v5**.
+- **Do not compute a door's hinge or swing direction anywhere but `doorSwing`**
+  (SD14). Four sites did, and one of them decided it at runtime. The fitness
+  test in [`doorSwing.test.ts`](../src/scene/doorSwing.test.ts) fails the build
+  if a renderer stops asking — including `doorSweep`, which reserves the page
+  space the arc is drawn in.
+- **Do not store a swing as a world direction or as a bare "flipped" flag**
+  (SD13). It reverses when a wall is redrawn end-to-start, invisibly.
+- **Do not make the v3→v4 migration reach for `DEFAULT_SWING`.** It writes the
+  pair as a literal on purpose: a migration states what the PAST meant, and
+  must not move if the current default does. Same reasoning as `createdAt`
+  coming from `savedAt` rather than the clock (L6).
+- **Do not treat a missing `swing` as an error.** `doorSwing` falls back to
+  `DEFAULT_SWING`, which IS the pre-v4 convention, so a v3 fixture or a
+  hand-edited file still draws what it always drew. That fallback is what lets
+  `parseSwing` drop a malformed field without costing the user a door.
 
 ---
 
