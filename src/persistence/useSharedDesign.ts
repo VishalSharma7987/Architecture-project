@@ -36,12 +36,11 @@ export function useSharedDesign(): SharedState {
         // Still enter read-only: the URL says "view a shared design", and
         // silently dropping into the editor would be more confusing than
         // showing an empty viewer with the reason.
-        useDesignStore.getState().loadDesign({
-          name: null,
-          walls: [],
-          readOnly: true,
-          viewMode: '3d',
-        })
+        // `resetToEmpty`, not a partial `loadDesign` (§10 rule 3). The
+        // intent here really is an empty read-only viewer, but leaning on
+        // `loadDesign`'s defaults-to-empty to express it keeps alive the
+        // mechanism behind the worst bug in the codebase.
+        useDesignStore.getState().resetToEmpty({ readOnly: true, viewMode: '3d' })
         setState({ kind: 'error', message: result.error })
         return
       }

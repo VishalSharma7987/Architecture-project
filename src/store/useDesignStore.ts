@@ -634,6 +634,21 @@ type DesignState = {
   newDesign: () => void
 
   /**
+   * An empty document, in a named view state. The compliant way to say
+   * "show nothing, like this".
+   *
+   * Exists because §10 rule 3 — *"never call `loadDesign` with a partial field
+   * set; it defaults everything absent to empty"* — is unconditional, and the
+   * damaged-share-link path was violating it. That path genuinely wants an
+   * empty read-only viewer, so the defaults-to-empty behaviour was the intent
+   * there; but intent does not make a call compliant, and relying on
+   * `loadDesign`'s defaulting keeps alive the exact mechanism that produced the
+   * worst bug in the codebase. Asking for emptiness explicitly costs two lines
+   * and removes the reliance.
+   */
+  resetToEmpty: (view?: { readOnly?: boolean; viewMode?: ViewMode }) => void
+
+  /**
    * Appends a wall. Returns its id, or `null` if the segment was rejected.
    *
    * Zero-length segments are rejected here rather than in the editor: a wall
@@ -849,8 +864,26 @@ export function persistedChanged(
 }
 
 /** Applies `patch` to one wall, leaving every other wall's identity untouched. */
+/**
+ * Applies `patch` to one wall, leaving every other wall's identity untouched —
+ * and returning the ORIGINAL array when there was no such wall.
+ *
+ * The early return is not an optimisation. `map` allocates unconditionally, so
+ * patching an id that no longer exists used to hand back a new array that was
+ * structurally identical to the old one. `designChanged` compares by reference,
+ * so the undo recorder read that as an edit and pushed a history step in which
+ * nothing had changed — leaving the user a ⌘Z that visibly does nothing.
+ *
+ * Reachable whenever a write races a delete: the inspector holds an id, the
+ * 3D view or the Delete key removes the wall, and the next keystroke in a
+ * dimension field patches a wall that is gone. §10 rule 10 names this exact
+ * hazard — *"a `.map()` in the store that returns a structurally-identical new
+ * array"*.
+ */
 const patchWall = (walls: Wall[], id: string, fn: (wall: Wall) => Wall) =>
-  walls.map((wall) => (wall.id === id ? fn(wall) : wall))
+  walls.some((wall) => wall.id === id)
+    ? walls.map((wall) => (wall.id === id ? fn(wall) : wall))
+    : walls
 
 /**
  * Single source of truth for the design. Both the 2D editor and the 3D scene
@@ -1405,6 +1438,37 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       viewEpoch: state.viewEpoch + 1,
       historyEpoch: state.historyEpoch + 1,
     })),
+
+  resetToEmpty: (view) =>
+    set((state) => {
+      // The outgoing underlay owns an object URL, and nothing else will revoke
+      // it once the store stops pointing at it.
+      if (state.blueprint?.src) URL.revokeObjectURL(state.blueprint.src)
+      return {
+        floors: [emptyFloor(0), emptyFloor(1), emptyFloor(2)],
+        activeFloor: 0,
+        walls: [],
+        furniture: [],
+        roomLabels: [],
+        stairs: [],
+        plot: null,
+        blueprint: null,
+        floorMaterial: DEFAULT_FLOOR_MATERIAL,
+        northOffset: 0,
+        plotFacing: DEFAULT_FACING,
+        constructionRate: 0,
+        projectName: null,
+        selection: null,
+        walkMode: false,
+        readOnly: view?.readOnly ?? state.readOnly,
+        viewMode: view?.viewMode ?? state.viewMode,
+        viewEpoch: state.viewEpoch + 1,
+        // A different document — an empty one. Undoing back into the design
+        // that was open before a share link replaced it is not something the
+        // viewer asked for.
+        historyEpoch: state.historyEpoch + 1,
+      }
+    }),
 
   replaceWalls: (walls, name) =>
     set((state) => ({
