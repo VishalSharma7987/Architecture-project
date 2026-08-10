@@ -1,5 +1,6 @@
 import type {
   Point,
+  RoomId,
   RoomLabel,
   Selection,
   Wall,
@@ -203,6 +204,28 @@ export function selectedRoomOf(
         room.extraLabels.some((extra) => extra.id === selection.roomId),
     ) ?? null
   )
+}
+
+/**
+ * Names that no enclosure currently claims, in document order.
+ *
+ * A wall moved past an anchor, or a loop left open, leaves the label behind.
+ * It is NOT deleted — the user typed it, and dropping user input because the
+ * geometry moved would violate L2, with no confirmation and no undo step to
+ * find it in (L4). So it stays in the document, is listed as detached, and
+ * re-attaches by ordinary containment the moment the walls close around it
+ * again.
+ */
+export function detachedLabels(
+  rooms: ResolvedRoom[],
+  labels: RoomLabel[],
+): RoomLabel[] {
+  const attached = new Set<RoomId>()
+  for (const room of rooms) {
+    if (room.label) attached.add(room.label.id)
+    for (const extra of room.extraLabels) attached.add(extra.id)
+  }
+  return labels.filter((label) => !attached.has(label.id))
 }
 
 /** The room containing a point, or null. Used for click-to-name. */

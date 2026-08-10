@@ -5,7 +5,13 @@ import {
   STAIR_DEFAULTS,
   useDesignStore,
 } from '../store/useDesignStore'
-import type { Point, RoomId, RoomType, Unit } from '../store/useDesignStore'
+import type {
+  Point,
+  RoomId,
+  RoomLabel,
+  RoomType,
+  Unit,
+} from '../store/useDesignStore'
 import { furnitureSize, getFurniture } from '../furniture/catalog'
 import { ROOM_TYPES, getRoomType, roomDisplayName } from '../rooms/catalog'
 import { resolveRooms, roomAtPoint, roomSize } from '../rooms/resolve'
@@ -488,30 +494,6 @@ function RoomInspector({ roomId, anchor }: { roomId?: RoomId; anchor?: Point }) 
       ? roomAtPoint(rooms, anchor)
       : null
 
-  if (!room) {
-    return (
-      <PanelShell title={label ? roomDisplayName(label) : 'Room'}>
-        <div
-          className="space-y-3 text-[11px] leading-relaxed text-slate-400"
-          data-testid="room-inspector"
-        >
-          <p>
-            This spot is not inside an enclosed space any more — a wall moved
-            past it, or the loop is open. Close the walls around it, or click
-            inside a room to name that one.
-          </p>
-        </div>
-      </PanelShell>
-    )
-  }
-
-  // A merged room keeps its first name and silently drops the others; saying
-  // how many are waiting is the only clue that re-drawing the wall gets the
-  // other name back.
-  const shadowed = roomLabels.filter(
-    (other) => other.id !== label?.id && roomAtPoint(rooms, other.anchor) === room,
-  ).length
-
   const setType = (type: RoomType) => {
     if (label) {
       updateRoomLabel(label.id, { type })
@@ -523,21 +505,60 @@ function RoomInspector({ roomId, anchor }: { roomId?: RoomId; anchor?: Point }) 
     if (anchor) select({ kind: 'room', roomId: nameRoom(anchor, type) })
   }
 
+  const clearName = label ? () => removeRoomLabel(label.id) : undefined
+
+  // A name whose walls have opened. It is kept, not dropped (see
+  // `detachedLabels`), so this panel has to be a working editor rather than a
+  // dead end — the user can still rename it, recategorise it, or delete it
+  // deliberately, and it comes back on its own when the loop closes.
+  if (!room && label) {
+    return (
+      <PanelShell title={roomDisplayName(label)} footer={<ClearName onClick={clearName} />}>
+        <div className="space-y-5" data-testid="room-inspector">
+          <p
+            className="rounded-md bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-700"
+            data-testid="room-detached"
+          >
+            {roomDisplayName(label)} is not inside an enclosed space right now —
+            a wall moved past it, or the loop is open. Close the walls around it
+            and it comes back with its area.
+          </p>
+          <RoomNameEditor
+            label={label}
+            onName={(name) => updateRoomLabel(label.id, { name })}
+            onType={setType}
+          />
+        </div>
+      </PanelShell>
+    )
+  }
+
+  if (!room) {
+    return (
+      <PanelShell title="Room">
+        <p
+          className="text-[11px] leading-relaxed text-slate-400"
+          data-testid="room-inspector"
+        >
+          This spot is not inside an enclosed space any more — a wall moved
+          past it, or the loop is open. Close the walls around it, or click
+          inside a room to name that one.
+        </p>
+      </PanelShell>
+    )
+  }
+
+  // A merged room keeps its first name and silently drops the others; saying
+  // how many are waiting is the only clue that re-drawing the wall gets the
+  // other name back.
+  const shadowed = roomLabels.filter(
+    (other) => other.id !== label?.id && roomAtPoint(rooms, other.anchor) === room,
+  ).length
+
   return (
     <PanelShell
       title={label ? roomDisplayName(label) : 'Room'}
-      footer={
-        label ? (
-          <button
-            type="button"
-            data-testid="room-clear-name"
-            onClick={() => removeRoomLabel(label.id)}
-            className="w-full rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100"
-          >
-            Clear name
-          </button>
-        ) : undefined
-      }
+      footer={<ClearName onClick={clearName} />}
     >
       <div className="space-y-5" data-testid="room-inspector">
         <section>
@@ -579,62 +600,11 @@ function RoomInspector({ roomId, anchor }: { roomId?: RoomId; anchor?: Point }) 
           </p>
         </section>
 
-        <section>
-          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-            {label ? 'Name' : 'Name this space'}
-          </h3>
-
-          {/* Free-text label, once the space has a type. It overrides the
-              caption everywhere; clearing it falls back to the type's name. The
-              category buttons below still set the zone colour. */}
-          {label && (
-            <div className="mb-3">
-              <input
-                type="text"
-                value={label.name ?? ''}
-                onChange={(e) =>
-                  updateRoomLabel(label.id, { name: e.target.value })
-                }
-                placeholder={getRoomType(label.type).label}
-                maxLength={40}
-                data-testid="room-custom-name"
-                className="w-full rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
-              />
-              <p className="mt-1 text-[11px] text-slate-400">
-                Type your own label, or pick a category below.
-              </p>
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-1.5">
-            {ROOM_TYPES.map((type) => {
-              const active = type.id === label?.type
-              return (
-                <button
-                  key={type.id}
-                  type="button"
-                  onClick={() => setType(type.id)}
-                  aria-pressed={active}
-                  data-testid={`room-type-${type.id}`}
-                  className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors ${
-                    active
-                      ? 'border-blue-500 bg-blue-50 text-slate-900 ring-1 ring-blue-500'
-                      : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
-                  }`}
-                >
-                  {/* The plan's own fill, so the picker previews the zone
-                      colours rather than inventing a second palette. */}
-                  <span
-                    className="h-5 w-5 shrink-0 rounded border border-black/10"
-                    style={{ backgroundColor: type.tint }}
-                    aria-hidden
-                  />
-                  <span className="truncate">{type.label}</span>
-                </button>
-              )
-            })}
-          </div>
-        </section>
+        <RoomNameEditor
+          label={label}
+          onName={(name) => label && updateRoomLabel(label.id, { name })}
+          onType={setType}
+        />
 
         {shadowed > 0 && (
           <p
@@ -653,6 +623,101 @@ function RoomInspector({ roomId, anchor }: { roomId?: RoomId; anchor?: Point }) 
         </p>
       </div>
     </PanelShell>
+  )
+}
+
+/**
+ * The room's delete control, or nothing when there is no name to delete.
+ *
+ * Shared by the resolved and the detached panels, because a detached name is
+ * exactly the one a user is most likely to want rid of.
+ */
+function ClearName({ onClick }: { onClick?: () => void }) {
+  if (!onClick) return null
+  return (
+    <button
+      type="button"
+      data-testid="room-clear-name"
+      onClick={onClick}
+      className="w-full rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100"
+    >
+      Clear name
+    </button>
+  )
+}
+
+/**
+ * Free-text name plus the category grid — the whole naming surface.
+ *
+ * Extracted so the detached panel is the SAME editor rather than a read-only
+ * apology. `label` is null only when naming a space that has none yet, which
+ * is why the text field hides but the categories do not: picking a category is
+ * how a name gets created in the first place.
+ */
+function RoomNameEditor({
+  label,
+  onName,
+  onType,
+}: {
+  label: RoomLabel | null
+  onName: (name: string) => void
+  onType: (type: RoomType) => void
+}) {
+  return (
+    <section>
+      <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+        {label ? 'Name' : 'Name this space'}
+      </h3>
+
+      {/* Free-text label, once the space has a type. It overrides the caption
+          everywhere; clearing it falls back to the type's name. The category
+          buttons below still set the zone colour. */}
+      {label && (
+        <div className="mb-3">
+          <input
+            type="text"
+            value={label.name ?? ''}
+            onChange={(e) => onName(e.target.value)}
+            placeholder={getRoomType(label.type).label}
+            maxLength={40}
+            data-testid="room-custom-name"
+            className="w-full rounded-md border border-slate-200 px-2.5 py-1.5 text-xs text-slate-800 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-[11px] text-slate-400">
+            Type your own label, or pick a category below.
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-1.5">
+        {ROOM_TYPES.map((type) => {
+          const active = type.id === label?.type
+          return (
+            <button
+              key={type.id}
+              type="button"
+              onClick={() => onType(type.id)}
+              aria-pressed={active}
+              data-testid={`room-type-${type.id}`}
+              className={`flex items-center gap-2 rounded-md border px-2 py-1.5 text-left text-[11px] transition-colors ${
+                active
+                  ? 'border-blue-500 bg-blue-50 text-slate-900 ring-1 ring-blue-500'
+                  : 'border-slate-200 text-slate-600 hover:border-slate-300 hover:bg-slate-50'
+              }`}
+            >
+              {/* The plan's own fill, so the picker previews the zone colours
+                  rather than inventing a second palette. */}
+              <span
+                className="h-5 w-5 shrink-0 rounded border border-black/10"
+                style={{ backgroundColor: type.tint }}
+                aria-hidden
+              />
+              <span className="truncate">{type.label}</span>
+            </button>
+          )
+        })}
+      </div>
+    </section>
   )
 }
 

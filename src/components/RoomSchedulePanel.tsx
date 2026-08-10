@@ -7,6 +7,7 @@ import {
 import type { AreaStatement } from '../export/statement'
 import { roomDisplayName } from '../rooms/catalog'
 import {
+  detachedLabels,
   resolveRooms,
   selectedRoomOf,
   totalBuiltUpArea,
@@ -106,6 +107,7 @@ export function RoomSchedulePanel() {
   // of them by id; a bare `space` selection names none and falls to the
   // primary.
   const selectedLabelId = selection?.kind === 'room' ? selection.roomId : null
+  const detached = detachedLabels(rooms, roomLabels)
   const total = totalBuiltUpArea(rooms)
   // The whole floor's footprint, in plan orientation — width across (X), length
   // down (Z) — so it reads like the overall dimension on a blueprint.
@@ -208,6 +210,44 @@ export function RoomSchedulePanel() {
             <p className="mt-2 text-[11px] text-slate-400">
               Click a row to select the space, then name it in the panel on
               the right.
+            </p>
+          </section>
+        )}
+
+        {/* Names whose walls have opened. They stay in the document (L2), so
+            they have to stay on screen too — a name that is merely invisible
+            is a name the user cannot find, fix or delete. */}
+        {detached.length > 0 && (
+          <section data-testid="detached-labels">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-amber-600">
+              Not in an enclosed space ({detached.length})
+            </h3>
+            <ul className="space-y-1">
+              {detached.map((label) => (
+                <li key={label.id}>
+                  <button
+                    type="button"
+                    onClick={() => select({ kind: 'room', roomId: label.id })}
+                    aria-current={label.id === selectedLabelId}
+                    className={`flex w-full items-center justify-between gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors ${
+                      label.id === selectedLabelId
+                        ? 'border-amber-500 bg-amber-50 text-slate-900 ring-1 ring-amber-500'
+                        : 'border-amber-200 text-slate-700 hover:border-amber-300 hover:bg-amber-50'
+                    }`}
+                  >
+                    <span className="truncate font-medium">
+                      {roomDisplayName(label)}
+                    </span>
+                    <span className="shrink-0 text-[11px] italic text-amber-600">
+                      no area
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+              Close the walls around one and it returns to the list above with
+              its area.
             </p>
           </section>
         )}
