@@ -1,5 +1,5 @@
 import type { Point, RoomLabel, Wall } from '../store/useDesignStore'
-import { detectRooms } from '../plan/rooms'
+import { detectRooms, detectRoomsUncached, roomCacheStats } from '../plan/rooms'
 
 /** A detected space, married to the name the user gave it. */
 export type ResolvedRoom = {
@@ -37,11 +37,33 @@ export type ResolvedRoom = {
  * was, rather than flipping to whatever was named last. Every name is kept, so
  * an open-plan area still shows all of its zones, each at its own anchor.
  */
-export function resolveRooms(
+export function resolveRoomsUncached(
   walls: Wall[],
   labels: RoomLabel[],
 ): ResolvedRoom[] {
-  const rooms: ResolvedRoom[] = detectRooms(walls).map((room) => ({
+  return matchLabels(detectRoomsUncached(walls), labels)
+}
+
+/**
+ * The label-matching half, over detection results someone else produced.
+ *
+ * Split out so the two entry points can reach DIFFERENT detection layers. This
+ * is not a cosmetic seam — getting it wrong is silent both ways:
+ *
+ * - `resolveRoomsUncached` must reach `detectRoomsUncached`, or it is not
+ *   uncached. It called the memoised `detectRooms` for one commit, and the
+ *   benchmark duly reported resolve at 0.25 ms against detect at 19.8 ms for
+ *   the same plan — a function timed as 80x faster than something it calls.
+ * - `resolveRooms` must reach the memoised `detectRooms`, or naming a room —
+ *   which replaces `roomLabels`, misses the resolve cache, and leaves `walls`
+ *   alone — would redo the whole traversal. That is the entire point of keying
+ *   on two levels instead of one.
+ */
+function matchLabels(
+  detected: readonly { polygon: Point[]; area: number }[],
+  labels: RoomLabel[],
+): ResolvedRoom[] {
+  const rooms: ResolvedRoom[] = detected.map((room) => ({
     polygon: room.polygon,
     area: room.area,
     centroid: labelPoint(room.polygon),
@@ -56,6 +78,59 @@ export function resolveRooms(
     else room.extraLabels.push(label)
   }
 
+  return rooms
+}
+
+/**
+ * Resolved rooms, keyed by the identity of BOTH inputs.
+ *
+ * Two levels rather than a composite key: the outer map is the walls, the inner
+ * the labels. Naming a room replaces `roomLabels` but leaves `walls` alone, so
+ * the resolve entry misses while the far more expensive detection underneath it
+ * still hits its own cache in `plan/rooms.ts`.
+ *
+ * See that module for why array identity is a sound key, and for the caller
+ * obligation that comes with a shared result.
+ */
+let resolveCache = new WeakMap<Wall[], WeakMap<RoomLabel[], ResolvedRoom[]>>()
+
+/** Drops the resolve cache. `resetRoomCaches` in `plan/rooms.ts` calls this. */
+export function resetResolveCache(): void {
+  resolveCache = new WeakMap()
+}
+
+/**
+ * Every enclosed space, with any name that belongs to it. Memoised.
+ *
+ * THE shared computation point B8 exists to create. Both viewports, all three
+ * panels, the print sheet, the area statement and the blueprint's furniture
+ * placement reach the same entry — so one edit costs one traversal rather than
+ * one per mounted consumer.
+ *
+ * ⚠ The returned array is SHARED between every caller. Copy before sorting:
+ * `Array.prototype.sort` mutates in place, and two call sites used to do
+ * exactly that when each of them still owned its own array.
+ */
+export function resolveRooms(
+  walls: Wall[],
+  labels: RoomLabel[],
+): ResolvedRoom[] {
+  let byLabels = resolveCache.get(walls)
+  if (byLabels) {
+    const cached = byLabels.get(labels)
+    if (cached) {
+      roomCacheStats.resolveHits++
+      return cached
+    }
+  } else {
+    byLabels = new WeakMap()
+    resolveCache.set(walls, byLabels)
+  }
+
+  roomCacheStats.resolveRuns++
+  // `detectRooms`, not `detectRoomsUncached` — see `matchLabels`.
+  const rooms = matchLabels(detectRooms(walls), labels)
+  byLabels.set(labels, rooms)
   return rooms
 }
 

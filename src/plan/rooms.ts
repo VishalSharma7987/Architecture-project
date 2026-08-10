@@ -1,4 +1,5 @@
 import type { Point, Wall } from '../store/useDesignStore'
+import { resetResolveCache } from '../rooms/resolve'
 
 /** Corners within a millimetre of each other are the same node. */
 const WELD = 1e-3
@@ -27,14 +28,18 @@ type Segment = { a: Point; b: Point }
 type Edge = [number, number]
 
 /**
- * Every enclosed space in the plan, largest first.
+ * Every enclosed space in the plan, largest first — computed, never cached.
  *
  * Areas are measured on the wall CENTRELINES, so each room is overstated by
  * roughly half a wall thickness around its perimeter. That keeps adjacent
  * rooms tiling the shell exactly, which is what a "total floor area" reader
  * expects; the alternative leaves unattributed slivers under every wall.
+ *
+ * Callers want `detectRooms` below. This is exported so the benchmark can time
+ * the algorithm rather than the cache, and so the algorithm's own tests are not
+ * silently testing a `WeakMap`.
  */
-export function detectRooms(walls: Wall[]): Room[] {
+export function detectRoomsUncached(walls: Wall[]): Room[] {
   const segments = splitAtIntersections(
     walls
       .map((w) => ({ a: w.start, b: w.end }))
@@ -55,6 +60,88 @@ export function detectRooms(walls: Wall[]): Room[] {
   }
 
   return rooms.sort((a, b) => b.area - a.area)
+}
+
+/* ─── memoisation ───────────────────────────────────────────────────────── */
+
+/**
+ * Detection results, keyed by the identity of the `walls` array they came from.
+ *
+ * ── Why this exists ──────────────────────────────────────────────────────
+ * Room detection is O(n²) twice over and runs synchronously, mid-drag. At 500
+ * walls one pass is 17.9 ms (`docs/testing/benchmarks.md`) — inside §9.2's
+ * "< 50 ms" budget on its own. The violation was the budget's other word,
+ * *once*: every consumer held its own `useMemo` and recomputed independently,
+ * so an ordinary editing session paid it two to four times over per edit.
+ *
+ * This is B8's deduplication. It does NOT touch the algorithm (§3, §10 rule 7)
+ * and adds no spatial index — that is headroom for larger plans and has to be
+ * argued on its own terms.
+ *
+ * ── Why identity is a sound key ──────────────────────────────────────────
+ * The store never mutates: every action replaces the arrays it touches. That
+ * discipline is already load-bearing for CORRECTNESS, not just for speed —
+ * `designChanged` in the history recorder is a pure reference comparison with
+ * no deep compare, so if identity could go stale, undo would already be broken.
+ *
+ * ── Why a WeakMap ────────────────────────────────────────────────────────
+ * It evicts itself when a generation of the design is collected, so there is no
+ * size limit to tune and no LRU bookkeeping to get wrong. It also holds every
+ * storey at once, which matters because `export/statement.ts` walks all three.
+ *
+ * ── The one thing callers must not do ────────────────────────────────────
+ * The returned array is SHARED. Do not sort, splice or otherwise mutate it in
+ * place; copy first. `roomCacheStats` exists so a test can prove the sharing is
+ * real, and so a cache that has quietly stopped hitting is visible.
+ */
+let detectCache = new WeakMap<Wall[], Room[]>()
+
+/**
+ * Cache effectiveness, for the memoisation test and for diagnosing a cache
+ * that has stopped working. Counts, not timings — a hit rate that collapses is
+ * the signal, and it does not depend on the machine.
+ */
+export const roomCacheStats = {
+  detectRuns: 0,
+  detectHits: 0,
+  resolveRuns: 0,
+  resolveHits: 0,
+}
+
+/**
+ * Drops both caches and zeroes the stats.
+ *
+ * A `WeakMap` cannot be cleared, so the map is replaced. Tests need this
+ * because the store is a module singleton and a fixture can otherwise reuse an
+ * array identity across cases.
+ */
+export function resetRoomCaches(): void {
+  detectCache = new WeakMap()
+  resetResolveCache()
+  roomCacheStats.detectRuns = 0
+  roomCacheStats.detectHits = 0
+  roomCacheStats.resolveRuns = 0
+  roomCacheStats.resolveHits = 0
+}
+
+/**
+ * Every enclosed space in the plan, largest first. Memoised on `walls`.
+ *
+ * Same result as {@link detectRoomsUncached}, and the same array on every call
+ * for the same input — which is what lets a downstream `useMemo` keyed on it
+ * hold too.
+ */
+export function detectRooms(walls: Wall[]): Room[] {
+  const cached = detectCache.get(walls)
+  if (cached) {
+    roomCacheStats.detectHits++
+    return cached
+  }
+
+  roomCacheStats.detectRuns++
+  const rooms = detectRoomsUncached(walls)
+  detectCache.set(walls, rooms)
+  return rooms
 }
 
 /** Total enclosed floor area in square metres. */

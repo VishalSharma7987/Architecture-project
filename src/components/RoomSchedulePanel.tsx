@@ -49,8 +49,11 @@ export function RoomSchedulePanel() {
   // Detection already returns largest first; sorting again pins the order to
   // this panel rather than to an implementation detail of the detector.
   const rooms = useMemo(
-    () =>
-      resolveRooms(walls, roomLabels).sort((a, b) => b.area - a.area),
+    // Copy before sorting. `resolveRooms` is memoised and hands the SAME array
+    // to every consumer, so an in-place sort here would reorder what the plan
+    // canvas, the inspector and the Vastu panel are reading. Harmless when each
+    // caller owned its own array; not any more.
+    () => [...resolveRooms(walls, roomLabels)].sort((a, b) => b.area - a.area),
     [walls, roomLabels],
   )
 

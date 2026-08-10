@@ -68,7 +68,9 @@ export function VastuPanel() {
   // again for a camera move or a furniture drag. Largest first pins the row
   // order to this panel rather than to the detector.
   const report = useMemo(() => {
-    const rooms = resolveRooms(walls, roomLabels).sort(
+    // Copy before sorting — the memoised result is shared with every other
+    // consumer, and `Array.prototype.sort` mutates in place.
+    const rooms = [...resolveRooms(walls, roomLabels)].sort(
       (a, b) => b.area - a.area,
     )
     return analyseVastu(rooms, walls, northOffset, plotFacing)

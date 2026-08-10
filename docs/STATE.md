@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-08-10 · Commit: `576cbdc`
+Updated: 2026-08-10 · Working tree on `3926d17`
 
 This file records **where we are and what is still undecided**. The ADRs in
 [`docs/adr/`](adr/) record **why decisions were made**. Neither replaces the other:
@@ -32,11 +32,17 @@ with the work.
 
 | | |
 |---|---|
-| Stage | **Stage 1** — **not exited**, on two clauses (see open question 4) |
-| Last completed task | **B13** (adversarial review, all 7 deliverables) **+ its blocking remediation** |
-| Next task | **undecided** — see below |
-| Partially done | **B8** — its benchmark is delivered (open question 12) |
+| Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
+| Last completed task | **B8 (partial)** — the shared room-resolution memoisation point, benchmarked before/after |
+| Next task | **B7** — see open question 11: it is a schema change, not performance work |
+| Partially done | **B8** — benchmark and shared memoisation delivered; **spatial indexing deliberately NOT done** (open question 6) |
 | Upcoming | B7 · B9 → B10 → B11 → B12 |
+
+**Clause 4a is closed.** All seven pure modules §7 Stage 1 names are now covered,
+lowest 85.6% against a ≥70% gate. `export/pdf.ts` went 0% → 92.8% and
+`vastu/analyse.ts` 0% → 99.1%. **The corpus is now the sole Stage 1 blocker**, and
+it is human-blocked — so of the three orders below, only options 2 and 3 remain
+open, and option 3 is now done.
 
 One deliberate departure from the master prompt's task order:
 
@@ -53,26 +59,29 @@ mis-scoped B7 as performance work; B7 is room identity, a schema change needing
 *"Nothing after this is safe without it"*, and Stage 1 is not exited. B7 is Stage 2
 work. Three defensible orders:
 
-1. Finish Stage 1 first — `export/pdf.ts` coverage is agent-work; the corpus is not.
-2. Take B8 next — it is §9.2, not a stage, it is already half-done, and it needs no
-   schema change.
-3. Clear the small implementation debt first — open questions 9 and 13, all short.
+1. ~~Finish Stage 1 first~~ — **done as far as an agent can take it.** Only the
+   corpus remains, and that is human-blocked.
+2. **Take B8 next** — it is §9.2, not a stage, it is already half-done, and it needs
+   no schema change. **This is now the recommended next task.**
+3. ~~Clear the small implementation debt~~ — **done** (open questions 9, 13b, 13d).
+   13a and 13c remain; 13a is human.
 
-Option 1 is blocked in part on a human. Option 2 or 3 is the honest reading of
-§7's own sequencing rule.
+With option 1 exhausted and option 3 complete, **option 2 is what is left that does
+not need a human or a schema bump.**
 
 ---
 
 ## Gate
 
-Verified at `576cbdc` on 2026-08-10 (unchanged by this documentation pass):
+Verified on the working tree above `3926d17`, after B8:
 
 | Check | Result |
 |---|---|
-| `npm test` | **258 passing / 258** · 15 files / 15 |
+| `npm test` | **379 passing / 379** · 19 files / 19 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
+| Pure-module coverage | **85.6% – 100%** across all seven §7 names |
 | `strict` | **`true`** — [`tsconfig.app.json:25`](../tsconfig.app.json#L25) |
 | Key boundary | **intact** — no `ANTHROPIC` / `OPENROUTER` / `sk-ant-` / `sk-or-` in `dist/` |
 
@@ -101,6 +110,15 @@ assertion runs before it. Not a failure.
 | **B4** | Autosave watches the whole document; quota failures surfaced; two-step confirmations; cross-tab detection | 19 |
 | **B5** | Vitest harness; golden file wired; pure-module coverage; corpus taxonomy specified | 122 |
 | **B6** | `strict: true`; lint 2 rules → 3 categories; README's 10 contradictions corrected | — |
+
+**Stage 1 clause 4a + short debt** — this session (uncommitted at time of writing):
+
+| Item | What shipped | Tests |
+|---|---|---|
+| **4a** | `export/pdf.ts` 0% → 92.8% — xref offsets verified by byte arithmetic, WinAnsi/₹ transliteration, PDF-string escaping, `readJpeg` rejections, pagination and repeated table headers | +66 |
+| **4a** | `vastu/analyse.ts` 0% → 99.1% — area-weighted dominant zone, the `no-rule`≠`okay` distinction, coverage hedging, the null score, the Brahmasthan penalty | +28 |
+| **9** | `resetToEmpty` replaces the last partial `loadDesign` call | — |
+| **13b + 13d** | Stage 0.3's second exit clause asserted; `patchWall` no longer records phantom history | +9 |
 
 **Infrastructure** — `afb49d9`: GitHub Actions CI, and this file.
 
@@ -298,6 +316,20 @@ one-off crash cannot lock a design out of the app permanently.
 The status is `held-back`, deliberately **not** `failed`: saving works and the work
 is intact. Starting empty in silence would read as data loss.
 
+### SD9 — `resetToEmpty` is how you ask for an empty document
+
+Added to close open question 9. `loadDesign` is for whole documents;
+`replaceWalls` swaps walls (SD1); `resetToEmpty({ readOnly, viewMode })` says
+"show nothing, like this".
+
+The damaged-share-link path genuinely wanted an empty read-only viewer, so
+`loadDesign`'s defaults-to-empty produced the right result — but expressing it
+that way kept a live dependence on the mechanism §10 rule 3 exists to eliminate,
+and a rule with one tolerated exception is a rule nobody enforces. **Three
+actions, three contracts, no defaulting.**
+
+Do not reintroduce a partial `loadDesign` call for any of them.
+
 ---
 
 ## Open questions / follow-ups
@@ -374,12 +406,33 @@ with a published per-tag pass rate."*
 | Clause | State |
 |---|---|
 | `npm test` runs | **PASS** |
-| **≥70% line coverage on the pure modules** | **FAIL** — see below |
+| ≥70% line coverage on the pure modules | **PASS** as of this session — see 4a |
 | `strict` is on | **PASS** |
 | CI runs on every push | **PASS** (`afb49d9`) |
 | **real-drawing corpus with per-tag pass rate** | **FAIL** — see Blockers |
 
-**4a — `export/pdf.ts` coverage. NOT human-blocked.** §7 Stage 1 names the pure
+**4a — pure-module coverage. `RESOLVED 2026-08-10`.**
+
+All seven modules §7 names, by line coverage: `schema.ts` 95.9 · `units/length.ts`
+92.0 · `plan/rooms.ts` 100 · `wallGeometry.ts` 85.6 · **`export/pdf.ts` 92.8** ·
+`collision.ts` 99.0 · **`vastu/analyse.ts` 99.1**. Lowest is 85.6 against a ≥70 gate.
+
+**ADR 0002's deferral premise was wrong.** It declined `export/pdf.ts` because
+*"asserting on bytes needs a PDF parser, which is its own dependency decision"*.
+The cross-reference table's whole job is to say "object N begins at byte X", so
+checking it is byte arithmetic against the file the writer just produced — no
+parser, no dependency. That is now the suite's ★ test, and it is the one the
+module's own header calls *"the worst kind of bug to find later"*. Demonstrated
+red by replacing the measured offset with one predicted from string lengths:
+eight failures, reporting `xref says object 1 is at byte 14, but that byte begins
+"
+1 0 obj
+<< /Type /Catal"`.
+
+`buildPdfBytes` was flagged as a dead export by the audit. It is the seam the
+suite needs, so it is dead no longer.
+
+**Original text, retained for the record:** §7 Stage 1 names the pure
 modules explicitly and in order: `schema.ts` → `units/length.ts` → `plan/rooms.ts`
 → `wallGeometry.ts` → **`export/pdf.ts`** → `collision.ts` → `vastu/analyse.ts`.
 `export/pdf.ts` is 881 lines and has **no test file at all**. Weighting ADR 0002's
@@ -390,14 +443,15 @@ ADR 0002 deferred it on a defensible argument — asserting on bytes needs a PDF
 parser, which is its own dependency decision. §7 requires it regardless. **Until
 2026-08-10 this file named the corpus as the sole Stage 1 blocker. That was wrong.**
 
-**4b — the real architect corpus.** Human-blocked — see Blockers.
+**4b — the real architect corpus.** Human-blocked — see Blockers. **This is now
+the only thing standing between the project and a Stage 1 exit.**
 
 ### 5. ADR-numbering collision `RESOLVED 2026-08-10`
 
 The carried decisions are now **SD**1–8, so they can no longer be confused with ADR
 0002's internal D1–D6.
 
-### 6. F5 — room detection is O(n²) and recomputes per mounted panel `OPEN` · **this is B7**
+### 6. F5 — room detection is O(n²) and recomputes per mounted panel `RESOLVED IN PART 2026-08-10`
 
 `splitAtIntersections` tests every segment against every segment; `buildGraph`'s
 `nodeAt` is a linear scan per endpoint over the *post-split* count. Independent
@@ -416,6 +470,22 @@ edit — **< 50 ms, once**."* At 500 walls a single `resolveRooms` is **19.8 ms*
 
 **Therefore the shared memoisation point ALONE satisfies §9.2 at 500 walls.**
 Spatial indexing is headroom for larger plans, not a §9.2 requirement.
+
+**Done, and measured.** B8's memoisation point is in
+[`plan/rooms.ts`](../src/plan/rooms.ts) (a `WeakMap` on `walls` identity) and
+[`rooms/resolve.ts`](../src/rooms/resolve.ts) (two-level, on `(walls,
+roomLabels)`). At 500 walls, four mounted consumers went **72.79 ms → 17.95 ms,
+a 4.03× speedup** — under §9.2's 50 ms. The algorithm is untouched, so the
+exponent is unchanged and is *not claimed* to have moved. **Spatial indexing
+remains open** and must be argued on its own terms; the benchmark is its
+starting point.
+
+*The consumer count in the paragraph above was itself too low* — see
+[`benchmarks.md`](testing/benchmarks.md#correction-the-consumer-count-was-too-low).
+`StatusBar` is a sixth consumer mounted in both view branches, and
+`RoomSchedulePanel` resolves the active floor twice. Pre-B8 the ordinary case was
+~54 ms, not 39.6 ms — already over budget. Post-B8 the extra consumers are a
+`WeakMap` lookup each, so the count no longer affects the cost.
 
 *Corrected 2026-08-10:* this section previously read *"a B7 that leaves the exponent
 at 2 has not addressed F5, whatever the milliseconds say."* **Struck.** That was
@@ -480,7 +550,17 @@ trigger). Do not attempt B11 before the gate.
 | **8c** | **Contradictory AI-policy comments.** `openingDetector.ts` states the project *"deliberately does not use Claude/Anthropic"*, while `designAgent.ts` sets a Claude model id via OpenRouter. One is stale. Documentation defect, not behavioural. | OPEN — audit Q6 |
 | **8d** | **Coverage gaps left deliberately.** `plan/planSheet.ts`, `export/statement.ts`, and most React components. The 121 `data-testid` attributes are waiting. (`export/pdf.ts` is no longer merely a gap — it is a Stage 1 exit failure; see open question 4a.) | OPEN |
 
-### 9. §10 rule 3 is still violated — partial `loadDesign` `OPEN`
+### 9. §10 rule 3 violation — partial `loadDesign` `RESOLVED 2026-08-10`
+
+`resetToEmpty({ readOnly, viewMode })` was added to the store and
+[`useSharedDesign.ts`](../src/persistence/useSharedDesign.ts) now calls it on the
+damaged-link path. The action states emptiness explicitly instead of relying on
+`loadDesign`'s defaults-to-empty, which removes the last live dependence on the
+mechanism behind the worst bug in the codebase. It revokes the outgoing object
+URL and bumps `historyEpoch`, so a viewer cannot undo back into the design a
+share link replaced.
+
+**Original text, retained for the record:**
 
 [`useSharedDesign.ts:39-44`](../src/persistence/useSharedDesign.ts#L39-L44) calls
 `loadDesign({ name, walls, readOnly, viewMode })`, omitting **eleven** fields:
@@ -547,14 +627,19 @@ deliverable**, not unscoped preparatory work: §7's B8 asks for *"the benchmark 
 proves it, at 50 / 200 / 500 walls"* — exactly those three sizes. B8 is now partially
 complete: benchmark done, indexing and shared memoisation outstanding.
 
+*Updated 2026-08-10:* shared memoisation is now done too, and the harness was
+extended to measure the per-edit figure rather than derive it. **Only spatial
+indexing remains outstanding, and it is deliberately deferred** — §9.2 is met
+without it (open question 6).
+
 ### 13. Budgets and exit criteria with no evidence behind them `OPEN`
 
 | | Item | Owner |
 |---|---|---|
 | **13a** | **§7 Stage 0.2's exit was never performed.** It reads: *"`npm run build && npm run preview` — the AI panel states its status correctly, and nothing else in the app is degraded."* That is a manual acceptance run. Nobody has done it. | human, ~15 min |
-| **13b** | **§7 Stage 0.3's second exit clause is unasserted.** The exit requires *"`metresPerPixel` is unchanged **and the walls are built at the user's scale**"*. The first half is covered at [`calibration.test.ts:207`](../src/blueprint/calibration.test.ts#L207). The second is asserted nowhere — [`:197`](../src/blueprint/calibration.test.ts#L197) counts stale walls, it does not check built geometry. | agent |
+| **13b** | `RESOLVED 2026-08-10` — [`src/store/phantomEdits.test.ts`](../src/store/phantomEdits.test.ts) asserts that `segmentsToWalls` converts at the measured scale after an AI proposal is refused, at raster scale 1 and 0.5, and that the auto-build refuses with `no-image` when a reopened project has the measurement but not the pixels. *Original:* **§7 Stage 0.3's second exit clause is unasserted.** The exit requires *"`metresPerPixel` is unchanged **and the walls are built at the user's scale**"*. The first half is covered at [`calibration.test.ts:207`](../src/blueprint/calibration.test.ts#L207). The second is asserted nowhere — [`:197`](../src/blueprint/calibration.test.ts#L197) counts stale walls, it does not check built geometry. | agent |
 | **13c** | **§9.2 sets an autosave budget of < 20 ms, non-blocking.** F1/F2's fix restructured exactly that path and was **never measured against it**. §9.2 had already documented the defect — *"Re-validates and re-serialises the entire project library every 4 s"* — with the budget attached; the B13 review rediscovered it from the code without citing it. | agent |
-| **13d** | **§10 rule 10 near-misses.** `patchWall` allocates a new array unconditionally, so a patch against a non-existent id records a **phantom history step**. `forgetPixels` (SD7) allocates a new `Blueprint` on every snapshot — safe **only** because `blueprintChanged` compares fields rather than references. Both are the hazard rule 10 names: *"a `.map()` in the store that returns a structurally-identical new array — the undo recorder compares by reference."* | agent |
+| **13d** | `RESOLVED 2026-08-10` (the `patchWall` half) — `patchWall` now returns the ORIGINAL array when no wall matches, so a write racing a delete no longer records a phantom history step. Demonstrated red: reverting to the bare `map` failed all four patch actions with *"a new-but-identical array is an edit as far as the undo recorder is concerned"*. `forgetPixels` is unchanged and remains safe only because `blueprintChanged` compares fields — that pairing is load-bearing (SD7). *Original:* **§10 rule 10 near-misses.** `patchWall` allocates a new array unconditionally, so a patch against a non-existent id records a **phantom history step**. `forgetPixels` (SD7) allocates a new `Blueprint` on every snapshot — safe **only** because `blueprintChanged` compares fields rather than references. Both are the hazard rule 10 names: *"a `.map()` in the store that returns a structurally-identical new array — the undo recorder compares by reference."* | agent |
 
 ---
 
@@ -615,6 +700,19 @@ Neither `corpus/` nor a manifest exists yet.
   issue. It was corrupted once by a bad merge and has already been repaired.
 - **Do not claim real-world detection accuracy without the real corpus.** The golden
   suite is a regression floor, not an accuracy measurement.
+- **Do not sort, splice or otherwise mutate the array `resolveRooms` or `detectRooms`
+  hands back.** It is SHARED between every consumer; copy first. Two call sites
+  (`RoomSchedulePanel`, `VastuPanel`) sorted in place when each still owned its own
+  array, and B8 had to fix both.
+- **Do not make `resolveRoomsUncached` call the memoised `detectRooms`, or
+  `resolveRooms` call `detectRoomsUncached`.** Both mistakes are silent — every
+  result stays correct. The first makes the "uncached" path a cache (the benchmark
+  reported resolve 80× faster than something it calls); the second makes naming a
+  room redo the whole traversal, which is the entire reason the key has two levels.
+  See `matchLabels` in [`rooms/resolve.ts`](../src/rooms/resolve.ts).
+- **Do not time `detectRooms` / `resolveRooms` in the benchmark.** They are memoised;
+  the algorithm arms must call the `*Uncached` entry points or the numbers are
+  fiction.
 - **Do not re-merge the `loadDesign` / `replaceWalls` split** (SD1).
 - **Do not reopen `activeFloor`-in-snapshot** (SD2) without a user-facing complaint.
 - **Do not enable `noUncheckedIndexedAccess` as a standalone pass** (SD3).
@@ -631,6 +729,11 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not claim a §-reference without opening `MASTER_PROMPT.md`.** Roughly one in
   three carried citations was wrong when they were finally checked, and one was a
   phrase that did not exist.
+- **Do not reintroduce a partial `loadDesign` call** (SD9). Use `resetToEmpty`.
+- **Do not "simplify" `patchWall` back to a bare `map`** — the early return is what
+  stops a write racing a delete recording a phantom undo step (open question 13d).
+- **Do not claim `export/pdf.ts` needs a PDF parser to test.** It does not; the xref
+  offsets are checkable with byte arithmetic, and that is now the ★ test.
 - **Do not describe B7 as performance work** (open question 11), and **do not assume
   `DESIGN_VERSION = 2` is free** — B3 consumed it.
 

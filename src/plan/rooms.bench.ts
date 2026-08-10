@@ -4,15 +4,23 @@ import type { RoomLabel, Wall } from '../store/useDesignStore'
 // which would add a chunk of module-init time to a file whose whole job is
 // measuring something else.
 import type { MaterialId } from '../materials/palette'
-import { detectRooms } from './rooms'
-import { resolveRooms } from '../rooms/resolve'
+import { detectRoomsUncached } from './rooms'
+import { resolveRooms, resolveRoomsUncached } from '../rooms/resolve'
 
 /**
- * Pre-B7 baseline for room detection.
+ * Room detection: the algorithm, and the cost of one edit across the panels
+ * that recompute it.
  *
- * B7 rewrites `resolveRooms` and folds B8's shared memoisation into it. There
- * is no way to tell whether that helped without a number from before, and the
- * repository had none — so this exists to be beaten, not to pass or fail.
+ * The algorithm arms call the `*Uncached` entry points DELIBERATELY. After B8
+ * `detectRooms` and `resolveRooms` are memoised, so timing them directly would
+ * measure a `WeakMap` lookup and report a spectacular, meaningless speedup
+ * against the pre-B8 table. §3 forbids touching the algorithm, so those two
+ * rows are expected to be flat — that is the control.
+ *
+ * The per-edit arm is the one B8 is answerable for, and it is now MEASURED
+ * rather than derived: `editedCopy` mints a new `walls` identity each
+ * iteration, exactly as the store does, so the shared cache misses once per
+ * edit and is then hit by every other consumer.
  *
  * Deliberately NOT part of `npm test`: it is slow by design, and wall-clock
  * timings on a shared CI runner are noise. `vitest.bench.config.ts` includes
@@ -198,31 +206,101 @@ function measure(run: () => void): Timing {
   }
 }
 
+/**
+ * Two arms, sampled alternately, so a drifting machine drifts through both.
+ *
+ * Measuring A's 21 samples and then B's would put B entirely in the hotter part
+ * of the run — and this machine throttles measurably (see `benchmarks.md`).
+ * Alternating spreads that across both arms, so the RATIO between them survives
+ * a clock change even though the absolute figures do not.
+ */
+function measureBoth(a: () => void, b: () => void): [Timing, Timing] {
+  for (let i = 0; i < WARMUP; i++) {
+    a()
+    b()
+  }
+
+  const sa: number[] = []
+  const sb: number[] = []
+
+  for (let i = 0; i < RUNS; i++) {
+    let start = performance.now()
+    a()
+    sa.push(performance.now() - start)
+
+    start = performance.now()
+    b()
+    sb.push(performance.now() - start)
+  }
+
+  const summarise = (s: number[]): Timing => {
+    s.sort((m, n) => m - n)
+    return { median: s[(s.length - 1) >> 1], min: s[0], max: s[s.length - 1] }
+  }
+
+  return [summarise(sa), summarise(sb)]
+}
+
 const ms = (n: number) => n.toFixed(3).padStart(9)
 
-describe('room detection baseline', () => {
+/**
+ * One edit, as the store performs it: a new `walls` array, sharing every wall
+ * object it did not touch.
+ *
+ * `height` is what changes, so the plan's geometry — and therefore the room
+ * count and the traversal's work — is identical on every iteration. The point
+ * is to vary the array IDENTITY, which is what the cache is keyed on, without
+ * also varying the amount of work and making the samples incomparable.
+ */
+function editedCopy(walls: Wall[], i: number): Wall[] {
+  const at = i % walls.length
+  return walls.map((w, k) => (k === at ? { ...w, height: 3 + (i % 8) * 0.01 } : w))
+}
+
+describe('room detection', () => {
   /**
-   * One measurement pass per size, and no more.
+   * One measurement pass per arm per size, and no more.
    *
-   * An earlier draft also timed 2x and 4x `resolveRooms` directly. That was
-   * three extra passes of sustained work per size, which on a laptop is enough
-   * to thermally throttle the machine — the third process run came back ~2x
-   * slower than the first, which is a property of the cooling rather than of
-   * the code. Those multiples are N calls to the same pure function, so they
-   * are derived arithmetically below and marked as derived.
+   * An earlier draft timed 2x and 4x `resolveRooms` as separate passes. That
+   * was three extra passes of sustained work per size, which on a laptop is
+   * enough to thermally throttle the machine — the third process run came back
+   * ~2x slower than the first, which is a property of the cooling rather than
+   * of the code. The per-edit arms below replace them: two passes, and they
+   * measure the thing that actually changed.
    */
-  it('measures detectRooms and resolveRooms at 50 / 200 / 500 walls', () => {
-    const rows: string[] = []
+  it('measures the algorithm and the cost of one edit at 50 / 200 / 500 walls', () => {
+    const algorithm: string[] = []
     const perEdit: string[] = []
+
+    // The reachable maximum. Five call sites exist, but FloorPlanEditor is
+    // 2D-only and RoomLabels is 3D-only and App renders one branch or the
+    // other, so four is the most that ever mount together.
+    const CONSUMERS = 4
 
     for (const target of [50, 200, 500]) {
       const { walls, labels } = gridPlan(target)
-      const rooms = detectRooms(walls).length
+      const rooms = detectRoomsUncached(walls).length
 
-      const detect = measure(() => void detectRooms(walls))
-      const resolve = measure(() => void resolveRooms(walls, labels))
+      // ── the algorithm, unmemoised: the control, expected to be flat ──
+      const detect = measure(() => void detectRoomsUncached(walls))
+      const resolve = measure(() => void resolveRoomsUncached(walls, labels))
 
-      rows.push(
+      // ── one edit, four consumers: no sharing (what B8 replaced) against
+      //    the shared cache, sampled alternately ──
+      let i = 0
+      let j = 0
+      const [before, after] = measureBoth(
+        () => {
+          const edited = editedCopy(walls, i++)
+          for (let c = 0; c < CONSUMERS; c++) resolveRoomsUncached(edited, labels)
+        },
+        () => {
+          const edited = editedCopy(walls, j++)
+          for (let c = 0; c < CONSUMERS; c++) resolveRooms(edited, labels)
+        },
+      )
+
+      algorithm.push(
         [
           String(walls.length).padStart(5),
           String(rooms).padStart(5),
@@ -239,9 +317,9 @@ describe('room detection baseline', () => {
       perEdit.push(
         [
           String(walls.length).padStart(5),
-          ms(resolve.median),
-          ms(resolve.median * 2),
-          ms(resolve.median * 4),
+          ms(before.median),
+          ms(after.median),
+          `${(before.median / after.median).toFixed(2)}x`.padStart(8),
         ].join(' | '),
       )
     }
@@ -251,20 +329,16 @@ describe('room detection baseline', () => {
         '',
         `seed ${SEED} · median of ${RUNS} runs after ${WARMUP} warmup · milliseconds`,
         '',
+        'ALGORITHM (uncached) — unchanged by B8 by design; this is the control',
+        '',
         'walls | rooms | labels | detect ms |  det min |  det max | resolve ms |  res min |  res max',
         '------|-------|--------|-----------|----------|----------|------------|----------|---------',
-        ...rows,
+        ...algorithm,
         '',
-        // There are five resolveRooms call sites in the render path, but five
-        // never mount together: FloorPlanEditor is 2D-only and RoomLabels is
-        // 3D-only, and App renders one branch or the other. The reachable
-        // maximum is FOUR; the ordinary case is two — the viewport plus
-        // InspectorPanel, which is mounted whenever you are editing. Quoting
-        // 5x would manufacture an improvement for B8 to claim.
-        'one edit, recomputed independently by each mounted panel (x2 and x4 derived)',
+        `ONE EDIT, ${CONSUMERS} MOUNTED CONSUMERS — measured, not derived`,
         '',
-        'walls |  1 panel | 2 typical |   4 max',
-        '------|-----------|-----------|----------',
+        'walls | per-panel |    shared |  speedup',
+        '------|-----------|-----------|---------',
         ...perEdit,
         '',
       ].join('\n'),

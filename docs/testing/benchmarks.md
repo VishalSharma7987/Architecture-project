@@ -1,13 +1,15 @@
-# Benchmarks — room detection, pre-B7 baseline
+# Benchmarks — room detection
 
-Recorded 2026-08-10 at commit `94079fc`, before any B7/B8 work.
+Two records in one file:
 
-B7 rewrites `resolveRooms` and folds B8's shared memoisation into it. There was
-no way to tell whether that helped, because the repository held no measurement
-from before — [`STATE.md` open question 6](../STATE.md) flagged exactly that.
-This file is the number to beat.
+- **[Pre-B7 baseline](#pre-b7-baseline)** — recorded 2026-08-10 at commit
+  `94079fc`, before any B7/B8 work. The number to beat.
+- **[B8 result](#b8-result--the-shared-memoisation-point)** — the same harness
+  after the shared memoisation point, run on the same machine in the same
+  sitting.
 
-**Nothing here is optimised.** The measurement is the deliverable.
+**Nothing here is optimised for its own sake.** The measurement is the
+deliverable.
 
 ---
 
@@ -31,7 +33,7 @@ Harness: [`src/plan/rooms.bench.ts`](../../src/plan/rooms.bench.ts).
 ## Machine
 
 Absolute milliseconds below are meaningless off this machine. See
-[Comparing after B7](#comparing-after-b7).
+[Comparing across runs](#comparing-across-runs).
 
 | | |
 |---|---|
@@ -66,17 +68,20 @@ leaving them out would understate it.
 | 200 | **200** | 9×10 + 1 partition | 91 | 23 |
 | 500 | **500** | 15×15 + 20 partitions | 248 | 57 |
 
+Unchanged by B8 — the seed fixes them, and every count above reproduced exactly
+in the post-B8 runs. That is the harness's own control: a changed room count
+would mean the algorithm had moved.
+
 ---
 
-## Results
+# Pre-B7 baseline
 
 Median of 21 runs after 5 discarded warm-up runs, within a process. The figure
 recorded is the **median of four such process runs**; the range is the spread
 across those four.
 
 > `resolveRooms` calls `detectRooms` internally. **The two columns are not
-> additive** — resolve is detect plus label matching, which is why resolve is
-> consistently ~2 ms above detect at 500 walls.
+> additive** — resolve is detect plus label matching.
 
 ### `detectRooms(walls)`
 
@@ -94,12 +99,11 @@ across those four.
 | 200 | **3.25 ms** | 2.654 – 3.284 |
 | 500 | **19.78 ms** | 16.407 – 21.854 |
 
-### Cost of one edit, as concurrent panels recompute it
+### Cost of one edit, as concurrent panels recompute it — *derived, and wrong*
 
-Each mounted panel holds its own `useMemo` over `resolveRooms` with no shared
-cache, so an edit costs the single-call figure once per mounted panel. ×2 and ×4
-are derived arithmetically — they are N calls to the same pure function, and
-measuring them separately only added sustained load and heat (see Caveats).
+Each mounted panel held its own `useMemo` over `resolveRooms` with no shared
+cache, so an edit cost the single-call figure once per mounted panel. ×2 and ×4
+were derived arithmetically rather than measured.
 
 | Walls | 1 panel | 2 (typical) | 4 (reachable max) |
 |---|---|---|---|
@@ -107,9 +111,12 @@ measuring them separately only added sustained load and heat (see Caveats).
 | 200 | 3.25 ms | 6.50 ms | 13.00 ms |
 | 500 | **19.78 ms** | **39.56 ms** | **79.12 ms** |
 
----
+**This table undercounts. See [the correction](#correction-the-consumer-count-was-too-low).**
+The measured ×4 figure at 500 walls came in at 72.8 ms against the 79.12 ms
+derived here, so the arithmetic was close for the count it assumed — but the
+count itself was low by two.
 
-## What the numbers say
+### What the baseline said
 
 **It is quadratic, and measurably so.** Between 200 and 500 walls — the range
 where the timer noise is negligible — the exponent is almost exactly 2:
@@ -124,31 +131,133 @@ the pipeline still dominate at that size. This confirms B13's F5 by measurement
 rather than by reading the loops.
 
 **At 500 walls a single edit misses the frame budget on its own.** One
-`resolveRooms` is 19.78 ms against a 16.7 ms frame at 60 Hz. With the two panels
-that are ordinarily mounted it is 39.6 ms — about 2.4 frames — and at the
-reachable maximum of four it is 79.1 ms, near five frames. This runs
-synchronously, mid-drag.
+`resolveRooms` is 19.78 ms against a 16.7 ms frame at 60 Hz.
 
-**At 200 walls it is already visible.** 6.50 ms for the typical two panels is a
-third of the frame budget spent before React has rendered anything.
-
-**At 50 walls there is no problem to solve.** 0.70 ms. Any B7 result should be
-judged at 200 and 500.
+**At 50 walls there is no problem to solve.** Any result should be judged at 200
+and 500.
 
 ---
 
-## A correction this measurement produced
+# B8 result — the shared memoisation point
 
-[`STATE.md` open question 6](../STATE.md) says five `useMemo`s recompute on
-every edit. There *are* five call sites — `FloorPlanEditor`, `InspectorPanel`,
-`RoomSchedulePanel`, `RoomLabels`, `VastuPanel` — but **five can never mount
-together**: `FloorPlanEditor` is 2D-only and `RoomLabels` is 3D-only, and `App`
-renders one branch or the other. The reachable maximum is **four**; the ordinary
-case is **two** — the viewport plus `InspectorPanel`, which is mounted whenever
-you are editing.
+Recorded 2026-08-10, same machine, same sitting, four process runs. B8 adds a
+`WeakMap` memoisation point keyed on `walls` identity in
+[`plan/rooms.ts`](../../src/plan/rooms.ts) and a two-level one keyed on
+`(walls, roomLabels)` in [`rooms/resolve.ts`](../../src/rooms/resolve.ts).
+**The algorithm is untouched** (§3, §10 rule 7) and no spatial index was added.
 
-The table above is quoted at 1/2/4 for that reason. Quoting 5× would have
-manufactured a 20% improvement for B8 to claim without writing any code.
+### Harness changes
+
+Three, all forced by what B8 did:
+
+1. **The algorithm arms call `detectRoomsUncached` / `resolveRoomsUncached`.**
+   Timing the memoised entry points after B8 would measure a `WeakMap` lookup
+   and report a fictitious 80× speedup against the baseline table.
+2. **The per-edit figures are measured, not derived.** `editedCopy` mints a new
+   `walls` array each iteration exactly as the store does, so the cache misses
+   once per edit and is then hit by the remaining consumers — which is the real
+   sequence, not `4 × f(x)`.
+3. **The two per-edit arms are sampled alternately** (`measureBoth`). Measuring
+   21 samples of one and then 21 of the other puts the second arm entirely in
+   the hotter part of the run, and this machine's clock moves (below). The
+   ratio between alternated arms survives that; two sequential arms would not.
+
+### The algorithm — the control
+
+Expected to be flat. It is.
+
+| Walls | | baseline | B8 | observed range (B8) |
+|---|---|---|---|---|
+| 50 | detect | 0.28 ms | **0.32 ms** | 0.284 – 0.349 |
+| 200 | detect | 2.92 ms | **3.22 ms** | 2.638 – 3.375 |
+| 500 | detect | 17.89 ms | **17.95 ms** | 16.223 – 19.494 |
+| 50 | resolve | 0.35 ms | **0.35 ms** | 0.317 – 0.439 |
+| 200 | resolve | 3.25 ms | **3.15 ms** | 2.626 – 3.296 |
+| 500 | resolve | 19.78 ms | **18.00 ms** | 16.267 – 19.577 |
+
+The 500-wall figures fall into the same two clusters the baseline noted
+(~16.3 ms and ~19.5 ms, two runs in each) — CPU frequency states, not code. The
+200-wall detect figure is ~10% above the baseline's range; the 500-wall figure
+is not, and the code is byte-identical, so this is machine state.
+
+### One edit, 4 mounted consumers — the figure B8 is answerable for
+
+| Walls | per-panel memo (before) | shared (after) | speedup |
+|---|---|---|---|
+| 50 | 1.16 ms | **0.27 ms** | **4.42×** |
+| 200 | 12.97 ms | **3.31 ms** | **3.92×** |
+| 500 | **72.79 ms** | **17.95 ms** | **4.03×** |
+
+Per-run speedups at 500 walls: 4.06 / 3.99 / 4.06 / 4.03. That figure held to
+within 2% across both CPU frequency states, which is why it, and not the
+milliseconds, is the durable result.
+
+**The speedup is N, and that is the whole claim.** Four consumers now cost what
+one costs. Nothing got faster; the work stopped happening four times.
+
+### Against §9.2
+
+> *Room recompute after one wall edit — < 50 ms, **once***
+
+| | 500 walls, 4 consumers | verdict |
+|---|---|---|
+| Before | 72.79 ms | over budget |
+| After | 17.95 ms | **within budget** |
+
+The budget's first word was never the problem — one traversal was 19.78 ms,
+comfortably under 50 ms. The violation was its last word, *once*. B8 addresses
+exactly that word and nothing else.
+
+At 500 walls the remaining 17.95 ms is still above a 16.7 ms frame, so a drag on
+a plan that size will drop the occasional frame. That is a single traversal of a
+quadratic algorithm and it is the subject of the spatial-indexing work B8 was
+explicitly scoped to exclude — argued on its own terms, with these numbers as
+its starting point.
+
+### Correction: the consumer count was too low
+
+The baseline's ×4 column called four "the reachable maximum". Reading the call
+sites for B8 turned up two more:
+
+1. **[`StatusBar.tsx:19`](../../src/components/StatusBar.tsx#L19)** calls
+   `totalFloorArea(walls)`, which calls `detectRooms`. `App` renders it at
+   [`App.tsx:156`](../../src/App.tsx#L156) as `{chrome && <StatusBar />}` —
+   *outside* the 2D/3D branch at `App.tsx:92`. It is mounted in both, and the
+   baseline counted it in neither.
+2. **`RoomSchedulePanel` resolves twice.** Directly at
+   [`RoomSchedulePanel.tsx:56`](../../src/components/RoomSchedulePanel.tsx#L56),
+   and again through `buildAreaStatement` → `measureFloors` →
+   [`statement.ts:226`](../../src/export/statement.ts#L226), where `allFloors`
+   has substituted the live arrays so the active floor is resolved a second
+   time.
+
+So the reachable maximum is **six**, not four, and the ordinary editing case is
+**three**, not two. Pre-B8 that put the ordinary case at roughly 54 ms at 500
+walls — already over §9.2 — and the maximum near 108 ms.
+
+**This changes only the "before" side.** Post-B8 the fifth and sixth consumers
+cost a `WeakMap` lookup each, so the "after" column is the same 17.95 ms
+whatever N is. The count is pinned by
+[`rooms/memo.test.tsx`](../../src/rooms/memo.test.tsx) rather than by a timing,
+which is the right instrument for a count: it renders all four panels and
+asserts the edited plan is traversed exactly once.
+
+### A bug this measurement found
+
+`resolveRoomsUncached` was calling the **memoised** `detectRooms`, so it was not
+uncached at all. The first post-B8 run reported resolve at **0.249 ms** against
+detect at **19.79 ms** for the same 500-wall plan — a function timed 80× faster
+than something it calls, which is impossible.
+
+It also silently corrupted the comparison: the "before" arm's four
+`resolveRoomsUncached` calls were already sharing one detection between them, so
+that arm was measuring most of B8's benefit and the run reported a **1.06×**
+speedup. Both entry points now route through a `matchLabels` helper that takes
+detection as an argument, so each reaches the layer it claims to. Pinned by
+`★ the uncached entry points really are uncached` in `memo.test.tsx`.
+
+Every result stayed correct throughout — no test failed, and nothing but the
+benchmark could have caught it.
 
 ---
 
@@ -156,38 +265,45 @@ manufactured a 20% improvement for B8 to claim without writing any code.
 
 - **Node, not the browser.** No React reconciliation, no canvas redraw, no
   jsdom. The real per-edit cost is this plus rendering, so these are a floor.
-- **This machine throttles.** An earlier draft of the harness also timed 2× and
-  4× `resolveRooms` directly — seven measurement passes per size. The sustained
-  load was enough that the third consecutive process run came back ~2× slower
-  than the first, which is a property of the cooling, not the code. The harness
-  was cut back to one pass per size and the multiples derived. Even so, the
-  500-wall figures sit in two clusters (~16.2 ms and ~19.5 ms) that look like
-  CPU frequency states.
+- **This machine's clock moves.** The 500-wall figures sit in two clusters
+  (~16.3 ms and ~19.5 ms) across process runs. Ratios within a process survive
+  it; absolute milliseconds across processes do not. The per-edit arms are
+  interleaved for this reason.
 - **The input is regular.** A grid gives clean crossings. Real plans have
   irregular spans and stray annotation geometry, which `splitAtIntersections`
   and `pruneDangles` handle at a different cost. This is the friendlier case,
   deliberately — a baseline flattered by pathological input is easy to beat.
-- **Only two functions.** The five call sites are not exercised through React,
-  so nothing here shows memo invalidation behaviour, which is B8's actual
-  subject.
-- **Sample counts were tuned during this session.** The first harness used 11
-  runs after 3 warm-ups, and at 50 walls the median moved 3× between process
-  runs on JIT warm-up alone. 21 after 5 is what made the small sizes stable.
+- **The edit changes `height`, not geometry.** That varies the array identity —
+  which is what the cache is keyed on — while holding the traversal's work
+  fixed, so the samples stay comparable. A geometry edit costs the same
+  traversal; it would just add variance to the room count.
+- **Still not through React.** The per-edit arms model N consumers as N calls.
+  What they cannot show is a consumer whose `useMemo` invalidates for an
+  unrelated reason. `memo.test.tsx` covers that; the benchmark does not.
+- **Cache eviction is untested here.** The `WeakMap` releases each generation
+  when it is collected, and nothing measures GC pressure from holding one
+  result array per live design generation.
 
 ---
 
-## Comparing after B7
+## Comparing across runs
 
-Absolute milliseconds here are bound to this laptop and its thermal state. Do
-not compare a B7 number against this table across machines or across days.
+Absolute milliseconds are bound to this laptop and its thermal state. Do not
+compare a future number against these tables across machines or across days.
 
 **Protocol:** on the same machine, in one sitting, run `npm run bench:rooms`
 before the change and again after. Compare those two. If the "before" run does
-not land near this table, the machine is in a different state and the "after"
-number cannot be read against it either.
+not land near the table above, the machine is in a different state and the
+"after" number cannot be read against it either.
 
-The durable parts of this record — the ones worth comparing across machines —
-are the **scaling exponent** (n^1.98 between 200 and 500), the **ratio between
-sizes**, and the **room and label counts**, which are fixed by the seed. A B7
-that leaves the exponent at 2 has not addressed F5, whatever the milliseconds
-say.
+The durable parts of this record — worth comparing across machines — are:
+
+- the **scaling exponent**, n^1.98 between 200 and 500 walls at baseline
+  (n^1.87 / n^1.90 in the B8 runs, which is the drifted 200-wall figure, not a
+  change in the code);
+- the **speedup ratio**, 4.03× at 500 walls and stable across frequency states;
+- the **room and label counts**, fixed by the seed — if those move, the
+  algorithm moved.
+
+A change that leaves the exponent at 2 has not addressed F5, whatever the
+milliseconds say. B8 does not address F5 and does not claim to.
