@@ -22,6 +22,7 @@ import {
   type RoomLabel,
   type RoomType,
   type Stair,
+  type Swing,
   type Unit,
   type ViewMode,
   type Wall,
@@ -43,8 +44,11 @@ import { withBoundaryHints } from '../rooms/resolve'
  *          migrates to `blueprint: null`.
  * v2 → v3: room identity + provenance. Every element gains an optional
  *          `Provenance`, and room labels gain stable ids where they had none.
+ * v3 → v4: a door's swing is in the model. Every door gains the `Swing` its
+ *          renderers had been hard-coding, so a saved plan states which way its
+ *          doors open instead of letting each renderer decide.
  */
-export const DESIGN_VERSION = 3
+export const DESIGN_VERSION = 4
 
 /**
  * A traced blueprint as it is saved: everything except the pixels.
@@ -207,6 +211,8 @@ function parseOpening(
   const position = num(value.position)
   if (position === null) return null
 
+  const swing = parseSwing(value.swing, type)
+
   return withProvenance<Opening>(
     {
       id: uniqueId(str(value.id), ids, `opening-${key}`),
@@ -217,9 +223,39 @@ function parseOpening(
       width: num(value.width) ?? defaults.width,
       height: num(value.height) ?? defaults.height,
       sill: num(value.sill) ?? defaults.sill,
+      ...(swing ? { swing } : {}),
     },
     value,
   )
+}
+
+const SWING_HANDS: Swing['hand'][] = ['start', 'end']
+const SWING_SIDES: Swing['side'][] = ['left', 'right']
+
+/**
+ * A door's swing off an untrusted document, or undefined.
+ *
+ * Three things drop it, and all three are deliberate:
+ *
+ * - **A window carrying one.** A window does not swing, so a swing on one is
+ *   noise at best and a lie in the file at worst. Dropped here rather than in
+ *   `constrainOpening`, because this is the trust boundary — §3's reason for
+ *   `parseDesign` existing at all — and the geometry clamp is not.
+ * - **A malformed hand or side.** `'middle'`, `1e999`, an object, a null.
+ * - **A missing one**, which is every v3 file that skipped the migration and
+ *   every hand-written fixture.
+ *
+ * Dropping is safe because it is not the same as losing the door: `doorSwing()`
+ * falls back to `DEFAULT_SWING`, which IS the pre-v4 convention, so an opening
+ * with no swing draws exactly as it drew in v3. Failing the whole opening
+ * instead would cost the user a door over an annotation they never typed.
+ */
+function parseSwing(value: unknown, type: OpeningType): Swing | undefined {
+  if (type !== 'door' || !isRecord(value)) return undefined
+  const { hand, side } = value
+  if (!(SWING_HANDS as unknown[]).includes(hand)) return undefined
+  if (!(SWING_SIDES as unknown[]).includes(side)) return undefined
+  return { hand: hand as Swing['hand'], side: side as Swing['side'] }
 }
 
 /**
@@ -657,6 +693,58 @@ const MIGRATIONS: Record<number, (doc: Record<string, unknown>) => Record<string
       rooms: stampRooms(doc.rooms),
       floors,
       version: 3,
+    }
+  },
+
+  // v3 → v4: a door's swing is in the model.
+  3: (doc) => {
+    /**
+     * The v3 convention, written as a LITERAL and deliberately not as
+     * `DEFAULT_SWING`.
+     *
+     * Every renderer hinged at the jamb nearer the wall's start and swung the
+     * leaf to the wall's left; this records exactly that, which is what makes
+     * the migration invisible — a v3 document opens in v4 drawing precisely
+     * what it drew before, so nobody's plans silently change.
+     *
+     * It is a literal because a migration is a statement about what the PAST
+     * meant. Reaching for the current default would make this step's output
+     * depend on a constant a future session is free to change, and the same
+     * bytes would then migrate to two different documents — the same L6 failure
+     * the v2→v3 step avoided by taking `createdAt` from the file, never the
+     * clock.
+     */
+    const v3Swing = () => ({ hand: 'start', side: 'left' })
+
+    const swingDoors = (raw: unknown): unknown =>
+      Array.isArray(raw)
+        ? raw.map((opening) =>
+            isRecord(opening) &&
+            opening.type === 'door' &&
+            opening.swing === undefined
+              ? { ...opening, swing: v3Swing() }
+              : opening,
+          )
+        : raw
+
+    const swingWalls = (raw: unknown): unknown =>
+      Array.isArray(raw)
+        ? raw.map((wall) =>
+            isRecord(wall) ? { ...wall, openings: swingDoors(wall.openings) } : wall,
+          )
+        : raw
+
+    const floors = Array.isArray(doc.floors)
+      ? doc.floors.map((floor) =>
+          isRecord(floor) ? { ...floor, walls: swingWalls(floor.walls) } : floor,
+        )
+      : doc.floors
+
+    return {
+      ...doc,
+      walls: swingWalls(doc.walls),
+      floors,
+      version: 4,
     }
   },
 }

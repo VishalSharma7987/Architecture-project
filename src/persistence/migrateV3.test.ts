@@ -101,7 +101,10 @@ describe('★ B7.3 — v2 → v3', () => {
   it('brings the document forward and reports where it came from', () => {
     const result = parsed()
     expect(result.doc.version).toBe(DESIGN_VERSION)
-    expect(result.doc.version).toBe(3)
+    // A v2 file now runs 2→3→4, so it lands on 4 rather than stopping at 3.
+    // This suite still covers the v3 STEP — every assertion below reads the
+    // fields that step writes, and they are unaffected by the one after it.
+    expect(result.doc.version).toBe(4)
     expect(result.originalVersion).toBe(2)
   })
 
@@ -213,10 +216,10 @@ describe('★ B7.3 — v2 → v3', () => {
     if (!again.ok) return
     expect(again.doc).toEqual(once)
     // Already current, so the second pass migrates nothing.
-    expect(again.originalVersion).toBe(3)
+    expect(again.originalVersion).toBe(DESIGN_VERSION)
   })
 
-  it('a v1 file runs 1→2→3 and lands stamped', () => {
+  it('a v1 file runs 1→2→3→4 and lands stamped', () => {
     const result = parseDesign({
       version: 1,
       name: 'ancient',
@@ -229,7 +232,7 @@ describe('★ B7.3 — v2 → v3', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(result.originalVersion).toBe(1)
-    expect(result.doc.version).toBe(3)
+    expect(result.doc.version).toBe(4)
     // v1's own step still applies...
     expect(result.doc.blueprint).toBeNull()
     // ...and so does v2's, one after the other rather than instead of.

@@ -62,8 +62,9 @@ describe('versioning and migration', () => {
     const doc = serializeDesign({ name: 'x', walls: [], viewMode: '2d', savedAt: AT })
     expect(doc.version).toBe(DESIGN_VERSION)
     // Pinned so a bump cannot happen without someone reading `MIGRATIONS` and
-    // this file. v2 was Calibration; v3 is room identity + provenance.
-    expect(DESIGN_VERSION).toBe(3)
+    // this file. v2 was Calibration; v3 is room identity + provenance; v4 is
+    // the door swing. It has caught every bump so far, which is the point.
+    expect(DESIGN_VERSION).toBe(4)
   })
 
   it('★ opens a v1 file and brings it forward', () => {

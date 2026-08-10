@@ -62,6 +62,56 @@ export type Provenance = {
 
 export type OpeningType = 'door' | 'window'
 
+/**
+ * Which jamb a door hangs on and which way its leaf sweeps.
+ *
+ * ── Why this is in the model ──
+ * Before v4 nothing carried it, and FOUR sites decided it independently: the
+ * canvas arc, the print sheet's arc, the sheet's `doorSweep` (which reserves
+ * page space for the leaf), and the 3D leaf — which picked its side at RUNTIME
+ * from where the walkthrough figure was standing. The same saved plan therefore
+ * rendered with the door swinging either way depending on how you walked up to
+ * it. That is a violation of L6, and of the rule that the 2D model is the
+ * source of truth and no renderer may decide an architectural fact.
+ *
+ * ── The frame, which is the whole design ──
+ * Both members are expressed in the WALL's own frame, never in world space. A
+ * swing stored as a world direction silently flips the moment a wall is redrawn
+ * end-to-start — the wall looks identical and its doors reverse.
+ *
+ * With `u = (ux, uz)` the unit vector from `wall.start` to `wall.end`:
+ *
+ * | | meaning |
+ * |---|---|
+ * | `hand: 'start'` | hinge at the jamb at `position - width/2` |
+ * | `hand: 'end'`   | hinge at the jamb at `position + width/2` |
+ * | `side: 'left'`  | the leaf sweeps toward `( uz, -ux)` |
+ * | `side: 'right'` | the leaf sweeps toward `(-uz,  ux)` |
+ *
+ * Left and right are as seen standing at `wall.start` looking toward
+ * `wall.end`, in PLAN — viewed from above, with world +z running DOWN the page,
+ * so that observer's right hand points along `(-uz, ux)`.
+ *
+ * Reading that backwards is a live hazard of exactly the kind §4 invariant 3
+ * names (`rotationY = atan2(-dz, dx)`, invisible on a symmetric plan). So the
+ * naming is not left to be re-derived: `doorSwing.test.ts` pins both directions
+ * against an explicit north-wall fixture, in world coordinates.
+ */
+export type Swing = {
+  hand: 'start' | 'end'
+  side: 'left' | 'right'
+}
+
+/**
+ * What every door drawn before v4 actually looked like, and so what a new door
+ * is given and what a swing-less door falls back to.
+ *
+ * Deliberately NOT reused by the v3→v4 migration, which writes the same pair as
+ * a literal: a migration is a statement about what the past meant, and it must
+ * not change if this default ever does.
+ */
+export const DEFAULT_SWING: Swing = { hand: 'start', side: 'left' }
+
 export type Opening = {
   id: string
   type: OpeningType
@@ -74,6 +124,19 @@ export type Opening = {
   height: number
   /** Height of the opening's bottom edge above the floor. Doors are 0. */
   sill: number
+  /**
+   * How the leaf hangs. Meaningful on a door and dropped from a window at the
+   * parse boundary — a window that does not swing must not carry a swing into
+   * a file.
+   *
+   * Optional in the type, required in practice: `addOpening` sets it on every
+   * door and the v3→v4 migration backfills every existing one. It stays
+   * optional so a v3 fixture, a hand-edited file or an older code path still
+   * typechecks and still draws — `doorSwing()` falls back to `DEFAULT_SWING`,
+   * which is the pre-v4 convention, so nothing renders differently for want of
+   * the field.
+   */
+  swing?: Swing
 }
 
 export type Wall = {
@@ -1688,7 +1751,16 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
     if (wallLength(wall) < defaults.width) return null
 
     const opening = constrainOpening(
-      { id: crypto.randomUUID(), provenance: source, type, position, ...defaults },
+      {
+        id: crypto.randomUUID(),
+        provenance: source,
+        type,
+        position,
+        ...defaults,
+        // Only a door swings. A fresh copy rather than the shared constant, so
+        // a later `updateOpening` on one door cannot reach every other door.
+        ...(type === 'door' ? { swing: { ...DEFAULT_SWING } } : {}),
+      },
       wall,
     )
 
