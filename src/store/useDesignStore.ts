@@ -7,6 +7,7 @@ import {
 } from '../materials/palette'
 import type { FurnitureType } from '../furniture/catalog'
 import { provenance } from './provenance'
+import { samePlacePoint } from '../units/tolerance'
 
 /**
  * A point on the floor plane, in metres.
@@ -961,7 +962,7 @@ type DesignState = {
    * The start is held rather than the centre because walls are drawn as chains:
    * moving the start would detach this wall from the one before it.
    */
-  setWallLength: (id: string, length: number) => void
+  setWallLength: (id: string, length: number) => boolean
   removeWall: (id: string) => void
   clearWalls: () => void
   /**
@@ -991,6 +992,26 @@ type DesignState = {
 }
 
 const samePoint = (a: Point, b: Point) => a.x === b.x && a.z === b.z
+
+/** One wall's endpoint resting on a shared point. */
+type Join = { wallId: string; which: 'start' | 'end' }
+
+/**
+ * Every OTHER wall endpoint sitting on `point`, within `JOIN_TOLERANCE`.
+ *
+ * This is what makes a corner a corner. `detectRooms` welds on the same
+ * tolerance, so a join the editor preserves is a join the traversal sees —
+ * before this, the two disagreed and only the traversal noticed.
+ */
+function joinsAt(walls: Wall[], point: Point, exceptWallId: string): Join[] {
+  const found: Join[] = []
+  for (const wall of walls) {
+    if (wall.id === exceptWallId) continue
+    if (samePlacePoint(wall.start, point)) found.push({ wallId: wall.id, which: 'start' })
+    if (samePlacePoint(wall.end, point)) found.push({ wallId: wall.id, which: 'end' })
+  }
+  return found
+}
 
 const clamp = (value: number, min: number, max: number) =>
   Math.min(max, Math.max(min, value))
@@ -1865,28 +1886,51 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       ),
     })),
 
-  setWallLength: (id, length) =>
-    set((state) => ({
-      walls: patchWall(state.walls, id, (wall) => {
-        const current = wallLength(wall)
-        // A zero-length wall has no direction to grow along, so there is
-        // nothing sensible to resize it to.
-        if (current === 0) return wall
+  setWallLength: (id, length) => {
+    const state = get()
+    const wall = state.walls.find((w) => w.id === id)
+    if (!wall) return false
 
-        const target = Math.max(LIMITS.wallLength.min, length)
-        const ux = (wall.end.x - wall.start.x) / current
-        const uz = (wall.end.z - wall.start.z) / current
+    const current = wallLength(wall)
+    // A zero-length wall has no direction to grow along, so there is nothing
+    // sensible to resize it to.
+    if (current === 0) return false
 
-        // Shortening can strand an opening past the new end, so re-clamp them.
-        return normalizeWall({
-          ...wall,
-          end: {
-            x: wall.start.x + ux * target,
-            z: wall.start.z + uz * target,
-          },
-        })
+    const target = Math.max(LIMITS.wallLength.min, length)
+    const ux = (wall.end.x - wall.start.x) / current
+    const uz = (wall.end.z - wall.start.z) / current
+    const moved: Point = {
+      x: wall.start.x + ux * target,
+      z: wall.start.z + uz * target,
+    }
+
+    // Every OTHER wall endpoint sitting on the point about to move.
+    const attached = joinsAt(state.walls, wall.end, id)
+
+    // Three walls or more meeting here: there is no move that is right.
+    // Dragging them all deforms walls the user did not select — and a
+    // through-wall stored as two collinear segments would visibly bend.
+    // Leaving them behind detaches this one, which is the bug being fixed.
+    // Telling the user is the only honest option; §4's guidance is that a
+    // refusal the user can see beats a change they cannot.
+    if (attached.length > 1) return false
+
+    set((s) => ({
+      // ONE `set`, so the resize and the neighbour it drags are ONE undo step.
+      // Not two writes 200 ms apart relying on the recorder's coalescing —
+      // that would make undo depend on how fast the machine ran.
+      walls: s.walls.map((w) => {
+        if (w.id === id) {
+          // Shortening can strand an opening past the new end, so re-clamp.
+          return normalizeWall({ ...w, end: moved })
+        }
+        const join = attached.find((a) => a.wallId === w.id)
+        if (!join) return w
+        return normalizeWall({ ...w, [join.which]: { ...moved } })
       }),
-    })),
+    }))
+    return true
+  },
 
   removeWall: (id) =>
     set((state) => ({

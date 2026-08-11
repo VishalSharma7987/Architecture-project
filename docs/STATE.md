@@ -33,8 +33,8 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B25 — COMPLETE.** Unenclosed named spaces. **All four ★ items from the fidelity audit are closed** |
-| Before that | **B24** — marks + schedule; **B23** — `'cased'`; **B22** — swing controls; **B21** — the swing enters the model (`DESIGN_VERSION 4`) |
+| Last completed task | **Session 2 — COMPLETE.** The model no longer breaks its own wall joins |
+| Before that | **B25** — unenclosed spaces; **B24** — marks + schedule; **B23** — `'cased'`; **B22/B21** — the door swing |
 | Next task | **B9** (drafting/snapping) — the largest single gap versus AutoCAD |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
@@ -91,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B25, at `454e9db`+:
+Verified after Session 2, at `30f1d37`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **524 passing / 524** · 32 files / 32 |
-| `npm run build` | **pass** (exit 0), 1.46 s |
+| `npm test` | **541 passing / 541** · 34 files / 34 |
+| `npm run build` | **pass** (exit 0), 1.52 s |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -424,6 +424,61 @@ and `provenance.test.ts`.
 **The grep is not sufficient on its own** — it passed while `planSheet.ts` had
 the call but not the import, and `tsc` is what caught that. The two together
 are the check; neither alone is.
+
+### SD22 — a weld tolerance is a noise guard, never a way to close a visible gap
+
+A diagnostic on a real 30-wall plan (1 room / 176 sq ft on ~870 sq ft) found
+the cause: endpoints missing each other by **100–152 mm**, which makes a graph
+node degree-1, which makes `pruneDangles` delete the edge, which drops a
+neighbour to degree-1, and it cascades to a fixed point. Measured:
+
+| perturbation | rooms | area |
+|---|---|---|
+| exact | 5 | 864 sq ft |
+| one joint 50 mm out | 4 | 864 |
+| one shell corner 50 mm out | 4 | 714 |
+| five joints 100–152 mm out | **1** | 864 |
+| every endpoint ±4 mm | **0** | 0 |
+
+**`JOIN_TOLERANCE` was raised 1 mm → 15 mm, and that closes only the last
+row.** It is bounded by the thinnest legal wall (20 mm) and by the ft-in grid
+step (152.4 mm). Raising it far enough to close the 100–152 mm cases would
+fuse two legally distinct walls and merge two real rooms **silently**, which is
+worse than today's failure because today's is visible on screen.
+
+**The reasoning lives in [`units/tolerance.ts`](../src/units/tolerance.ts), not
+only here**, because the temptation arrives while reading that constant.
+
+### SD23 — `setWallLength` was the only action that broke a join, and it broke one every time
+
+An inventory of every wall-endpoint writer found exactly one offender.
+`setWallLength` computed `end := start + unit × length` and wrote **one** wall;
+the wall sharing the old endpoint stayed put. Typing a length in the inspector
+detached a corner, silently, every time it ran on one.
+
+Safe: `addWall` from the editor (grid-snapped, chains reuse the anchor),
+`copyToNextFloor` (whole floor, relative geometry preserved), the migrations
+(spread, endpoints untouched). **Unreachable:** endpoint dragging does not
+exist. **Still admitting unwelded coordinates:** the two CV ingest paths, the
+AI `replaceWalls`, and `parseDesign`. Those are a separate session.
+
+**The cascade rule, decided before implementing rather than discovered in it:**
+
+| walls at the moving end | rule |
+|---|---|
+| 1 (free) | move it |
+| 2 (simple corner) | **move both** — unambiguous, the corner slides |
+| ≥3 | **refuse and say why** |
+
+At three or more there is no correct move: dragging them all bends a
+through-wall stored as two collinear segments, dragging none detaches the one
+being resized, and telling them apart needs collinearity inference this project
+rejects. `setWallLength` returns `boolean` (the `copyToNextFloor` precedent) and
+the inspector renders the reason.
+
+**Both walls move in ONE `set`**, so it is one snapshot and one undo step by
+construction — not two writes inside the recorder's 200 ms coalescing window,
+which would split on a slow machine.
 
 ### SD19 — a porch is NOT built-up area, and that is a product decision
 
@@ -1073,6 +1128,27 @@ Hatch is therefore a `WallType` **property** for v4 — §6 already declares
 `hatch: HatchId` there — not a missing representation. Lower priority than a
 first reading of the drawings suggests.
 
+### 27. THREE INGEST PATHS STILL ADMIT UNWELDED COORDINATES `OPEN` · next
+
+Session 2's inventory found `setWallLength` and fixed it. Three paths still
+write wall endpoints that were never snapped or welded to anything:
+
+| path | source |
+|---|---|
+| `buildStructure.ts:84` | CV detector output |
+| `BlueprintPanel.tsx:251` | CV "add detected walls" |
+| `replaceWalls` (AI) · `parseDesign` | model output, and any imported file |
+
+The 15 mm weld absorbs noise, not these — a detector is off by centimetres.
+**Welding on ingest is the remaining half of the fix**, and it is where the
+plan in the diagnostic screenshot most likely came from: its dimensions
+(`4'1"`, `5'11"`, `10'7"`) are not multiples of the 6" grid, so those walls
+were not produced by grid-snapped clicks.
+
+Related and larger: **object snap while drawing** (B9), which stops H2 at
+source. The user aims at the wall's visible FACE; the model needs its
+centreline, 100 mm away.
+
 ### 25. VASTU DOES NOT READ OPEN SPACES `OPEN` · needs a human answer
 
 `analyseVastu` filters them out (SD19). The zone grid comes from `zoneFrame`,
@@ -1242,6 +1318,14 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not hand-write the swing icon's paths.** It calls `doorSwing` on a
   synthetic east-running wall precisely so it cannot drift from the renderers
   (SD14). Four literal SVG paths would be a fifth implementation of the rule.
+- **Do not raise `JOIN_TOLERANCE` to close a gap you can see** (SD22). 15 mm is
+  a float-noise guard bounded by the 20 mm minimum wall thickness. A gap you
+  can see is a modelling problem — fix it where the coordinates are written.
+- **Do not write one wall's endpoint without the walls joined to it** (SD23).
+  That is what `setWallLength` did, and it cost a room every time.
+- **Do not split a compound edit across two `set` calls and rely on the
+  recorder's 200 ms coalescing** to make it one undo step. It is one `set` or
+  it is a timing accident.
 - **Do not count an open space in `totalBuiltUpArea`** (SD19). It is multiplied
   by `constructionRate`, so a porch in that total overstates a client's cost.
   Use `openArea` and report it beside, never inside.

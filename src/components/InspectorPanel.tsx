@@ -549,6 +549,7 @@ function WallLengthField({
   const setWallLength = useDesignStore((s) => s.setWallLength)
   const [text, setText] = useState(() => formatLength(metres, units))
   const [editing, setEditing] = useState(false)
+  const [refused, setRefused] = useState(false)
 
   // Follow the model — another viewport may be dragging this very wall — but
   // never while the user is typing into the box.
@@ -570,7 +571,12 @@ function WallLengthField({
   const handleChange = (next: string) => {
     setText(next)
     const parsed = parseLength(next, units)
-    if (parsed !== null) setWallLength(wallId, clampLength(parsed))
+    if (parsed === null) return
+    // The store refuses when three or more walls meet at the end that would
+    // move: every way of resolving that deforms something the user did not
+    // select. A refusal has to be SAID — a length box that silently ignores
+    // what was typed reads as the app being broken.
+    setRefused(!setWallLength(wallId, clampLength(parsed)))
   }
 
   return (
@@ -611,6 +617,16 @@ function WallLengthField({
       )}
       {!invalid && clampNote && (
         <p className="text-right text-[11px] text-slate-400">{clampNote}</p>
+      )}
+      {refused && (
+        <p
+          className="text-[11px] leading-relaxed text-amber-600"
+          data-testid="wall-length-refused"
+        >
+          Three or more walls meet at this end. Resizing would either pull them
+          all with it or leave this one detached, and neither is what you asked
+          for — move the junction itself instead.
+        </p>
       )}
     </div>
   )

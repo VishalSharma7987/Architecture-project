@@ -1,8 +1,16 @@
 import type { Point, Wall } from '../store/useDesignStore'
 import { resetResolveCache } from '../rooms/resolve'
+import { JOIN_TOLERANCE } from '../units/tolerance'
 
-/** Corners within a millimetre of each other are the same node. */
-const WELD = 1e-3
+/**
+ * Corners this close are the same node.
+ *
+ * Shared with the store, so a join the editor believes it preserved is a join
+ * the traversal believes too. Read `JOIN_TOLERANCE`'s own comment before
+ * changing it — in particular the part about not raising it to close a gap you
+ * can see on screen.
+ */
+const WELD = JOIN_TOLERANCE
 
 /** Faces smaller than this are numerical slivers, not rooms. */
 const MIN_AREA = 1e-3
