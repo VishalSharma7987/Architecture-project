@@ -25,6 +25,15 @@ export type ResolvedRoom = {
    * the ordinary one-name room.
    */
   extraLabels: RoomLabel[]
+  /**
+   * The polygon came from the label's `openBoundary` — the user's drawing —
+   * rather than from a closed loop of walls.
+   *
+   * Callers that mean "the built enclosure" must exclude these: a porch is not
+   * built-up area and must not be costed as one. `totalBuiltUpArea` already
+   * does, which is what keeps a porch out of the cost estimate.
+   */
+  open: boolean
 }
 
 /**
@@ -75,6 +84,7 @@ function matchLabels(
     centroid: labelPoint(room.polygon),
     label: null,
     extraLabels: [],
+    open: false,
   }))
 
   // ── pass 1: containment ──
@@ -96,12 +106,56 @@ function matchLabels(
   // ── pass 2: the boundary hint ──
   // Only for names pass 1 could not place, and only against spaces no name has
   // claimed. Runs in `labels` order, so a tie goes to the earlier name.
+  const stillUnplaced: RoomLabel[] = []
   for (const label of unplaced) {
     const room = reattach(label, rooms)
     if (room) room.label = label
+    else stillUnplaced.push(label)
+  }
+
+  // ── pass 3: the user's own outline ──
+  // The polygon of last resort, and the precedence is the whole point:
+  // CONTAINMENT > HINT > OPEN BOUNDARY. A porch that walls have since closed
+  // around resolves to the enclosure, not to the rectangle the user drew,
+  // because the walls are the more specific architectural fact and B7's design
+  // is that geometry is recomputed while the name persists.
+  //
+  // Unlike the passes above, this one MAKES a room rather than claiming one:
+  // there is no detected loop to claim, which is the entire reason the field
+  // exists. Appended rather than sorted into place — an open space lies
+  // outside every wall loop by definition, so it can neither contain nor be
+  // contained by a detected room, and `rooms` stays largest-first for the
+  // enclosed set that `draw.ts` paints in that order.
+  for (const label of stillUnplaced) {
+    const room = openRoom(label)
+    if (room) rooms.push(room)
   }
 
   return rooms
+}
+
+/**
+ * A space the user outlined, as a room in its own right, or null.
+ *
+ * Null for a ring that is degenerate or has no interior — the same guard
+ * `detectRooms` applies with `MIN_AREA`, so a mis-drag cannot put a
+ * zero-area space in the schedule.
+ */
+function openRoom(label: RoomLabel): ResolvedRoom | null {
+  const polygon = label.openBoundary
+  if (!polygon || polygon.length < 3) return null
+
+  const area = Math.abs(ringArea(polygon))
+  if (area <= 0) return null
+
+  return {
+    polygon,
+    area,
+    centroid: labelPoint(polygon),
+    label,
+    extraLabels: [],
+    open: true,
+  }
 }
 
 /** How similar two rings are, judged cheaply. See `reattach`. */
@@ -394,6 +448,10 @@ export function withBoundaryHints(
   const rooms = resolveRooms(walls, labels)
   const polygonFor = new Map<RoomId, Point[]>()
   for (const room of rooms) {
+    // An open space needs no hint: its polygon IS its `openBoundary`, already
+    // in the document. Writing one would store the same ring twice and make
+    // re-attachment try to claim a detected loop for a space that has none.
+    if (room.open) continue
     if (room.label) polygonFor.set(room.label.id, room.polygon)
     for (const extra of room.extraLabels) polygonFor.set(extra.id, room.polygon)
   }
@@ -487,9 +545,30 @@ export function spaceId(polygon: Point[]): string {
 export const roomKeyOf = (room: ResolvedRoom): string =>
   room.label ? room.label.id : spaceId(room.polygon)
 
-/** Total of every enclosed space, in square metres. */
+/**
+ * Total of every ENCLOSED space, in square metres.
+ *
+ * Open spaces are excluded, and that is a deliberate product decision rather
+ * than an implementation convenience. This number feeds `buildAreaStatement`,
+ * which multiplies it by `constructionRate` to produce rupees — so counting a
+ * porch here would silently OVERSTATE a client's cost on every design that has
+ * one, and overstating money is the worse error to make.
+ *
+ * It is also the honest reading. Areas here are measured to wall centrelines
+ * (see `MEASUREMENT_BASIS`); a space with no wall loop is not measured on that
+ * basis at all, so folding it in would make one number mean two things.
+ *
+ * Whether a porch counts toward FAR at 0%, 50% or 100% is a municipal
+ * question this app has not been told the answer to — see `openArea` for the
+ * number to report beside this one.
+ */
 export function totalBuiltUpArea(rooms: ResolvedRoom[]): number {
-  return rooms.reduce((sum, room) => sum + room.area, 0)
+  return rooms.reduce((sum, room) => (room.open ? sum : sum + room.area), 0)
+}
+
+/** Total of every space the user outlined but no walls enclose. */
+export function openArea(rooms: ResolvedRoom[]): number {
+  return rooms.reduce((sum, room) => (room.open ? sum + room.area : sum), 0)
 }
 
 /**

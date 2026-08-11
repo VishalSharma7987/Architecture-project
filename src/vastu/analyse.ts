@@ -74,8 +74,15 @@ export function analyseVastu(
   northOffset: number,
   plotFacing: Facing,
 ): VastuReport {
+  // Open spaces are left out, and it is a judgement not an oversight. The zone
+  // grid is derived from the WALL bounds, so a porch sitting outside the
+  // building footprint would be judged against a grid that does not describe
+  // it — and a confident verdict on a space the frame never covered reads as
+  // authoritative when it is not. A porch's direction genuinely matters in
+  // Vastu, so this is a gap to close deliberately, not a settled answer.
+  const enclosed = rooms.filter((room) => !room.open)
   const frame = zoneFrame(walls, northOffset)
-  const verdicts = frame ? rooms.map((room) => verdictFor(room, frame)) : []
+  const verdicts = frame ? enclosed.map((room) => verdictFor(room, frame)) : []
 
   const intruders = frame
     ? verdicts.filter((v) => intrudesOnCentre(v, frame))

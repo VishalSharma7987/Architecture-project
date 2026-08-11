@@ -237,6 +237,30 @@ export type RoomLabel = {
    * and the hint is still durable across the reload it exists for.
    */
   boundaryHint?: Point[]
+  /**
+   * The extent the USER drew for a space that no closed wall loop bounds — a
+   * porch, a sitout, a wash area, a balcony. Every reference drawing names AND
+   * dimensions these, and before B25 they could not even be selected.
+   *
+   * ── Why this is on `RoomLabel` and not a `Space` element ──
+   * A separate element type forks `resolveRooms`, the room schedule, the area
+   * statement, Vastu and the BOQ into two code paths for one concept. This
+   * type already carries `boundaryHint: Point[]`, a polygon field of exactly
+   * this shape, so extending it is §3's "extend rather than replace".
+   *
+   * ── How it differs from `boundaryHint`, which looks identical ──
+   * `boundaryHint` is DERIVED — written by `serializeDesign` from geometry the
+   * walls produced, and used only to re-find a room after an edit. This is
+   * AUTHORED: the user drew it, nothing may recompute it (L2), and it is the
+   * space's actual outline rather than a memory of one.
+   *
+   * ── Precedence ──
+   * Last, deliberately. A label resolves by containment first, then by
+   * `boundaryHint`, and only then by this. If walls ever close around the
+   * point, the walls win — they are the more specific architectural fact, and
+   * B7's whole design is that geometry is recomputed while the name persists.
+   */
+  openBoundary?: Point[]
 }
 
 /**
@@ -465,6 +489,15 @@ export const OPENING_LABELS: Record<OpeningType, string> = {
   cased: 'Opening',
 }
 
+/**
+ * Smallest open space worth keeping, in square metres.
+ *
+ * A click with the Space tool is a zero-size drag, and 0.05 m² is well under
+ * anything anyone would draw on purpose while being large enough that a
+ * mis-click cannot leave an invisible entry in the schedule.
+ */
+const MIN_OPEN_SPACE_AREA = 0.05
+
 /** Keeps edits physically meaningful without fighting the user mid-typing. */
 export const LIMITS = {
   wallLength: { min: 0.05, max: 500 },
@@ -567,7 +600,14 @@ export type ViewMode = '2d' | '3d'
 export type WalkView = 'first' | 'third'
 
 /** Active pointer tool. `wall` draws; the rest act on existing walls. */
-export type Tool = 'select' | 'wall' | 'door' | 'window' | 'cased' | 'stair'
+export type Tool =
+  | 'select'
+  | 'wall'
+  | 'door'
+  | 'window'
+  | 'cased'
+  | 'space'
+  | 'stair'
 
 /**
  * Whether this tool places an opening on a wall — and, if so, which type.
@@ -773,6 +813,16 @@ type DesignState = {
 
   /** Names the space containing `anchor`. Returns the new label's id. */
   nameRoom: (anchor: Point, type: RoomType, provenance: Provenance) => string
+  /**
+   * Names a space no walls enclose, from an outline the user drew — a porch,
+   * a sitout, a balcony. Returns the new label's id, or null for a degenerate
+   * outline, which a click rather than a drag produces.
+   */
+  nameOpenSpace: (
+    boundary: Point[],
+    type: RoomType,
+    provenance: Provenance,
+  ) => string | null
   updateRoomLabel: (
     id: string,
     patch: Partial<Pick<RoomLabel, 'type' | 'name'>>,
@@ -1500,6 +1550,34 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       provenance: source,
       type,
       anchor: { ...anchor },
+    }
+    set((state) => ({ roomLabels: [...state.roomLabels, label] }))
+    return label.id
+  },
+
+  nameOpenSpace: (boundary, type, source) => {
+    if (boundary.length < 3) return null
+    // Shoelace: a ring the user dragged to nothing has no interior, and a
+    // zero-area space in the schedule is worse than no space at all.
+    let twice = 0
+    for (let i = 0; i < boundary.length; i++) {
+      const a = boundary[i]
+      const b = boundary[(i + 1) % boundary.length]
+      twice += a.x * b.z - b.x * a.z
+    }
+    if (Math.abs(twice / 2) < MIN_OPEN_SPACE_AREA) return null
+
+    const label: RoomLabel = {
+      id: crypto.randomUUID(),
+      provenance: source,
+      type,
+      // The anchor still matters: if walls ever close around this point, pass 1
+      // claims the enclosure and the outline stops being used (B25 precedence).
+      anchor: {
+        x: boundary.reduce((s, p) => s + p.x, 0) / boundary.length,
+        z: boundary.reduce((s, p) => s + p.z, 0) / boundary.length,
+      },
+      openBoundary: boundary.map((p) => ({ ...p })),
     }
     set((state) => ({ roomLabels: [...state.roomLabels, label] }))
     return label.id

@@ -477,6 +477,11 @@ function parseRoomLabel(
   }
   const hint = parseBoundaryHint(value.boundaryHint)
   if (hint) label.boundaryHint = hint
+  // Same ring shape, same all-or-nothing rule — but this one is the user's
+  // drawing rather than a remembered result, so losing it silently would lose
+  // a space, not just a re-attachment shortcut.
+  const open = parseBoundaryHint(value.openBoundary)
+  if (open) label.openBoundary = open
   return label
 }
 

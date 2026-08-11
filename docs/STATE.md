@@ -33,8 +33,8 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B24 — COMPLETE.** Opening marks and the door/window schedule. **§13's schedule gap is closed** |
-| Before that | **B23** — `'cased'`; **B22** — swing controls; **B21** — the swing enters the model (`DESIGN_VERSION 4`); **B7** — room identity |
+| Last completed task | **B25 — COMPLETE.** Unenclosed named spaces. **All four ★ items from the fidelity audit are closed** |
+| Before that | **B24** — marks + schedule; **B23** — `'cased'`; **B22** — swing controls; **B21** — the swing enters the model (`DESIGN_VERSION 4`) |
 | Next task | **B9** (drafting/snapping) — the largest single gap versus AutoCAD |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
@@ -91,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B24, at `e7d9b4b`+:
+Verified after B25, at `454e9db`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **511 passing / 511** · 31 files / 31 |
-| `npm run build` | **pass** (exit 0), 814 ms |
+| `npm test` | **524 passing / 524** · 32 files / 32 |
+| `npm run build` | **pass** (exit 0), 1.46 s |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -105,7 +105,8 @@ Verified after B24, at `e7d9b4b`+:
 | Schema | **`DESIGN_VERSION = 4`** — v1→v2→v3→v4 migrations, round-trip tested. **B23 added no version**: widening `OpeningType` does not change the on-disk shape, and an older build correctly rejects the value it does not know |
 | Autosave | **2.37 ms** at 500 walls × 3 storeys, against §9.2's 20 ms |
 
-*Before B21: 451 / 25 files at `8227343`. The 60 new tests are
+*Before B21: 451 / 25 files at `8227343`. The 73 new tests are
+[`openSpace.test.ts`](../src/rooms/openSpace.test.ts) (13),
 [`schedule.test.ts`](../src/openings/schedule.test.ts) (15),
 [`openingSchedule.test.tsx`](../src/components/openingSchedule.test.tsx) (5),
 [`casedOpening.test.tsx`](../src/plan/casedOpening.test.tsx) (9),
@@ -423,6 +424,74 @@ and `provenance.test.ts`.
 **The grep is not sufficient on its own** — it passed while `planSheet.ts` had
 the call but not the import, and `tsc` is what caught that. The two together
 are the check; neither alone is.
+
+### SD19 — a porch is NOT built-up area, and that is a product decision
+
+`totalBuiltUpArea` excludes open spaces; `openArea` reports them separately.
+Three reasons, in order of weight:
+
+1. **It becomes money.** That total is multiplied by `constructionRate` in
+   `buildAreaStatement`. Counting a porch would silently OVERSTATE a client's
+   cost on every design with one, and overstating money is the worse error.
+2. **It would make one number mean two things.** Areas here are measured to
+   wall centrelines (`MEASUREMENT_BASIS`); a space with no wall loop is not
+   measured on that basis at all.
+3. **§5.3:** carpet, built-up and super built-up are three legally distinct
+   numbers and the app computes one. Adding a fourth kind of space to that one
+   number makes it less correct, not more.
+
+**Whether a porch counts toward FAR — at 0%, 50% or 100% — is a MUNICIPAL
+question nobody has answered for this app.** Exclusion is the least-assumptive
+default, not a claim that the answer is zero. The panel and the printed basis
+both say so in as many words, so a reader is told rather than left to infer it
+from a total that does not add up.
+
+`analyseVastu` excludes them too, and for a different reason: the zone grid is
+derived from the WALL bounds, so a porch outside the footprint would be judged
+against a grid that does not describe it. A porch's direction genuinely matters
+in Vastu, so **this is a gap to close deliberately, not a settled answer.**
+
+**3D does nothing with them.** There is one bbox slab and one global
+`floorMaterial`; per-room floor regions are Phase 7 and were explicitly out of
+scope. An open space gets its 3D caption chip like any other named space.
+
+### SD20 — `openBoundary` is authored; `boundaryHint` is derived
+
+The two fields are both `Point[]` on `RoomLabel` and are easy to confuse. They
+are opposites:
+
+| | `boundaryHint` | `openBoundary` |
+|---|---|---|
+| Written by | `serializeDesign`, at save time | the user, with the Space tool |
+| Means | where this room WAS | what this space IS |
+| May be recomputed | yes, every save | **never** (L2) |
+| Precedence | pass 2 | pass 3, last |
+
+**Precedence is containment > hint > openBoundary**, and pass 3 runs only over
+labels the first two passes could not place. Running it unconditionally makes a
+label resolve twice — once to its enclosure and once to its own rectangle — and
+`openSpace.test.ts` pins that with the red symptom recorded.
+
+The order is deliberate: if walls ever close around the point, the walls win.
+They are the more specific architectural fact, and B7's whole design is that
+geometry is recomputed while the name persists.
+
+### SD21 — the Space tool is a drag-rectangle, not a polygon tool
+
+Every unenclosed space in every reference drawing — porch, sitout, wash area,
+balcony — is a rectangle. A drag snapped to the same grid the walls use aligns
+with the building it abuts, is one undo step, and produces exactly the
+`width x length` pair the references print under the name.
+
+A polygon tool needs vertex editing, close detection and partial-state undo:
+that is drafting work (Phase 4), not this. **Auto-proposing the region from
+surrounding walls plus the plot edge was rejected outright** — it requires a
+plot (most designs have none) and it would have the app AUTHOR a dimension,
+which is the exact failure the fidelity audit was written about.
+
+It is a tool rather than a Select-tool gesture because a left-drag on empty
+floor already pans the sheet, and because the audit's actual complaint was that
+there was no "place a room label here" affordance *anywhere* to find.
 
 ### SD17 — a mark is a CLAIM, and the schedule checks it rather than trusting it
 
@@ -1004,6 +1073,29 @@ Hatch is therefore a `WallType` **property** for v4 — §6 already declares
 `hatch: HatchId` there — not a missing representation. Lower priority than a
 first reading of the drawings suggests.
 
+### 25. VASTU DOES NOT READ OPEN SPACES `OPEN` · needs a human answer
+
+`analyseVastu` filters them out (SD19). The zone grid comes from `zoneFrame`,
+which bounds the WALLS — so a porch outside the footprint would be scored
+against a grid that never covered it, and a confident verdict on it would read
+as authoritative when it is not.
+
+**A porch's direction genuinely matters in Vastu**, so this is a real gap. The
+question it needs answered is whether the zone frame should bound the walls or
+the walls PLUS the open spaces — which changes every existing reading, so it
+is not a decision to take incidentally.
+
+### 26. WHETHER A PORCH COUNTS TOWARD FAR `OPEN` · human, regulatory
+
+B25 excludes open spaces from built-up area and from the cost, and says so on
+screen and on the printed basis. That is the least-assumptive default, **not an
+answer**: Indian municipal byelaws variously count a covered porch at 0%, 50%
+or 100%, and balconies differently again.
+
+Closing it properly means a per-space FAR fraction, which is a `Level`/plot
+concern (§7 Stage 3's FSI work) rather than a room one. Until then the app
+reports the two numbers separately and declines to add them.
+
 ### 24. REFERENCE ITEM 11 (running dimensions) HAS A HIDDEN DEPENDENCY `OPEN`
 
 The interior strings on the reference (`5'-4"`, `8'-6"`, `12'-10"`, `9'-6"`)
@@ -1150,6 +1242,13 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not hand-write the swing icon's paths.** It calls `doorSwing` on a
   synthetic east-running wall precisely so it cannot drift from the renderers
   (SD14). Four literal SVG paths would be a fifth implementation of the rule.
+- **Do not count an open space in `totalBuiltUpArea`** (SD19). It is multiplied
+  by `constructionRate`, so a porch in that total overstates a client's cost.
+  Use `openArea` and report it beside, never inside.
+- **Do not recompute an `openBoundary`** (SD20, L2). It is the user's drawing,
+  not a derived hint — the opposite of `boundaryHint` despite the identical
+  type. And **do not run pass 3 over anything but the labels passes 1 and 2
+  could not place**, or a label resolves twice.
 - **Do not auto-assign an `Opening.mark`** (SD17, L2). Renumbering on insert
   rewrites a key the drawing, the schedule and a builder's order all point at.
 - **Do not collapse or split a mark conflict** (SD17). One row, both values

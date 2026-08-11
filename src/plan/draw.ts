@@ -103,6 +103,17 @@ const COLORS = {
 const MIN_GRID_SPACING_PX = 7
 
 /**
+ * Dash for a space no walls enclose.
+ *
+ * An enclosed room needs no outline — its walls draw it. An open space has
+ * none, so without a line it would be a floating caption over blank paper. It
+ * is dashed rather than solid because a solid line at a room's edge means a
+ * built edge, and claiming one where the user drew only an extent would be the
+ * drawing telling a lie the model does not.
+ */
+const OPEN_SPACE_DASH = [6, 4]
+
+/**
  * Dimension-line tuning, all in screen pixels so annotation keeps the same
  * weight at every zoom rather than growing with the building.
  */
@@ -281,6 +292,8 @@ export type PlanScene = {
   showDimensions?: boolean
   /** The last placed point, when a wall chain is in progress. */
   anchor: Point | null
+  /** The corner an open-space outline is being dragged from, if any. */
+  spaceCorner?: Point | null
   /** Snapped cursor position, or null when the pointer is off-canvas. */
   cursor: Point | null
   /** Suppresses the snap marker for tools that act on walls, not the grid. */
@@ -328,6 +341,7 @@ export function drawPlan(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   // the wall centreline, so anything drawn under a wall is drawn invisibly.
   drawRoomCaptions(ctx, scene)
   drawDraft(ctx, scene)
+  drawSpaceDraft(ctx, scene)
   if (scene.showCursor) drawCursor(ctx, scene)
   drawCalibration(ctx, scene)
 }
@@ -894,6 +908,15 @@ function drawRoomFills(ctx: CanvasRenderingContext2D, scene: PlanScene) {
     if (room === chosen) {
       ctx.fillStyle = COLORS.roomSelectedFill
       ctx.fill()
+    }
+
+    // An open space is the one room with no walls to draw its own edge.
+    if (room.open) {
+      ctx.setLineDash(OPEN_SPACE_DASH)
+      ctx.strokeStyle = room === chosen ? COLORS.selected : COLORS.dimension
+      ctx.lineWidth = room === chosen ? 2 : 1.25
+      ctx.stroke()
+      ctx.setLineDash([])
     }
   }
   ctx.restore()
@@ -1635,6 +1658,45 @@ function drawDraft(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   ctx.fillStyle = COLORS.draft
   ctx.arc(a.x, a.y, 4, 0, Math.PI * 2)
   ctx.fill()
+}
+
+/**
+ * The open-space outline being dragged, with the size it will commit at.
+ *
+ * Dashed, like the committed outline: a space with no walls has no built edge
+ * to draw, and a solid line would read as one. The two figures are the same
+ * `width x length` pair `roomSize` reports and the references print under the
+ * name, so what the drag shows is what the schedule will say.
+ */
+function drawSpaceDraft(ctx: CanvasRenderingContext2D, scene: PlanScene) {
+  const corner = scene.spaceCorner
+  const { cursor, width, height, viewport: vp, units } = scene
+  if (!corner || !cursor) return
+
+  const a = worldToScreen(corner, vp, width, height)
+  const b = worldToScreen(cursor, vp, width, height)
+
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(a.x, a.y, b.x - a.x, b.y - a.y)
+  ctx.fillStyle = COLORS.draftFill
+  ctx.fill()
+  ctx.strokeStyle = COLORS.draft
+  ctx.lineWidth = 1.5
+  ctx.setLineDash(OPEN_SPACE_DASH)
+  ctx.stroke()
+  ctx.restore()
+
+  const across = Math.abs(cursor.x - corner.x)
+  const down = Math.abs(cursor.z - corner.z)
+  if (across > 0 && down > 0) {
+    label(
+      ctx,
+      `${formatLengthCompact(across, units)} x ${formatLengthCompact(down, units)}`,
+      (a.x + b.x) / 2,
+      (a.y + b.y) / 2,
+    )
+  }
 }
 
 function drawCursor(ctx: CanvasRenderingContext2D, scene: PlanScene) {

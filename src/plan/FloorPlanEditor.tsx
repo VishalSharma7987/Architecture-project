@@ -37,6 +37,27 @@ import {
 const HIT_TOLERANCE_PX = 7
 
 /**
+ * The four corners of the rectangle two opposite corners describe, wound so
+ * the shoelace area is positive whichever way the drag went.
+ *
+ * Winding matters: `containsPoint` and `ringArea` are sign-agnostic, but a
+ * ring that flips direction depending on which way the user dragged is a ring
+ * two identical spaces disagree about, and `spaceId` hashes the vertex order.
+ */
+const rectangleRing = (a: Point, b: Point): Point[] => {
+  const minX = Math.min(a.x, b.x)
+  const maxX = Math.max(a.x, b.x)
+  const minZ = Math.min(a.z, b.z)
+  const maxZ = Math.max(a.z, b.z)
+  return [
+    { x: minX, z: minZ },
+    { x: maxX, z: minZ },
+    { x: maxX, z: maxZ },
+    { x: minX, z: maxZ },
+  ]
+}
+
+/**
  * Top-down floor plan editor.
  *
  * Left-click places points; each one closes a wall against the previous point
@@ -81,6 +102,14 @@ export function FloorPlanEditor() {
   const vastuRef = useRef<ZoneCell[]>([])
   /** Space held: the universal "pan with any tool" modifier. */
   const spaceRef = useRef(false)
+  /**
+   * The corner the Space tool's outline was started from, or null.
+   *
+   * Named for the DRAG, not the tool, because `spaceRef` above is the space
+   * BAR — two different things one letter apart, and holding the space bar
+   * while the Space tool is active is a combination a user will actually hit.
+   */
+  const spaceDragRef = useRef<Point | null>(null)
 
   // Mirrors `anchorRef` for the hint text only; the canvas never reads it.
   const [isDrawing, setIsDrawing] = useState(false)
@@ -116,12 +145,14 @@ export function FloorPlanEditor() {
       units: useDesignStore.getState().units,
       showDimensions: useDesignStore.getState().showDimensions,
       anchor: anchorRef.current,
+      spaceCorner: spaceDragRef.current,
       cursor: cursorRef.current,
       // Only the tools that place on the grid want the snap marker; the rest
       // target walls. Calibration wants it too, since it is an aiming task.
       showCursor:
         useDesignStore.getState().tool === 'wall' ||
         useDesignStore.getState().tool === 'stair' ||
+        useDesignStore.getState().tool === 'space' ||
         useDesignStore.getState().blueprintCalibrating,
       blueprint:
         blueprint && image && blueprint.visible
@@ -459,6 +490,21 @@ export function FloorPlanEditor() {
       return
     }
 
+    // The outline for a space no walls enclose, dragged as a rectangle.
+    //
+    // A rectangle rather than a polygon tool: every unenclosed space in every
+    // reference drawing — porch, sitout, wash area, balcony — is rectangular,
+    // it snaps to the same grid the walls do so it aligns with the building it
+    // abuts, it is one undo step, and the two numbers it produces are exactly
+    // the `width x length` pair the references print under the name. A polygon
+    // tool needs vertex editing, close detection and partial-state undo, which
+    // is drafting work (Phase 4), not this.
+    if (tool === 'space') {
+      spaceDragRef.current = snappedAt(e.clientX, e.clientY)
+      requestDraw()
+      return
+    }
+
     if (tool === 'wall') {
       const point = snappedAt(e.clientX, e.clientY)
       const anchor = anchorRef.current
@@ -528,7 +574,10 @@ export function FloorPlanEditor() {
    * grid: select, add door, add window.
    */
   const handleWallTargetedClick = (
-    tool: Exclude<Tool, 'wall' | 'stair'>,
+    // Everything the grid tools handle before this is called. Narrowed by
+    // exclusion so that adding an opening type reaches `addOpening` for free,
+    // and adding a grid tool is a compile error here until it is handled above.
+    tool: Exclude<Tool, 'wall' | 'stair' | 'space'>,
     clientX: number,
     clientY: number,
   ) => {
@@ -676,6 +725,26 @@ export function FloorPlanEditor() {
   }
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const corner = spaceDragRef.current
+    if (corner) {
+      spaceDragRef.current = null
+      const opposite = snappedAt(e.clientX, e.clientY)
+      const { nameOpenSpace, select } = useDesignStore.getState()
+      // Named `balcony` to start with: it is the one `RoomType` that already
+      // means an unenclosed space, so the caption reads sensibly the instant
+      // the drag ends and the user retypes it in the inspector like any other
+      // room. Picking a type before drawing would be a modal step for a
+      // decision that is one click to change afterwards.
+      const id = nameOpenSpace(
+        rectangleRing(corner, opposite),
+        'balcony',
+        provenance.manual(),
+      )
+      // Null for a click rather than a drag — no outline, nothing to select.
+      if (id) select({ kind: 'room', roomId: id })
+      requestDraw()
+    }
+
     panRef.current = null
     dragRef.current = null
     canvasRef.current?.releasePointerCapture(e.pointerId)
@@ -756,6 +825,12 @@ export function FloorPlanEditor() {
         )}
         {!calibrating && tool === 'stair' && (
           <>Click where the staircase should stand</>
+        )}
+        {!calibrating && tool === 'space' && (
+          <>
+            Drag to outline a space no walls enclose — a porch, sitout or
+            balcony. Name it in the panel on the right.
+          </>
         )}
         {!calibrating && tool === 'door' && <>Click a wall to place a door</>}
         {!calibrating && tool === 'window' && <>Click a wall to place a window</>}

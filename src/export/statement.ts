@@ -32,7 +32,10 @@ import { zoneLabel } from '../vastu/ruleset'
 export const MEASUREMENT_BASIS =
   'Areas are measured to wall centrelines, so each room includes half the ' +
   'thickness of the walls enclosing it. These are not carpet areas, and not ' +
-  'super built-up areas.'
+  'super built-up areas. Spaces no walls enclose — porch, sitout, balcony — ' +
+  'are listed with their areas but are NOT included in the built-up total or ' +
+  'the cost: whether they count toward FAR, and at what fraction, is a ' +
+  'municipal question this document does not answer.'
 
 /** The name given to a space the user has not labelled. */
 const UNNAMED = 'Unnamed'

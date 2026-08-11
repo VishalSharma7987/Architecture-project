@@ -54,6 +54,21 @@ const TOOLS: (SegOption<Tool> & { planOnly?: boolean })[] = [
     hint: 'Click a wall to add a cased opening — a gap with no door or window',
     testId: 'tool-cased',
   },
+  // Plan-only like Wall: the outline is dragged on the plan, and there is no
+  // floor in 3D to drag it across — an open space has no slab under it.
+  //
+  // A tool rather than a Select-tool gesture: with Select, a left-drag on
+  // empty floor already pans the sheet, and taking that over would break the
+  // one gesture that works the same on a mouse and a trackpad. It also makes
+  // the action FINDABLE, which was the audit's actual complaint — there was no
+  // "place a room label here" affordance anywhere in the app.
+  {
+    id: 'space',
+    label: 'Space',
+    hint: 'Drag to outline a space no walls enclose — a porch, sitout or balcony',
+    planOnly: true,
+    testId: 'tool-space',
+  },
   // Plan-only for the same reason as Wall: a stair is placed by pointing at a
   // spot on the storey below, which only the plan gives you.
   { id: 'stair', label: 'Stair', hint: 'Click to place a staircase', planOnly: true, testId: 'tool-stair' },
