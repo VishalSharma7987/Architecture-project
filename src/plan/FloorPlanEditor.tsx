@@ -24,6 +24,7 @@ import {
 import { GRID_STEP } from '../units/length'
 import { vastuZones, type ZoneCell } from '../vastu/zones'
 import { drawPlan, pickStair } from './draw'
+import { findLooseJoints, type LooseJoint } from './repairJoints'
 import {
   createViewport,
   fitToBounds,
@@ -98,6 +99,8 @@ export function FloorPlanEditor() {
   const imageRef = useRef<HTMLImageElement | null>(null)
   /** Mirrors the memoised resolve, for the imperative paint and the hit test. */
   const roomsRef = useRef<ResolvedRoom[]>([])
+  /** Mirrors the memoised loose-joint scan, for the imperative paint. */
+  const looseRef = useRef<LooseJoint[]>([])
   /** Mirrors the memoised zone grid, for the imperative paint. */
   const vastuRef = useRef<ZoneCell[]>([])
   /** Space held: the universal "pan with any tool" modifier. */
@@ -146,6 +149,7 @@ export function FloorPlanEditor() {
       showDimensions: useDesignStore.getState().showDimensions,
       anchor: anchorRef.current,
       spaceCorner: spaceDragRef.current,
+      looseJoints: looseRef.current,
       cursor: cursorRef.current,
       // Only the tools that place on the grid want the snap marker; the rest
       // target walls. Calibration wants it too, since it is an aiming task.
@@ -320,6 +324,16 @@ export function FloorPlanEditor() {
     vastuRef.current = vastuCells
     requestDraw()
   }, [vastuCells, requestDraw])
+
+  // Loose joints are derived from the walls alone and are O(endpoints^2), so
+  // like the rooms they are memoised on the wall array rather than recomputed
+  // inside the paint. The status bar runs the same call on the same input, so
+  // the count it offers and the rings drawn here cannot disagree.
+  const looseJoints = useMemo(() => findLooseJoints(roomWalls), [roomWalls])
+  useEffect(() => {
+    looseRef.current = looseJoints
+    requestDraw()
+  }, [looseJoints, requestDraw])
 
   // …and whenever the calibration picks change, which the store never sees.
   useEffect(() => subscribeCalibration(requestDraw), [requestDraw])

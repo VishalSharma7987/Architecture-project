@@ -1,0 +1,306 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { findLooseJoints, weldJoints, REPAIR_EXTEND } from './repairJoints'
+import { detectRoomsUncached } from './rooms'
+import { useDesignStore } from '../store/useDesignStore'
+import { resetStore } from '../test/fixtures'
+import type { Wall } from '../store/useDesignStore'
+
+/**
+ * Session 3a — the user-invoked joint repair.
+ *
+ * `JOIN_TOLERANCE` (15 mm) is a noise guard and closes nothing a user can see.
+ * The diagnostic found real endpoints missing by 100–152 mm, which the guard
+ * cannot touch and must not be widened to reach. This closes them on request
+ * instead, with the user told what will move before it does.
+ *
+ * The fixtures are the ones from the diagnostic. Counts AND areas, always —
+ * `rooms.length > 0` would pass on the bug.
+ *
+ * ── Demonstrated red (SD5) ──
+ * Extension pass disabled: five failures, led by `expected 1 to be 5` on
+ * fixtures D and B — the 100 mm and 152 mm cases are exactly what pass 2
+ * exists for, and the merge pass alone cannot reach them.
+ *
+ * Extension moved to the PERPENDICULAR FOOT instead of along the wall's own
+ * line: `expected 0.811033571919126 to be close to 0.7853981633974483` — a
+ * 1.47° rotation of the diagonal. Worth recording that the first draft of that
+ * test used only the rectilinear fixture, where the foot and the axis
+ * intersection are the same point, and the substitution passed all fifteen
+ * tests. The oblique wall is there because of it.
+ */
+
+const G = 0.1524
+const SHELL = { w: 64, d: 54 }
+const FULL_AREA = SHELL.w * G * (SHELL.d * G)
+
+const wall = (id: string, ax: number, az: number, bx: number, bz: number, t: number): Wall => ({
+  id,
+  start: { x: ax * G, z: az * G },
+  end: { x: bx * G, z: bz * G },
+  height: 3,
+  thickness: t,
+  openings: [],
+  material: 'white-paint',
+})
+
+/** Shell plus five partitions; `pullBack` drops each partition end short. */
+function plan(pullBack = 0): Wall[] {
+  const S = 0.2
+  const P = 0.1
+  const p = pullBack
+  return [
+    wall('s1', 0, 0, SHELL.w, 0, S),
+    wall('s2', SHELL.w, 0, SHELL.w, SHELL.d, S),
+    wall('s3', SHELL.w, SHELL.d, 0, SHELL.d, S),
+    wall('s4', 0, SHELL.d, 0, 0, S),
+    { ...wall('p1', 24, 0, 24, 30, P), start: { x: 24 * G, z: p } },
+    { ...wall('p2', 0, 30, 24, 30, P), start: { x: p, z: 30 * G } },
+    { ...wall('p3', 44, 0, 44, 30, P), start: { x: 44 * G, z: p } },
+    { ...wall('p4', 24, 30, SHELL.w, 30, P), end: { x: SHELL.w * G - p, z: 30 * G } },
+    { ...wall('p5', 30, 30, 30, SHELL.d, P), end: { x: 30 * G, z: SHELL.d * G - p } },
+  ]
+}
+
+const measure = (walls: Wall[]) => {
+  const rooms = detectRoomsUncached(walls)
+  return { count: rooms.length, area: rooms.reduce((s, r) => s + r.area, 0) }
+}
+
+const angleOf = (w: Wall) =>
+  Math.atan2(w.end.z - w.start.z, w.end.x - w.start.x)
+
+describe('★ repair — the diagnostic fixtures resolve afterwards', () => {
+  it('★ D · partitions drawn to the wall FACE (100 mm)', () => {
+    const broken = plan(0.1)
+    expect(measure(broken)).toEqual({ count: 1, area: expect.closeTo(FULL_AREA, 6) })
+
+    const fixed = measure(weldJoints(broken))
+    expect(fixed.count).toBe(5)
+    expect(fixed.area).toBeCloseTo(FULL_AREA, 6)
+  })
+
+  it('★ B · partitions one grid cell short (152.4 mm)', () => {
+    const broken = plan(G)
+    expect(measure(broken).count).toBe(1)
+
+    const fixed = measure(weldJoints(plan(G)))
+    expect(fixed.count).toBe(5)
+    expect(fixed.area).toBeCloseTo(FULL_AREA, 6)
+  })
+
+  it('★ G · an endpoint left behind by a typed length', () => {
+    // What `setWallLength` did before Session 2, and what already-damaged
+    // documents still carry — Session 2 fixed the future, not the past.
+    const broken = plan(0)
+    broken[0] = { ...broken[0], end: { x: 9.6, z: 0 } }
+    expect(measure(broken)).toEqual({ count: 4, area: expect.closeTo(66.29, 1) })
+
+    const fixed = measure(weldJoints(broken))
+    expect(fixed.count).toBe(5)
+    // NOT the original 80.27 m². The corner is closed at the MIDPOINT of the
+    // two ends, because nothing tells the repair which of them was right — the
+    // shell wall was shortened by a typed length and the wall it left behind
+    // is equally plausible as the survivor. Splitting the difference is the
+    // least-assumptive choice, and it costs 0.3 m² here.
+    //
+    // Asserted as the real number rather than loosened to a band: a band wide
+    // enough to swallow this would also swallow a repair that moved the corner
+    // somewhere else entirely.
+    expect(fixed.area).toBeCloseTo(79.95, 2)
+    expect(fixed.area).toBeLessThan(FULL_AREA)
+  })
+
+  it('★ a plan needing no repair is returned UNCHANGED, by identity', () => {
+    const healthy = plan(0)
+    expect(findLooseJoints(healthy)).toEqual([])
+    // The same array, not an equal one. A new identity would make the store
+    // record an undo step in which nothing changed (§10 rule 10).
+    expect(weldJoints(healthy)).toBe(healthy)
+    expect(measure(healthy)).toEqual({ count: 5, area: expect.closeTo(FULL_AREA, 6) })
+  })
+})
+
+describe('★ repair — the properties it has to have', () => {
+  it('★ is idempotent — welding twice equals welding once', () => {
+    const once = weldJoints(plan(0.1))
+    const twice = weldJoints(once)
+    expect(twice).toBe(once) // nothing left loose, so the same array back
+    expect(measure(twice)).toEqual(measure(once))
+  })
+
+  it('★ is order-independent — a shuffled array welds identically', () => {
+    const walls = plan(0.1)
+    // Reversed and rotated: two different orders, one expected answer. The
+    // union-find clusters and the id tie-break exist for exactly this, and an
+    // unsorted mean would drift here because float addition is not associative.
+    const shuffled = [...walls.slice(4), ...walls.slice(0, 4)].reverse()
+
+    const a = weldJoints(walls)
+    const b = weldJoints(shuffled)
+
+    const key = (list: Wall[]) =>
+      [...list]
+        .sort((x, y) => (x.id < y.id ? -1 : 1))
+        .map((w) => `${w.id}:${w.start.x},${w.start.z}->${w.end.x},${w.end.z}`)
+
+    expect(key(b)).toEqual(key(a))
+    expect(measure(b)).toEqual(measure(a))
+  })
+
+  it('★ never moves an endpoint further than the tolerance allows', () => {
+    const walls = plan(0.1)
+    for (const joint of findLooseJoints(walls)) {
+      const travel = Math.hypot(joint.to.x - joint.at.x, joint.to.z - joint.at.z)
+      // 100 mm here; the extension bound is half the 200 mm shell plus slack.
+      expect(travel).toBeLessThanOrEqual(0.2)
+    }
+  })
+
+  it('★ never rotates a wall — extension runs along its own axis, not to the foot', () => {
+    // An OBLIQUE meeting, and that is the whole point of this fixture. The
+    // first version of this test used only the rectilinear plan, where every
+    // partition meets its target at 90° and the perpendicular foot IS the axis
+    // intersection — so swapping one for the other passed all fifteen tests.
+    // At 45° the two answers differ, and only then does the assertion bite.
+    const oblique: Wall[] = [
+      // A long wall along z = 0.
+      { ...wall('shell', 0, 0, 0, 0, 0.2), start: { x: 0, z: 0 }, end: { x: 6, z: 0 } },
+      // A diagonal running up-right, stopping 100 mm short of it.
+      {
+        ...wall('diag', 0, 0, 0, 0, 0.1),
+        start: { x: 3.1, z: 0.1 },
+        end: { x: 5, z: 2 },
+      },
+    ]
+
+    const before = angleOf(oblique[1])
+    const welded = weldJoints(oblique)
+    const diag = welded.find((w) => w.id === 'diag')!
+
+    // Bearing preserved to nine places: the endpoint slid ALONG the wall's own
+    // line to meet the shell's centreline.
+    expect(angleOf(diag)).toBeCloseTo(before, 9)
+    // …and it genuinely moved, so this is not passing by doing nothing.
+    expect(diag.start).not.toEqual(oblique[1].start)
+    expect(diag.start.z).toBeCloseTo(0, 9)
+    // The perpendicular foot would have been x = 3.1; the axis intersection is
+    // x = 3.0. Asserting the number is what makes the two distinguishable.
+    expect(diag.start.x).toBeCloseTo(3.0, 9)
+
+    // And the rectilinear plan keeps every bearing too.
+    const rect = plan(0.1)
+    const rectWelded = weldJoints(rect)
+    for (let i = 0; i < rect.length; i++) {
+      expect(angleOf(rectWelded[i])).toBeCloseTo(angleOf(rect[i]), 9)
+    }
+  })
+
+  it('leaves walls further apart than the tolerance alone', () => {
+    // Two ends 300 mm apart are not a joint at any tolerance this offers.
+    const far: Wall[] = [
+      wall('a', 0, 0, 10, 0, 0.1),
+      { ...wall('b', 0, 0, 0, 10, 0.1), start: { x: 10 * G + 0.3, z: 0 } },
+    ]
+    expect(findLooseJoints(far)).toEqual([])
+    expect(weldJoints(far)).toBe(far)
+  })
+
+  it('★ no merge ever moves an endpoint further than it promised', () => {
+    // Transitive chaining can build a cluster far wider than any single pair.
+    // Six ends stepping across at 150 mm each chain into a 750 mm run; merging
+    // that would haul the outermost 375 mm, which nothing told the user could
+    // happen. The whole cluster is refused instead.
+    const step = REPAIR_EXTEND * 0.95
+    const chain: Wall[] = Array.from({ length: 6 }, (_, i) => ({
+      ...wall(`w${i}`, 0, 0, 0, 10, 0.1),
+      // Alternating bearings, so every adjacent pair is angled and therefore
+      // eligible for the wider reach — which is what makes the chain long.
+      start: { x: 1 + step * i, z: 0 },
+      end: { x: 1 + step * i + (i % 2 === 0 ? 3 : 0), z: i % 2 === 0 ? 0 : 3 },
+    }))
+
+    for (const joint of findLooseJoints(chain)) {
+      const travel = Math.hypot(joint.to.x - joint.at.x, joint.to.z - joint.at.z)
+      expect(travel).toBeLessThanOrEqual(REPAIR_EXTEND)
+    }
+  })
+
+  it('leaves two near-PARALLEL ends alone at a distance a corner would close', () => {
+    // 120 mm apart. Angled walls that close would be a corner; parallel ones
+    // are as likely a duct shaft or a cavity, so the tighter tolerance holds
+    // and nothing moves. This is the asymmetry `mergeReach` exists for.
+    const parallel: Wall[] = [
+      { ...wall('a', 0, 0, 0, 0, 0.1), start: { x: 0, z: 0 }, end: { x: 1, z: 0 } },
+      { ...wall('b', 0, 0, 0, 0, 0.1), start: { x: 1.12, z: 0 }, end: { x: 2, z: 0 } },
+    ]
+    expect(findLooseJoints(parallel).filter((j) => j.kind === 'merge')).toEqual([])
+
+    // …while the same gap between walls that meet at 90° IS closed.
+    const corner: Wall[] = [
+      { ...wall('a', 0, 0, 0, 0, 0.1), start: { x: 0, z: 0 }, end: { x: 1, z: 0 } },
+      { ...wall('b', 0, 0, 0, 0, 0.1), start: { x: 1.12, z: 0 }, end: { x: 1.12, z: 2 } },
+    ]
+    expect(findLooseJoints(corner).filter((j) => j.kind === 'merge')).toHaveLength(2)
+  })
+
+  it('does not treat the two ends of one wall as a joint', () => {
+    const stub: Wall[] = [{ ...wall('a', 0, 0, 0, 0, 0.1), end: { x: 0.01, z: 0 } }]
+    expect(findLooseJoints(stub)).toEqual([])
+  })
+})
+
+describe('★ repair — the store action', () => {
+  const settle = () => vi.advanceTimersByTime(250)
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    resetStore()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+    resetStore()
+  })
+
+  it('★ is ONE undo step however many endpoints move', () => {
+    useDesignStore.setState({ walls: plan(0.1) })
+    settle()
+    const before = useDesignStore.getState().past.length
+
+    const moved = useDesignStore.getState().repairJoints()
+    settle()
+
+    // Five partitions, so five endpoints — and still one step. Asserted
+    // directly rather than through the recorder's 200 ms window, which would
+    // make undo depend on how fast the machine ran.
+    expect(moved).toBe(5)
+    expect(useDesignStore.getState().past.length).toBe(before + 1)
+  })
+
+  it('★ one undo restores every endpoint it moved', () => {
+    useDesignStore.setState({ walls: plan(0.1) })
+    settle()
+    const original = useDesignStore.getState().walls
+
+    useDesignStore.getState().repairJoints()
+    settle()
+    expect(detectRoomsUncached(useDesignStore.getState().walls)).toHaveLength(5)
+
+    useDesignStore.getState().undo()
+
+    expect(useDesignStore.getState().walls).toEqual(original)
+    expect(detectRoomsUncached(useDesignStore.getState().walls)).toHaveLength(1)
+  })
+
+  it('reports zero and records nothing when there is nothing to repair', () => {
+    useDesignStore.setState({ walls: plan(0) })
+    settle()
+    const before = useDesignStore.getState().past.length
+
+    expect(useDesignStore.getState().repairJoints()).toBe(0)
+    settle()
+
+    // The count is what lets the status bar say "Nothing to connect" instead
+    // of appearing to have done nothing.
+    expect(useDesignStore.getState().past.length).toBe(before)
+  })
+})

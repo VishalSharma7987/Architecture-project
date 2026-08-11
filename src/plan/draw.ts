@@ -14,6 +14,7 @@ import { getRoomType, roomDisplayName } from '../rooms/catalog'
 import { selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
 import { SELECTION } from '../scene/config'
 import { doorSwing, planBounds, pointAlongWall } from '../scene/wallGeometry'
+import type { LooseJoint } from './repairJoints'
 import {
   buildableRect,
   frontEdge,
@@ -90,6 +91,9 @@ const COLORS = {
   // it is the one thing on this plan allowed to shout.
   violation: '#dc2626',
   violationGlow: 'rgba(220, 38, 38, 0.3)',
+  // A wall end that looks joined and is not. Amber, not the setback red: it
+  // is a mistake in the drawing rather than a wall over a legal line.
+  looseJoint: '#d97706',
   // Stairs are structure rather than contents, so they take the wall's ink
   // family instead of the furniture grey — but lighter, so treads stay
   // countable against it.
@@ -112,6 +116,9 @@ const MIN_GRID_SPACING_PX = 7
  * drawing telling a lie the model does not.
  */
 const OPEN_SPACE_DASH = [6, 4]
+
+/** Ring drawn round an unjoined wall end, in screen pixels. */
+const LOOSE_JOINT_RADIUS_PX = 7
 
 /**
  * Dimension-line tuning, all in screen pixels so annotation keeps the same
@@ -292,6 +299,8 @@ export type PlanScene = {
   showDimensions?: boolean
   /** The last placed point, when a wall chain is in progress. */
   anchor: Point | null
+  /** Wall ends that look joined and are not. Absent reads as none. */
+  looseJoints?: LooseJoint[] | null
   /** The corner an open-space outline is being dragged from, if any. */
   spaceCorner?: Point | null
   /** Snapped cursor position, or null when the pointer is off-canvas. */
@@ -340,6 +349,10 @@ export function drawPlan(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   // Also over the walls: the selection band hugs the room's outline, which is
   // the wall centreline, so anything drawn under a wall is drawn invisibly.
   drawRoomCaptions(ctx, scene)
+  // Over the walls, and deliberately, exactly like the setback warning: this
+  // is the defect that decides whether the areas on this drawing are real, and
+  // a warning you have to open a panel to find is a warning that gets missed.
+  drawLooseJoints(ctx, scene)
   drawDraft(ctx, scene)
   drawSpaceDraft(ctx, scene)
   if (scene.showCursor) drawCursor(ctx, scene)
@@ -1697,6 +1710,46 @@ function drawSpaceDraft(ctx: CanvasRenderingContext2D, scene: PlanScene) {
       (a.y + b.y) / 2,
     )
   }
+}
+
+/**
+ * Wall ends that look joined and are not, ringed where they sit.
+ *
+ * The status bar counts these and offers to close them; this is what makes
+ * that offer legible rather than blind. Each ring is drawn at the endpoint,
+ * with a hairline to where connecting would move it — so the user can see
+ * exactly what the repair will do before agreeing to it.
+ *
+ * Amber rather than the setback red: an unjoined end is a mistake in the
+ * drawing, not a wall over a legal line.
+ */
+function drawLooseJoints(ctx: CanvasRenderingContext2D, scene: PlanScene) {
+  const joints = scene.looseJoints
+  if (!joints || joints.length === 0) return
+
+  const { width, height, viewport: vp } = scene
+
+  ctx.save()
+  for (const joint of joints) {
+    const from = worldToScreen(joint.at, vp, width, height)
+    const to = worldToScreen(joint.to, vp, width, height)
+
+    ctx.beginPath()
+    ctx.strokeStyle = COLORS.looseJoint
+    ctx.lineWidth = 1.25
+    ctx.setLineDash([3, 3])
+    ctx.moveTo(from.x, from.y)
+    ctx.lineTo(to.x, to.y)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    ctx.beginPath()
+    ctx.strokeStyle = COLORS.looseJoint
+    ctx.lineWidth = 2
+    ctx.arc(from.x, from.y, LOOSE_JOINT_RADIUS_PX, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+  ctx.restore()
 }
 
 function drawCursor(ctx: CanvasRenderingContext2D, scene: PlanScene) {

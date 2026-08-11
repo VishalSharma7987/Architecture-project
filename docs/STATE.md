@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **Session 2 — COMPLETE.** The model no longer breaks its own wall joins |
-| Before that | **B25** — unenclosed spaces; **B24** — marks + schedule; **B23** — `'cased'`; **B22/B21** — the door swing |
-| Next task | **B9** (drafting/snapping) — the largest single gap versus AutoCAD |
+| Last completed task | **Session 3a — COMPLETE.** User-invoked joint repair — a plan can be told to connect what looks connected |
+| Before that | **Session 2** — `setWallLength` stopped detaching joins; **B25** — unenclosed spaces; **B24** — marks + schedule |
+| Next task | **Session 3b** — wire CV and AI ingest to the same weld (open question 27), or **B9** (drafting/snapping) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after Session 2, at `30f1d37`+:
+Verified after Session 3a, at `9f2f134`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **541 passing / 541** · 34 files / 34 |
-| `npm run build` | **pass** (exit 0), 1.52 s |
+| `npm test` | **556 passing / 556** · 35 files / 35 |
+| `npm run build` | **pass** (exit 0), 721 ms |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -424,6 +424,60 @@ and `provenance.test.ts`.
 **The grep is not sufficient on its own** — it passed while `planSheet.ts` had
 the call but not the import, and `tsc` is what caught that. The two together
 are the check; neither alone is.
+
+### SD24 — repair is USER-INVOKED, and three tolerances answer three questions
+
+Welding on load was rejected. `parseDesign` runs on **autosave restore**, not
+only on import, so automatic welding would rewrite a user's own document every
+time they opened it — invisibly, with no undo step (**L4**), on data that is
+authored rather than detected (**L2**). §3 also protects `parseDesign` as the
+*validator*; making it move valid, finite coordinates is a category change.
+
+The repair is a store action the user invokes, and that reaches every damaged
+plan — imported, autosave-restored, hand-drawn, or broken by the old
+`setWallLength` — where a parse-time weld would have reached only imports.
+
+**Three tolerances, and they are not interchangeable:**
+
+| | value | question it answers |
+|---|---|---|
+| `JOIN_TOLERANCE` | 15 mm | "is this the same point?" — float-noise guard (SD22) |
+| `REPAIR_MERGE` | 50 mm | "are these two ends one corner?" — **near-parallel walls only** |
+| `REPAIR_EXTEND` | 160 mm | angled ends, and endpoint-onto-wall. Covers one ft-in grid cell (152.4 mm) |
+
+**The asymmetry is the design.** Two ends 150 mm apart on *parallel* walls may
+be a duct shaft or a cavity — real walls with a real gap — so the tight bound
+holds. On walls that *cross at an angle* they can only be a corner: nobody
+builds two walls meeting at 90° with a 150 mm gap between their ends. That is
+what closes a shell corner blown open by a typed length while leaving two
+parallel partitions alone.
+
+`extendReach` additionally scales with the target's thickness, so an endpoint
+inside a wall's own drawn body always counts — that is the honest reading of
+"looks connected", and it adapts to the drawing's scale instead of assuming one.
+
+**Not adjustable.** A tolerance slider would be a supported way to merge two
+real rooms with no feedback that you had. Preview and report instead: the
+canvas rings every loose end and draws where it would move to, following
+`drawPlotViolations`' precedent that a defect deciding whether the drawing is
+right belongs *on* the drawing.
+
+**It lives in the status bar**, not the toolbar — the bar already reports
+derived model state, and it sits beside the floor-area number that these
+defects are the reason for. The toolbar is seven tools wide and its own
+comments record an overflow that made Blueprint unreachable.
+
+### SD25 — extension runs along the wall's own axis, never to the perpendicular foot
+
+Moving a loose endpoint to the nearest point on the target wall would **rotate**
+the wall. Moving it along its own line to where that line crosses the target's
+preserves the bearing exactly, which is what a drafter means by "extend".
+
+The difference is invisible on a rectilinear plan — at 90° the perpendicular
+foot and the axis intersection are the same point. Substituting one for the
+other passed **all fifteen tests** in this suite until an oblique fixture was
+added; it then showed a 1.47° rotation. **A right-angled fixture cannot test
+this property**, and that is now recorded in the test itself.
 
 ### SD22 — a weld tolerance is a noise guard, never a way to close a visible gap
 
@@ -1318,6 +1372,16 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not hand-write the swing icon's paths.** It calls `doorSwing` on a
   synthetic east-running wall precisely so it cannot drift from the renderers
   (SD14). Four literal SVG paths would be a fifth implementation of the rule.
+- **Do not weld coordinates inside `parseDesign`** (SD24). It runs on autosave
+  restore, so it would rewrite the user's own document every time they opened
+  it, invisibly and with no undo step. The repair is user-invoked for a reason.
+- **Do not collapse the three tolerances into one** (SD24). `JOIN_TOLERANCE`,
+  `REPAIR_MERGE` and `REPAIR_EXTEND` answer different questions, and the
+  parallel-vs-angled asymmetry in `mergeReach` is what keeps a duct shaft from
+  being fused into one wall.
+- **Do not move a loose endpoint to the perpendicular foot** (SD25). It rotates
+  the wall. And **do not test that property on a rectilinear fixture** — at 90°
+  the foot and the axis intersection coincide, and the substitution passes.
 - **Do not raise `JOIN_TOLERANCE` to close a gap you can see** (SD22). 15 mm is
   a float-noise guard bounded by the 20 mm minimum wall thickness. A gap you
   can see is a modelling problem — fix it where the coordinates are written.

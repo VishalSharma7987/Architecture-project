@@ -8,6 +8,7 @@ import {
 import type { FurnitureType } from '../furniture/catalog'
 import { provenance } from './provenance'
 import { samePlacePoint } from '../units/tolerance'
+import { findLooseJoints, weldJoints } from '../plan/repairJoints'
 
 /**
  * A point on the floor plane, in metres.
@@ -963,6 +964,8 @@ type DesignState = {
    * moving the start would detach this wall from the one before it.
    */
   setWallLength: (id: string, length: number) => boolean
+  /** Closes joints that look connected but are not. Returns how many moved. */
+  repairJoints: () => number
   removeWall: (id: string) => void
   clearWalls: () => void
   /**
@@ -1930,6 +1933,26 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       }),
     }))
     return true
+  },
+
+  /**
+   * Closes every joint that looks connected and is not. Returns how many
+   * endpoints moved, so the caller can say "nothing to connect" rather than
+   * appear to have done nothing.
+   */
+  repairJoints: () => {
+    const walls = get().walls
+    const welded = weldJoints(walls)
+    // Identity, not length: `weldJoints` hands back the ORIGINAL array when
+    // there is nothing to do, which is what stops a no-op repair recording an
+    // undo step the user cannot see (§10 rule 10).
+    if (welded === walls) return 0
+
+    const moved = findLooseJoints(walls).length
+    // ONE `set`, so every endpoint that moves is ONE undo step — not one per
+    // wall, and not several inside the recorder's coalescing window.
+    set({ walls: welded })
+    return moved
   },
 
   removeWall: (id) =>

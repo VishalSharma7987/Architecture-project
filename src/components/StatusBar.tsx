@@ -1,5 +1,6 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { totalFloorArea } from '../plan/rooms'
+import { findLooseJoints } from '../plan/repairJoints'
 import { useDesignStore } from '../store/useDesignStore'
 import { formatArea } from '../units/length'
 
@@ -54,11 +55,74 @@ export function StatusBar() {
 
       <div className="flex items-center gap-3">
         <AutosaveIndicator />
+        <LooseJointsIndicator />
         <span className="tabular-nums" data-testid="status-wall-count">
           {wallCount} {wallCount === 1 ? 'wall' : 'walls'}
         </span>
       </div>
     </footer>
+  )
+}
+
+/**
+ * Wall joints that look connected and are not, with the offer to close them.
+ *
+ * ── Why it lives HERE and not in the toolbar ──
+ * The status bar already reports derived model state — the floor area and the
+ * wall count — and an unconnected joint is the same class of fact. It also
+ * sits inches from the number it explains: a plan reading 176 sq ft when it
+ * should read 864 does so BECAUSE of these, and putting cause beside symptom
+ * is most of the explanation. The toolbar is seven tools wide and its own
+ * comments record an overflow that made Blueprint unreachable.
+ *
+ * It renders nothing when there is nothing to repair, so a healthy plan pays
+ * no attention for it.
+ */
+function LooseJointsIndicator() {
+  const walls = useDesignStore((s) => s.walls)
+  const readOnly = useDesignStore((s) => s.readOnly)
+  const repairJoints = useDesignStore((s) => s.repairJoints)
+  const [outcome, setOutcome] = useState<string | null>(null)
+
+  // Same call the canvas paints from, so the count and the markers can never
+  // disagree about what is loose.
+  const loose = useMemo(() => findLooseJoints(walls), [walls])
+
+  // A new edit supersedes whatever the last repair reported.
+  useEffect(() => setOutcome(null), [walls])
+
+  if (readOnly) return null
+  if (loose.length === 0) {
+    return outcome ? (
+      <span role="status" className="text-slate-400" data-testid="joints-outcome">
+        {outcome}
+      </span>
+    ) : null
+  }
+
+  const run = () => {
+    const moved = repairJoints()
+    // Never silently nothing: a button that appears to do nothing is worse
+    // than no button. The zero case is reachable if the walls changed between
+    // this render and the click.
+    setOutcome(moved > 0 ? `Connected ${moved}.` : 'Nothing to connect.')
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={run}
+      data-testid="repair-joints"
+      title={
+        `${loose.length} wall end${loose.length === 1 ? '' : 's'} sit close to ` +
+        'another wall without being joined to it, so the spaces they should ' +
+        'enclose are not counted. They are ringed on the plan. Connecting ' +
+        'them moves only those ends, as one undo step.'
+      }
+      className="rounded bg-amber-50 px-2 py-0.5 font-medium text-amber-700 transition-colors hover:bg-amber-100"
+    >
+      {loose.length} unjoined {loose.length === 1 ? 'end' : 'ends'} — connect
+    </button>
   )
 }
 
