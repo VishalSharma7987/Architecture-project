@@ -40,6 +40,14 @@ export type DetectOptions = {
   junctionTolerancePx?: number
   /** Drop walls that meet no other wall. Turn off for freestanding plans. */
   requireJunction?: boolean
+  /**
+   * Raster pixels per SOURCE pixel, from `RasterResult.scale`. Defaults to 1.
+   *
+   * Pass it whenever the image has been upscaled, or the thresholds below
+   * will be sized against pixels that were manufactured rather than measured
+   * — see `sizedDefaults`.
+   */
+  rasterScale?: number
 }
 
 /**
@@ -50,6 +58,8 @@ export type DetectOptions = {
  * offers is how thick its own walls are.
  */
 export const DEFAULT_DETECT_OPTIONS = {
+  /** 1 unless the caller upscaled the image — see `sizedDefaults`. */
+  rasterScale: 1,
   minLengthPx: 40,
   minThicknessPx: 3,
   maxThicknessPx: 120,
@@ -81,14 +91,37 @@ const REFERENCE_LONGEST_PX = 2000
  * The floors are not scaled away entirely: below about two pixels there is no
  * band left to measure, however small the drawing.
  */
-function sizedDefaults(image: RasterLike): typeof DEFAULT_DETECT_OPTIONS {
+function sizedDefaults(
+  image: RasterLike,
+  /**
+   * Raster pixels per SOURCE pixel — `RasterResult.scale`, and 1 when the
+   * caller read the image as delivered.
+   *
+   * Load-bearing. `MIN_RASTER_DIMENSION` upscales anything under 1400 px with
+   * nearest neighbour, which manufactures pixels without adding information —
+   * and the scaling below then measures itself against the MANUFACTURED
+   * dimension. On a real 400 px plan that made `minThicknessPx` 2.10 upscaled
+   * pixels, which is **0.60 pixels of the actual evidence**, and the detector
+   * duly reported walls 23.6 mm thick. Without this argument the two
+   * mechanisms that exist to help small drawings are what let sub-pixel noise
+   * through. See `samples/real-plan-cv-untitled.json`.
+   */
+  rasterScale = 1,
+): typeof DEFAULT_DETECT_OPTIONS {
   const longest = Math.max(image.width, image.height)
   const k = longest / REFERENCE_LONGEST_PX
+  // No threshold may resolve below one pixel of the ORIGINAL image. Upscaling
+  // can make a band look thicker; it cannot make it better evidence.
+  const sourceFloor = Math.max(1, rasterScale)
 
   return {
     ...DEFAULT_DETECT_OPTIONS,
     minLengthPx: Math.max(12, DEFAULT_DETECT_OPTIONS.minLengthPx * k),
-    minThicknessPx: Math.max(2, DEFAULT_DETECT_OPTIONS.minThicknessPx * k),
+    minThicknessPx: Math.max(
+      2,
+      sourceFloor,
+      DEFAULT_DETECT_OPTIONS.minThicknessPx * k,
+    ),
     maxThicknessPx: Math.max(24, DEFAULT_DETECT_OPTIONS.maxThicknessPx * k),
     junctionTolerancePx: Math.max(
       2,
@@ -762,8 +795,9 @@ export function detectWallSegments(
   image: RasterLike,
   options: DetectOptions = {},
 ): PixelSegment[] {
-  // Defaults sized to this image; anything the caller passes still wins.
-  const opts = { ...sizedDefaults(image), ...options }
+  // Defaults sized to this image AND to how much of it is real evidence;
+  // anything the caller passes still wins.
+  const opts = { ...sizedDefaults(image, options.rasterScale), ...options }
   const { width, height } = image
   if (width < 2 || height < 2) return []
 
