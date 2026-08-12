@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "bench:rooms": "vitest run --config vitest.bench.config.ts --disable-console-intercept"
+    "bench:rooms": "vitest run --config vitest.bench.config.ts --disable-console-intercept",
+    "corpus": "jiti scripts/corpus.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",

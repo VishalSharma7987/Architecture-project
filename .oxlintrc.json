@@ -42,6 +42,10 @@
     {
       "files": ["server/**/*.ts", "vite.config.ts"],
       "rules": { "no-console": "off" }
+    },
+    {
+      "files": ["scripts/**/*.ts"],
+      "rules": { "no-console": "off" }
     }
   ]
 }

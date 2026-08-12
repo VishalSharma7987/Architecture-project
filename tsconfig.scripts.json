@@ -1,0 +1,15 @@
+{
+  // Dev tooling. Same rules as the app so the harness cannot drift from the
+  // code it measures, plus node built-ins — and kept OUT of
+  // `tsconfig.app.json` so nothing here can ever reach the bundle.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.scripts.tsbuildinfo",
+    "types": ["node", "vite/client"],
+    "noEmit": true
+  },
+  "exclude": [],
+  // `scripts` only: `src` is already a project of its own, and including it
+  // here would typecheck the whole app a second time under different types.
+  "include": ["scripts"]
+}

@@ -1231,6 +1231,23 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 32. GATE 4 IS A TESTED MODULE THAT NOTHING CALLS `OPEN`
+
+`maskIsCredible` and `rankCandidates` ship in
+[`plausibility.ts`](../src/blueprint/plausibility.ts) with tests against ADR
+0002's measured case — and **no production code imports them.**
+`detectWalls.ts` does not reference the module at all; only `buildStructure`,
+`BlueprintPanel` and `App` do, and those use gates 1a/1b/2/3A/3B.
+
+So the ink-fraction ceiling and the junction ratio protect nothing today. B5b's
+commit message described Gate 4's design accurately and the module implements
+it; the wiring into the candidate loop was never done.
+
+Wiring it means touching `detectWallSegments`'s mask selection, which is §3
+territory and wants its own session with the ordering held. **Until then the
+corpus harness reports both fields as `not-wired`, not as blank** — "nothing
+measures this" is a different fact from "we did not measure it".
+
 ### 27. THREE INGEST PATHS STILL ADMIT UNWELDED COORDINATES `OPEN` · next
 
 Session 2's inventory found `setWallLength` and fixed it. Three paths still
@@ -1321,6 +1338,40 @@ wrong thing.
 >
 > **Fifty drawings would have found all of this in week one.** That is the
 > argument for sourcing them, and it no longer rests on principle.
+
+#### Where intake stands · 2026-08-12
+
+| | |
+|---|---|
+| **Real images measured** | **2** — `docs/testing/corpus-baseline.json` |
+| Both | **refused at `raster-size`**, and both correctly: 400 px and 557 px against a 600 px floor |
+| Intake request | written — [`corpus-request.md`](corpus-request.md) — **and unsent** |
+| Harness | `npm run corpus <dir>` · headless · one row per drawing |
+| Thresholds | **DERIVED, not validated.** No accuracy claim is permitted from 2 images (§10 rule 6) |
+
+**What the baseline actually shows, and what it does not.** Two drawings were
+refused before a pixel was decoded. That confirms Gate 1a *fires*; it says
+nothing about whether it fires on the right things, because **no image has yet
+passed it.** A gate with a 100% refusal rate over two samples is
+indistinguishable from a gate that refuses everything.
+
+The `corpus/` directory is gitignored. Only the measured rows and this entry
+are committed.
+
+#### What each intake milestone would let us claim
+
+| Drawings | Claimable |
+|---|---|
+| **2** *(today)* | The gates run headless and refuse two real images for stated, checkable reasons. **Nothing about accuracy, and nothing about false refusals.** |
+| **10** | Whether the thresholds refuse drawings they should accept — the first real test of Gate 1a's 600 px and Gate 1b's 40/80 px/m, since a normal delivered plan should pass. One practice's house style, so still not representative. |
+| **20** | Per-tag signal on the two or three axes that actually vary in a real sample — wall rendering and sheet polarity. Enough to say *"hatched walls fail"* with a number behind it. |
+| **50** | The published per-tag pass table `corpus.md` specifies, with per-tag floors. The point at which a detection-accuracy claim is supportable at all, and the point Stage 1 can exit. |
+
+**Deliberately not built yet:** the validation matrix, the ground-truth
+tracing protocol, the false-positive/negative review process, and the
+acceptance criteria. All four are designed *against* real data, and designing
+them against two refused images means rewriting them the week the drawings
+arrive.
 
 
 **What:** ≥50 real architect drawings, tagged on six axes (wall rendering, sheet and
