@@ -7,6 +7,7 @@ import { InspectorPanel } from '../components/InspectorPanel'
 import { parseDesign, serializeDesign } from '../persistence/schema'
 import { wallColliders } from '../scene/collision'
 import { openingBoxes, wallPieces } from '../scene/wallGeometry'
+import { recorder, type Call } from '../test/canvasRecorder'
 import { resetStore } from '../test/fixtures'
 import {
   OPENING_DEFAULTS,
@@ -32,57 +33,6 @@ import {
  * test that asserts an absence has to prove the code ran at all, or it passes
  * for the wrong reason. Every one of them is paired with a control.
  */
-
-/* ─── a recording 2D context ────────────────────────────────────────────── */
-
-type Call = { op: string; args: number[] }
-
-/**
- * Enough of `CanvasRenderingContext2D` for `drawPlan` and `renderPlanSheet`,
- * recording the path operations. jsdom implements no canvas at all and the
- * project takes no canvas dependency, which is fine here: what is under test
- * is which primitives are emitted, not how they rasterise.
- */
-function recorder() {
-  const calls: Call[] = []
-  const record =
-    (op: string) =>
-    (...args: unknown[]) => {
-      calls.push({ op, args: args.filter((a) => typeof a === 'number') })
-    }
-
-  const ctx = {
-    calls,
-    canvas: { width: 800, height: 600 },
-    save: record('save'),
-    restore: record('restore'),
-    beginPath: record('beginPath'),
-    closePath: record('closePath'),
-    moveTo: record('moveTo'),
-    lineTo: record('lineTo'),
-    arc: record('arc'),
-    rect: record('rect'),
-    fillRect: record('fillRect'),
-    strokeRect: record('strokeRect'),
-    ellipse: record('ellipse'),
-    arcTo: record('arcTo'),
-    quadraticCurveTo: record('quadraticCurveTo'),
-    bezierCurveTo: record('bezierCurveTo'),
-    stroke: record('stroke'),
-    fill: record('fill'),
-    clip: record('clip'),
-    translate: record('translate'),
-    rotate: record('rotate'),
-    scale: record('scale'),
-    setTransform: record('setTransform'),
-    setLineDash: record('setLineDash'),
-    drawImage: record('drawImage'),
-    fillText: record('fillText'),
-    strokeText: record('strokeText'),
-    measureText: () => ({ width: 8 }),
-  }
-  return ctx as unknown as CanvasRenderingContext2D & { calls: Call[] }
-}
 
 /* ─── fixtures ──────────────────────────────────────────────────────────── */
 

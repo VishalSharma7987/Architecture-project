@@ -1084,22 +1084,41 @@ Recorded as findings, **not as scheduled work**. Each was verified against the
 code and against four real residential floor plans used as the reference set.
 Nothing here is committed to a stage until it is scoped as its own task.
 
-### 18. THE THREE-RENDERER FINDING `OPEN` · **the headline**
+### 18. THE THREE-RENDERER FINDING `PARTLY RESOLVED 2026-08-12 by B26`
 
 [`plan/draw.ts`](../src/plan/draw.ts), [`plan/planSheet.ts`](../src/plan/planSheet.ts)
-and `scene/*` have drifted to **three different levels of architectural
+and `scene/*` had drifted to **three different levels of architectural
 fidelity, with no shared code**.
 
 | | canvas `plan/draw.ts` | sheet `plan/planSheet.ts` | 3D `scene/*` |
 |---|---|---|---|
-| Wall | stroked centreline | **poché quad with real faces** | box per run |
-| Corners | vertex dot masks the overlap | **half-thickness pad at shared vertices** | interpenetrating boxes |
-| Window | one centre line | **two lines inset from the faces** | void only |
+| Wall | ~~stroked centreline~~ → **poché quad, shared** | **poché quad with real faces** | box per run |
+| Corners | ~~vertex dot masks the overlap~~ → **the same pad, shared** | **half-thickness pad at shared vertices** | interpenetrating boxes |
+| Window | ~~one centre line~~ → **two lines inset from the faces** | **two lines inset from the faces** | void only |
 | Overall dimensions | none | **bottom + left, set out past door swings** | none |
 | Room caption | name — area | name — area | **name — area — W×L** |
 
-**The sheet is the most architecturally correct; the canvas is the least.** The
-user sees the canvas while drawing and the sheet only after exporting a PDF.
+**The sheet is the most architecturally correct; the canvas WAS the least.** The
+user saw the canvas while drawing and the sheet only after exporting a PDF.
+
+**B26 closed the top three rows for the 2D pair.** The geometry now lives once,
+in [`plan/wallBody.ts`](../src/plan/wallBody.ts), in WORLD metres — each renderer applies its own
+projection, which is what made one implementation possible at all. The sheet's
+output is pinned call-for-call against a golden captured before the extraction:
+205 calls over six walls, an oblique one, two windows and two doors, byte-identical.
+
+**Still open on this finding:** overall dimensions and the room caption on the
+canvas, and every row for `scene/*` (finding 43).
+
+**What B26 did NOT do, and what looking revealed about it.** T-junctions get no
+pad, because `vertexKey` is exact-coordinate matching and a wall ending mid-span
+of another shares no vertex. That was expected to look wrong and **it does not**
+— rendered at 260 px/m, a perpendicular T reads perfectly closed whether the
+stem ends on the through-wall's centreline (its body buries into the through
+wall) or at its face (the bodies abut exactly). **The T-junction gap is
+therefore narrower than finding 20 states**: it is oblique meetings and 3-way/
+4-way nodes, not perpendicular Ts, and the session that takes it should be
+scoped against that rather than against the general case.
 
 §7 Stage 4 asks *"`plan/draw.ts` and `plan/planSheet.ts` are already two
 independent renderers sharing no code. Decide whether a third is acceptable or
@@ -1118,15 +1137,34 @@ Closes reference items 2, 3, 5, 10 and 12 **on the canvas at once**. §3's
 *extend rather than replace* is satisfied by construction — the implementation
 already exists and ships; it is reached by one consumer instead of three.
 
-### 20. THE T-JUNCTION GAP `OPEN`
+### 20. THE T-JUNCTION GAP `OPEN` · **narrowed by B26, and smaller than this said**
 
-`vertexKey` is **exact-coordinate matching**, so the sheet's corner pad only
-fires when two walls share an endpoint precisely. A wall ending **mid-span** of
-another shares no vertex, gets no pad and gets no join — and that is how every
-interior partition in every reference drawing meets the shell.
+`vertexKey` is **exact-coordinate matching**, so the corner pad only fires when
+two walls share an endpoint precisely. A wall ending **mid-span** of another
+shares no vertex and gets no pad — and that is how every interior partition in
+every reference drawing meets the shell.
 
 **Grid snap has been hiding it.** Endpoint sharing is common because drawing
 snaps to `GRID_STEP`, so the L-joins close and the T-joins quietly do not.
+
+> **B26 rendered this and it does not look wrong.** At 260 px/m a perpendicular
+> T reads perfectly closed in both terminations a user can produce:
+>
+> - **stem ends on the through-wall's CENTRELINE** — its body runs half the
+>   through-wall's thickness past the inner face and is buried in it. Overlap,
+>   not notch.
+> - **stem ends at the through-wall's FACE** — the two bodies abut exactly along
+>   that face. No gap to fill.
+>
+> **A perpendicular T needs no pad at all.** The pad exists because an L leaves
+> a square of paper between two terminating walls; a T has a through-wall whose
+> own body already covers that region. The finding as written above generalises
+> from the L and is wrong about the common case.
+>
+> **What IS still open**, and what the T-junction session should be scoped to:
+> oblique meetings, where a square pad leaves a notch of its own; 3-way and
+> 4-way nodes; and a stem ending SHORT of the face, which is a modelling error
+> `plan/repairJoints.ts` owns rather than a rendering one.
 
 ### 20b. THE SHEET RESERVES SPACE FOR A SWING IT DOES NOT DRAW `RESOLVED 2026-08-10 by B21`
 
@@ -1230,6 +1268,36 @@ it is a redirect to manual calibration (rank 1, two picks and a typed length);
 for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
+
+### 43. COULD `scene/*` CONSUME `wallBody.ts` TOO? `OPEN` · argued, not built
+
+B26's brief asked for the argument and no code. The argument is **yes for the
+footprint, no for the solid**, and the split is worth stating precisely because
+"share the wall geometry with 3D" sounds like one job and is two.
+
+**What transfers.** `wallBodyQuad` returns four WORLD-space corners in metres.
+An extrusion of that polygon between `y = 0` and `y = wall.height` is exactly
+the wall solid `scene/*` builds today — so the footprint, the half-thickness
+pad, and therefore the CLOSED CORNER all transfer unchanged. 3D currently draws
+interpenetrating boxes whose corners overlap rather than mitre; consuming the
+quad would fix that with no new geometry.
+
+**What does not.** Three things, and each is real work:
+
+| | |
+|---|---|
+| **Openings** | 2D punches a hole in a filled polygon — a paint operation. 3D must SPLIT the run into pieces above, below and beside the void (`wallPieces` already does this). A quad cannot express that; it would have to be subdivided along the wall before extrusion. |
+| **Faces** | A 2D fill needs four corners. A box needs six faces with outward normals and UVs, and the material is applied per face. The quad is the input to that, not a replacement for it. |
+| **The pad's cost is different** | In 2D a pad that overlaps a neighbour is invisible — same ink, one fill over another. In 3D two overlapping solids are Z-fighting waiting to happen, and a pad deliberately creates the overlap. It is fine for opaque walls and wrong the moment anything is transparent or a section cut is added. |
+
+**So the shape to aim for** is that `wallBody.ts` grows a `wallFootprint(wall,
+shared, span?)` returning the padded quad for a SPAN of the wall, and `scene/*`
+calls it once per piece `wallPieces` produces. That is a genuine convergence,
+and it is a session of its own.
+
+**Not started, and deliberately.** B26's scope was the 2D pair, and a change to
+`scene/*` would need its own visual check — which, per B26, now means actually
+looking at it.
 
 ### 42. THE PROPOSED GATE ARCHITECTURE `OPEN` · blocked on one native-resolution drawing
 

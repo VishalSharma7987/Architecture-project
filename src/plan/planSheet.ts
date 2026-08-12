@@ -13,8 +13,8 @@ import {
   doorSwing,
   planBounds,
   pointAlongWall,
-  wallAxis,
 } from '../scene/wallGeometry'
+import { GLAZING_INSET_RATIO, sharedEnds, wallBodyQuad } from './wallBody'
 import { formatArea, formatLength, METRES_PER_FOOT } from '../units/length'
 
 /**
@@ -332,27 +332,6 @@ function drawFurniture(
   }
 }
 
-const vertexKey = (p: Point) =>
-  `${Math.round(p.x * 1000)}:${Math.round(p.z * 1000)}`
-
-/**
- * Endpoints shared by more than one wall. Bodies are mitred out to half their
- * thickness there, which fills the square notch two butting walls would
- * otherwise leave at a corner — without lengthening free-standing ends.
- */
-function sharedEnds(walls: Wall[]): Set<string> {
-  const counts = new Map<string, number>()
-  for (const wall of walls) {
-    for (const p of [wall.start, wall.end]) {
-      const key = vertexKey(p)
-      counts.set(key, (counts.get(key) ?? 0) + 1)
-    }
-  }
-  const shared = new Set<string>()
-  for (const [key, count] of counts) if (count > 1) shared.add(key)
-  return shared
-}
-
 function drawWalls(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
@@ -373,31 +352,25 @@ function drawWalls(
   }
 }
 
-/** The wall as a solid poché body carrying its real thickness. */
+/**
+ * The wall as a solid poché body carrying its real thickness.
+ *
+ * The GEOMETRY moved to `wallBody.ts` in B26 so the canvas could draw the same
+ * shape; what stays here is the projection and the ink. This function's output
+ * is pinned call-for-call by `wallBody.test.tsx` against a golden captured
+ * before the extraction — the sheet is the one renderer that was already
+ * correct, and a silent change to it would be the worst outcome available.
+ */
 function fillWallBody(
   ctx: CanvasRenderingContext2D,
   layout: Layout,
   wall: Wall,
   shared: Set<string>,
 ) {
-  const { length, ux, uz } = wallAxis(wall)
-  if (length <= 0) return
+  const quad = wallBodyQuad(wall, shared)
+  if (!quad) return
 
-  const half = wall.thickness / 2
-  const startPad = shared.has(vertexKey(wall.start)) ? half : 0
-  const endPad = shared.has(vertexKey(wall.end)) ? half : 0
-  const a = pointAlongWall(wall, -startPad)
-  const b = pointAlongWall(wall, length + endPad)
-  // Left-hand normal of the wall direction.
-  const nx = -uz * half
-  const nz = ux * half
-
-  const corners = [
-    toSheet(layout, { x: a.x + nx, z: a.z + nz }),
-    toSheet(layout, { x: b.x + nx, z: b.z + nz }),
-    toSheet(layout, { x: b.x - nx, z: b.z - nz }),
-    toSheet(layout, { x: a.x - nx, z: a.z - nz }),
-  ]
+  const corners = quad.map((p) => toSheet(layout, p))
 
   ctx.beginPath()
   ctx.fillStyle = INK.wall
@@ -504,7 +477,16 @@ function drawOpeningSymbol(
   if (opening.type === 'cased') return
 
   // Glazing: a thin pair of lines set in from the wall faces.
-  const inset = half * 0.45
+  //
+  // B26 gave the canvas the same symbol via `glazingLines`, which computes it
+  // in WORLD metres. This stayed in sheet pixels deliberately. The two are
+  // algebraically identical but not bit-identical — projecting a world-space
+  // offset associates the multiply differently, and the sheet's y moved by
+  // 2 ULPs, 2.8e-14 px on an 842 px page. Invisible, and still a change to the
+  // one renderer that was already correct, so it was not made. The RATIO is
+  // shared; the arithmetic is not. `wallBody.test.tsx` pins the two forms
+  // together to 1e-9 m so they cannot drift apart unnoticed.
+  const inset = half * GLAZING_INSET_RATIO
   ctx.beginPath()
   ctx.strokeStyle = INK.symbol
   ctx.lineWidth = 1 * u

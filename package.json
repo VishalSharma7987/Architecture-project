@@ -15,7 +15,8 @@
     "corpus": "jiti scripts/corpus.ts",
     "corpus:probe": "jiti scripts/probe-gate4.ts",
     "corpus:geometry": "jiti scripts/corpusGeometry.ts",
-    "corpus:resample": "jiti scripts/corpusResample.ts"
+    "corpus:resample": "jiti scripts/corpusResample.ts",
+    "plan:look": "jiti scripts/renderPlan.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",

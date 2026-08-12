@@ -14,6 +14,7 @@ import { getRoomType, roomDisplayName } from '../rooms/catalog'
 import { selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
 import { SELECTION } from '../scene/config'
 import { doorSwing, planBounds, pointAlongWall } from '../scene/wallGeometry'
+import { glazingLines, sharedEnds, wallBodyQuad } from './wallBody'
 import type { LooseJoint } from './repairJoints'
 import {
   buildableRect,
@@ -45,7 +46,10 @@ const COLORS = {
   gridMajor: '#c7cedb',
   axis: '#a3adbe',
   wallFill: '#334155',
-  vertex: '#0f172a',
+  // `vertex` went with the 2.5 px dot B26 deleted. The dot existed only to
+  // mask the square notch two butting walls left at a corner, which the
+  // half-thickness pad now fills — leaving it would have put a blob on top of
+  // a join that is finally correct.
   selected: SELECTION.color2d,
   opening: '#0f172a',
   furnitureFill: 'rgba(148, 163, 184, 0.35)',
@@ -1296,43 +1300,55 @@ function drawGrid(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   ctx.stroke()
 }
 
-/** Stroke width carrying the wall's real thickness, floored so it stays visible. */
+/**
+ * The wall's thickness in screen pixels, floored so it stays visible.
+ *
+ * The floor is a DRAWING-AID, not geometry: at 20 px/m a 115 mm partition is
+ * 2.3 px and at a zoomed-out 5 px/m it is 0.6 px, which would vanish. Openings
+ * are punched to this same width so a punch can never be narrower than the
+ * body it is clearing.
+ */
 const wallStrokeWidth = (wall: Wall, vp: Viewport) =>
   Math.max(2, wall.thickness * vp.scale)
 
+/**
+ * B26 — filled wall bodies, from the same `wallBodyQuad` the PDF sheet uses.
+ *
+ * Until now this stroked a butt-capped centreline and dropped a 2.5 px dot on
+ * every vertex to mask the square notch two butting walls leave at a corner.
+ * The dot is gone: it existed only to hide the overlap the pad now fills, and
+ * leaving it would have put a blob on top of a join that is finally correct.
+ *
+ * The faces are stroked as well as filled — one device covering two needs. A
+ * real plan draws its wall faces, and below about 2 px of projected thickness
+ * the fill alone would disappear at low zoom.
+ */
 function drawWalls(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   const { width, height, viewport: vp, walls, selection } = scene
+  const shared = sharedEnds(walls)
 
   for (const wall of walls) {
-    const selected =
-      selection?.kind === 'wall' && selection.wallId === wall.id
-    const a = worldToScreen(wall.start, vp, width, height)
-    const b = worldToScreen(wall.end, vp, width, height)
+    const quad = wallBodyQuad(wall, shared)
+    if (!quad) continue
+    const selected = selection?.kind === 'wall' && selection.wallId === wall.id
+    const corners = quad.map((p) => worldToScreen(p, vp, width, height))
 
     ctx.beginPath()
+    ctx.moveTo(corners[0].x, corners[0].y)
+    for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y)
+    ctx.closePath()
+
+    ctx.fillStyle = selected ? COLORS.selected : COLORS.wallFill
+    ctx.fill()
     ctx.strokeStyle = selected ? COLORS.selected : COLORS.wallFill
-    ctx.lineWidth = wallStrokeWidth(wall, vp)
-    ctx.lineCap = 'butt'
+    ctx.lineWidth = 1
     ctx.lineJoin = 'miter'
-    ctx.moveTo(a.x, a.y)
-    ctx.lineTo(b.x, b.y)
     ctx.stroke()
   }
 
   for (const wall of walls) {
     for (const opening of wall.openings) {
       drawOpening(ctx, scene, wall, opening)
-    }
-  }
-
-  // Vertices drawn on top of every wall so joins read cleanly.
-  for (const wall of walls) {
-    for (const end of [wall.start, wall.end]) {
-      const p = worldToScreen(end, vp, width, height)
-      ctx.beginPath()
-      ctx.fillStyle = COLORS.vertex
-      ctx.arc(p.x, p.y, 2.5, 0, Math.PI * 2)
-      ctx.fill()
     }
   }
 }
@@ -1406,12 +1422,20 @@ function drawOpening(
     ctx.stroke()
     ctx.restore()
   } else if (opening.type === 'window') {
-    // Glazing line down the middle of the opening.
+    // Glazing: a thin PAIR of lines set in from the wall faces, which is the
+    // standard plan symbol and what the sheet has always drawn. Until B26 this
+    // was a single line down the centre of the opening — indistinguishable
+    // from a wall struck through, and the one place a window did not read as
+    // a window. `glazingLines` returns world metres; the projection is ours.
     ctx.beginPath()
     ctx.strokeStyle = symbolColor
-    ctx.lineWidth = selected ? 3.5 : 2
-    ctx.moveTo(a.x, a.y)
-    ctx.lineTo(b.x, b.y)
+    ctx.lineWidth = selected ? 2 : 1
+    for (const [from, to] of glazingLines(wall, opening)) {
+      const p = worldToScreen(from, vp, width, height)
+      const q = worldToScreen(to, vp, width, height)
+      ctx.moveTo(p.x, p.y)
+      ctx.lineTo(q.x, q.y)
+    }
     ctx.stroke()
   }
   // A cased opening gets NEITHER, and that is the whole symbol: the wall
