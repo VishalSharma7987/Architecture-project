@@ -9,14 +9,35 @@
  * recorder to prove the sheet's output did not move. Two copies of it would
  * have been the same mistake B26 exists to fix, one layer down.
  */
-export type Call = { op: string; args: number[] }
+export type Call = { op: string; args: number[]; text?: string }
 
-export function recorder(): CanvasRenderingContext2D & { calls: Call[] } {
+/**
+ * `text: true` also records the STRING argument of `fillText`/`strokeText`.
+ *
+ * Off by default, and that default is load-bearing: `wallBody.test.tsx` pins
+ * the PDF sheet's whole output call-for-call against a golden captured before
+ * B26's extraction, and adding a key to every recorded call would break that
+ * comparison — which would mean regenerating the golden, which would destroy
+ * the thing it exists to prove.
+ *
+ * It exists because a test that could not see the strings was green while
+ * proving nothing: B29's first field-visibility test passed with the field
+ * switched OFF, since the typed field and the measured readout it replaces are
+ * one `fillText` at the same coordinates and differ only in their text.
+ */
+export function recorder(
+  options: { text?: boolean } = {},
+): CanvasRenderingContext2D & { calls: Call[] } {
   const calls: Call[] = []
   const record =
     (op: string) =>
     (...args: unknown[]) => {
-      calls.push({ op, args: args.filter((a) => typeof a === 'number') })
+      const call: Call = { op, args: args.filter((a) => typeof a === 'number') }
+      if (options.text) {
+        const first = args.find((a) => typeof a === 'string')
+        if (first !== undefined) call.text = first as string
+      }
+      calls.push(call)
     }
 
   const ctx = {

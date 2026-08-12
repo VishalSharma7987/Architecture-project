@@ -1269,6 +1269,64 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 46. TYPED LENGTH `SHIPPED 2026-08-12 by B29` · §7 Stage 2's "single largest gap versus AutoCAD"
+
+A wall chain was click-only: a 13'-0" wall could not be DRAWN, only
+approximated to the nearest 6" grid cell and corrected in the inspector after.
+It is also step 5 of the import review flow — a user looking at a wall that
+came out 34% short had no way to say what its length should be.
+
+[`plan/numericEntry.ts`](../src/plan/numericEntry.ts), pure. **Direction from the pointer, length from
+the keyboard**: each input supplies the half it is good at, and neither is
+replaced. `parseLength` is the only parser — no second one was written, and
+§4 invariant 4 is respected by holding the RAW keystrokes and parsing exactly
+once at commit, never round-tripping through `formatLength`.
+
+| Decision | Argument |
+|---|---|
+| **The field replaces the draft's length readout, at the segment midpoint** | That is already where the eye is — the user watches that number change as they move. It is anchored to the SEGMENT, so it does not jitter with the pointer. A status-bar field splits attention between the line and the chrome; a cursor-pinned field puts the LENGTH control on top of the DIRECTION control. |
+| **Typed beats snap AND grid** | §L2. Grid is a convenience and snap is an inference about intent from proximity; a typed number is a statement of intent with no inference in it. |
+| **The snap indicator is not shown while typing** | Its meaning is "the endpoint lands here", which stops being true the moment a length is typed. Snap still supplies DIRECTION through the cursor. |
+| **Not on the first click of a chain** | It has no anchor and therefore no direction, and a length with no direction is not a segment. Guessing one would be inventing input. |
+| **A click abandons a half-typed entry** | The AutoCAD behaviour. A click is a pointing gesture; it commits where it points. The alternative needs the user to remember which of two inputs is live. |
+| **Angle entry (Tab) deferred** | Three unmade decisions — reference axis, sign convention, display — against a stated gap that is about LENGTH. All 13 corpus drawings are `geom-orthogonal`, where a pointer direction is already precise enough. Shipping two half-specified modes is worse than one complete one. Tab is reserved. |
+
+**A test caught something and it was NOT this feature** — see finding 45.
+
+**And the 13th green-but-proving-nothing test was caught in its own red run.**
+The field-visibility test passed with the field switched OFF, because the typed
+field and the measured readout it replaces are one `fillText` at identical
+coordinates differing only in their text — which the recorder dropped.
+`canvasRecorder` gained an opt-in `text: true`; the default stays off so B26's
+byte-identical sheet golden is untouched.
+
+### 45. `NumberField` PARSES LENGTHS WITHOUT `parseLength` `OPEN`
+
+Found by B29's "one parser" test, which walks the source tree rather than
+searching for a token.
+
+[`components/NumberField.tsx:40`](../src/components/NumberField.tsx#L40) uses `Number.parseFloat` and backs the
+opening **width, height and sill**, the wall **height and thickness**, and the
+furniture **X, Z, width and length** — all lengths, all in raw metres. So in
+`ftin` mode, which is the DEFAULT unit and the one every corpus drawing uses,
+**a user cannot type `3'-6"` into any of them.** They must convert to metres by
+hand.
+
+[`components/LengthField.tsx`](../src/components/LengthField.tsx) is the component that does this correctly and
+already exists; `InspectorPanel` and `PlotPanel` use it for other fields. This
+is two length-entry components where one is right.
+
+Not fixed here: B29's scope is typed entry while DRAWING, and switching these
+fields is a UI decision of its own (what the field SHOWS when not focused —
+`3'-6"` or `1.07` — is the interesting half, and `formatLength` is lossy so it
+cannot simply be round-tripped). The `parseFloat` sites are allow-listed by
+name in `numericEntry.test.ts`, and the allow-list asserts they are still
+there, so cleaning one up fails the test and forces the entry to be removed
+with it.
+
+`RoomSchedulePanel`'s `parseFloat` is the other allow-listed site and is
+CORRECT — it parses a construction rate, not a length.
+
 ### 44. ENDPOINT SNAP `SHIPPED 2026-08-12 by B28` · closes the drawing half of Session 1
 
 Session 1 measured why plans fail to enclose rooms: endpoints land **1–152 mm

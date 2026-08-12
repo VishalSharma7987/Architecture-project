@@ -52,6 +52,9 @@ const COLORS = {
   snapFill: 'rgba(251, 191, 36, 0.92)',
   /** Paper-coloured halo, so the marker reads over the wall it sits on. */
   snapHalo: 'rgba(247, 248, 250, 0.95)',
+  /** The typed-length field: an INPUT, so it does not look like the readout. */
+  entry: '#ffffff',
+  entryBg: '#b45309',
   // `vertex` went with the 2.5 px dot B26 deleted. The dot existed only to
   // mask the square notch two butting walls left at a corner, which the
   // half-thickness pad now fills — leaving it would have put a blob on top of
@@ -324,6 +327,14 @@ export type PlanScene = {
    * clicking would do.
    */
   snap?: SnapTarget | null
+  /**
+   * What the user has typed into the length field, or null when no numeric
+   * entry is in progress. The RAW keystrokes, never a formatted value —
+   * §4 invariant 4 says `formatLength` is lossy and `parseLength` is not its
+   * inverse, so round-tripping the buffer through a display string would
+   * quietly change what the user typed.
+   */
+  typed?: string | null
   /** Suppresses the snap marker for tools that act on walls, not the grid. */
   showCursor: boolean
   /** Reference image to trace, or null/absent when there is none to show. */
@@ -1752,7 +1763,34 @@ function drawDraft(ctx: CanvasRenderingContext2D, scene: PlanScene) {
     ctx.restore()
 
     const length = distance(anchor, cursor)
-    if (length > 0) {
+
+    /*
+     * The length reads out at the midpoint of the draft, and the typed field
+     * REPLACES it in the same place.
+     *
+     * That position is the argument. The user is watching this number change
+     * as they move — it is already where their eye is, and it is anchored to
+     * the segment rather than to the pointer, so it does not jitter with the
+     * mouse. A status-bar field would split their attention between the line
+     * they are drawing and a corner of the chrome; a field pinned to the
+     * cursor would put the LENGTH control on top of the DIRECTION control and
+     * move it on every mouse motion.
+     *
+     * Typing swaps a readout for an input, so it has to LOOK like one: a
+     * caret, and the entry colour rather than the label colour. A numeric mode
+     * with no visible field is a mode the user cannot trust or escape.
+     */
+    if (scene.typed !== null && scene.typed !== undefined) {
+      label(
+        ctx,
+        `${scene.typed}▏`,
+        (a.x + b.x) / 2,
+        (a.y + b.y) / 2 - 12,
+        COLORS.entry,
+        LABEL_FONT,
+        COLORS.entryBg,
+      )
+    } else if (length > 0) {
       // The full form, not the compact one: this is the number the user is
       // aiming with, and it has the whole canvas to sit in.
       label(
@@ -1875,6 +1913,7 @@ function label(
   cy: number,
   color = COLORS.label,
   font = LABEL_FONT,
+  background = COLORS.labelBg,
 ) {
   ctx.font = font
   ctx.textAlign = 'center'
@@ -1884,7 +1923,7 @@ function label(
   const w = ctx.measureText(text).width + padding * 2
   const h = 17
 
-  ctx.fillStyle = COLORS.labelBg
+  ctx.fillStyle = background
   ctx.fillRect(cx - w / 2, cy - h / 2, w, h)
 
   ctx.fillStyle = color

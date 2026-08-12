@@ -30,6 +30,12 @@ import type { Point, RoomLabel, Wall } from '../src/store/useDesignStore'
 import { SNAP_RADIUS_PX, resolveWallPoint } from '../src/plan/snap'
 import { snapToGrid } from '../src/plan/viewport'
 import { findLooseJoints } from '../src/plan/repairJoints'
+import {
+  entryLength,
+  keyToAction,
+  typedEndpoint,
+  type NumericEntry,
+} from '../src/plan/numericEntry'
 import { GRID_STEP } from '../src/units/length'
 
 type M = [number, number, number, number, number, number]
@@ -382,3 +388,95 @@ for (const f of frames) {
 const closed = drawn.length === 4 && drawn[3].end.x === drawn[0].start.x && drawn[3].end.z === drawn[0].start.z
 console.log(`\nwalls drawn: ${drawn.length}   chain closed bit-identically: ${closed}`)
 console.log(`loose joints: ${findLooseJoints(drawn).length}`)
+
+/* ── B29: type a length while drawing, and look at the field ── */
+
+/**
+ * The real `keyToAction` / `entryLength` / `typedEndpoint`, driven by a
+ * scripted keystroke sequence. Only the keys and the pointer are scripted;
+ * every decision is production code.
+ */
+const typedWalls: Wall[] = []
+let tAnchor: Point | null = null
+let tCursor: Point = { x: 0, z: 0 }
+let entry: NumericEntry = null
+let tn = 0
+const tFrames: { name: string; typed: string | null; anchor: Point | null; cursor: Point; walls: Wall[] }[] = []
+
+const shot = (name: string) =>
+  tFrames.push({
+    name, typed: entry?.text ?? null, anchor: tAnchor,
+    cursor: { ...tCursor }, walls: [...typedWalls],
+  })
+
+/** A click: commits where it points and abandons anything half-typed. */
+const tClick = (world: Point) => {
+  const r = resolveWallPoint({
+    walls: typedWalls, world, grid: snapToGrid(world, CELL), radius: snapRadius, suppressed: false,
+  })
+  entry = null
+  if (tAnchor) {
+    typedWalls.push({
+      id: `t${tn++}`, start: tAnchor, end: r.point,
+      height: 3, thickness: 0.23, openings: [], material: 'white-paint',
+    })
+  }
+  tAnchor = r.point
+  tCursor = r.point
+}
+
+/** A keystroke through the real state machine. */
+const tKey = (key: string) => {
+  const action = keyToAction(entry, key)
+  if (action.kind === 'update') entry = { text: action.text }
+  else if (action.kind === 'cancel') entry = null
+  else if (action.kind === 'commit') {
+    const metres = tAnchor ? entryLength(action.text, 'ftin') : null
+    const end = metres !== null && tAnchor ? typedEndpoint(tAnchor, tCursor, metres) : null
+    if (end && tAnchor) {
+      typedWalls.push({
+        id: `t${tn++}`, start: tAnchor, end,
+        height: 3, thickness: 0.23, openings: [], material: 'white-paint',
+      })
+      tAnchor = end
+      tCursor = end
+    }
+    entry = null
+  }
+}
+
+tClick({ x: 0, z: 0 })
+tCursor = { x: 2, z: 0 }            // point east
+shot('t1-pointing')
+for (const k of ['1', '3', "'", '-', '3', '"']) tKey(k)
+shot('t2-typing')                    // 13'-3" — a length the grid cannot express
+tKey('Enter')
+tCursor = { x: tAnchor!.x, z: tAnchor!.z + 2 } // point south
+shot('t3-committed')
+for (const k of ['9', "'"]) tKey(k)
+shot('t4-typing-again')
+tKey('Enter')
+tCursor = { x: tAnchor!.x - 2, z: tAnchor!.z }
+for (const k of ['1', '2']) tKey(k)
+shot('t5-before-escape')
+tKey('Escape')
+shot('t6-after-escape')
+
+console.log('')
+for (const f of tFrames) {
+  const { ctx, png } = planContext(760, 560)
+  drawPlan(ctx, {
+    width: 760, height: 560,
+    viewport: { center: { x: 2, z: 1.6 }, scale: 66 },
+    walls: f.walls, furniture: [], rooms: [],
+    selection: null, units: 'ftin', anchor: f.anchor, cursor: f.cursor,
+    showCursor: true, snap: null, typed: f.typed,
+  })
+  writeFileSync(`${OUT}/typed-${f.name}.png`, png())
+  console.log(`typed-${f.name}.png  entry ${f.typed === null ? '—' : `"${f.typed}"`}`)
+}
+console.log('')
+for (const built of typedWalls) {
+  const m = Math.hypot(built.end.x - built.start.x, built.end.z - built.start.z)
+  console.log(`  wall ${built.id}: ${m.toFixed(6)} m  = ${(m / 0.3048).toFixed(4)} ft`)
+}

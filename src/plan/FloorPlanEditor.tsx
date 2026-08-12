@@ -28,6 +28,12 @@ import {
   type SnapResult,
   type SnapTarget,
 } from './snap'
+import {
+  entryLength,
+  keyToAction,
+  typedEndpoint,
+  type NumericEntry,
+} from './numericEntry'
 import { vastuZones, type ZoneCell } from '../vastu/zones'
 import { drawPlan, pickStair } from './draw'
 import { findLooseJoints, type LooseJoint } from './repairJoints'
@@ -84,6 +90,8 @@ export function FloorPlanEditor() {
   const anchorRef = useRef<Point | null>(null)
   /** The snap target under the cursor, drawn as the indicator. */
   const snapRef = useRef<SnapTarget | null>(null)
+  /** The typed-length buffer, or null when no numeric entry is in progress. */
+  const entryRef = useRef<NumericEntry>(null)
   const sizeRef = useRef({ width: 0, height: 0 })
   const frameRef = useRef<number | null>(null)
   const panRef = useRef<{
@@ -156,7 +164,12 @@ export function FloorPlanEditor() {
       units: useDesignStore.getState().units,
       showDimensions: useDesignStore.getState().showDimensions,
       anchor: anchorRef.current,
-      snap: snapRef.current,
+      // Hidden while a length is being typed. The indicator means "the
+      // endpoint lands here", and that stops being true the moment a number
+      // overrides the distance — the snapped point still supplies the
+      // DIRECTION, which the draft line shows by pointing through it.
+      snap: entryRef.current ? null : snapRef.current,
+      typed: entryRef.current?.text ?? null,
       spaceCorner: spaceDragRef.current,
       looseJoints: looseRef.current,
       cursor: cursorRef.current,
@@ -193,6 +206,7 @@ export function FloorPlanEditor() {
   const endChain = useCallback(() => {
     if (!anchorRef.current) return
     anchorRef.current = null
+    entryRef.current = null
     setIsDrawing(false)
     requestDraw()
   }, [requestDraw])
@@ -462,9 +476,76 @@ export function FloorPlanEditor() {
   }, [viewEpoch, requestDraw])
 
   useEffect(() => {
+    const typingInField = (t: EventTarget | null) => {
+      const el = t as HTMLElement | null
+      return (
+        el?.tagName === 'INPUT' ||
+        el?.tagName === 'TEXTAREA' ||
+        el?.isContentEditable === true
+      )
+    }
+
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
       const state = useDesignStore.getState()
+
+      /* ── typed length, B29 ──────────────────────────────────────────────
+       * Only while a chain is ACTIVE. The first click of a chain has no
+       * anchor and therefore no direction, and a length with no direction is
+       * not a segment — so typing before the chain starts is left alone and
+       * whatever else was listening still gets the key.
+       *
+       * Modifier combinations are skipped so Ctrl/Cmd+Z stays undo rather
+       * than becoming the digit `z`, and a focused text field always wins.
+       */
+      if (
+        state.tool === 'wall' &&
+        anchorRef.current &&
+        !typingInField(e.target) &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.altKey
+      ) {
+        const action = keyToAction(entryRef.current, e.key)
+
+        if (action.kind === 'update') {
+          entryRef.current = { text: action.text }
+          e.preventDefault()
+          requestDraw()
+          return
+        }
+        if (action.kind === 'cancel') {
+          // Escape backs out of the ENTRY without ending the chain — one rung
+          // above the ladder below, and the reason this block runs first.
+          entryRef.current = null
+          e.preventDefault()
+          requestDraw()
+          return
+        }
+        if (action.kind === 'commit') {
+          const anchor = anchorRef.current
+          const metres = entryLength(action.text, state.units)
+          const end =
+            metres === null || !cursorRef.current
+              ? null
+              : typedEndpoint(anchor, cursorRef.current, metres)
+
+          if (end) {
+            state.addWall(anchor, end, { provenance: provenance.manual() })
+            anchorRef.current = end
+            cursorRef.current = end
+            snapRef.current = null
+          }
+          // Unparseable text is dropped rather than committed: there is no
+          // sensible wall to build from "12''", and building the pointed
+          // length instead would silently ignore what was typed.
+          entryRef.current = null
+          e.preventDefault()
+          requestDraw()
+          return
+        }
+      }
+
+      if (e.key !== 'Escape') return
       // Escape backs out one step at a time: drop a calibration first, then
       // finish the chain, and only clear the selection once neither is live.
       if (state.blueprintCalibrating || getCalibrationPicks().length > 0) {
@@ -475,7 +556,7 @@ export function FloorPlanEditor() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [endChain])
+  }, [endChain, requestDraw])
 
   // Space held pans with any tool, the way every canvas app does it — the one
   // gesture that works the same on a mouse and a trackpad. Ignored while typing
@@ -575,6 +656,10 @@ export function FloorPlanEditor() {
       // preview that lies.
       const { point, target } = wallPointAt(e.clientX, e.clientY, e.altKey)
       snapRef.current = target
+      // A click is a pointing gesture, so it commits where it points and
+      // abandons anything half-typed — the AutoCAD behaviour, and the only one
+      // that does not need the user to remember which of two inputs is live.
+      entryRef.current = null
       const anchor = anchorRef.current
 
       // A zero-length segment is rejected by the store, which is what makes the
