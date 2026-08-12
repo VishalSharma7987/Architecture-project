@@ -46,3 +46,15 @@ Then render each SVG to PNG (any tool; these were made with headless Chrome at
 1600×1200). Edit the `walls` array at the top of the script to produce other
 layouts — L-shaped plans, diagonal walls, plans with no interior doors — as you
 need harder cases.
+
+## `real-plan-cv-untitled.json` — the real failure, kept unmodified
+
+A user's actual saved project, exported from the running app on 2026-08-12.
+It reports **3 rooms and 176 sq ft on a 950 sq ft bounding box**, and it is
+the case the room-detection diagnostics were opened for.
+
+**It is a DIAGNOSTIC fixture, not a golden one.** It is an example of failure:
+every wall carries `provenance.source: "cv"`, the blueprint was scaled by
+`calibration.source: "ai"` and never measured, and 19 of its 30 walls are
+under 90 mm thick. Do not "fix" it, do not regenerate it, and do not tune
+anything against it — see `docs/STATE.md` findings 28–30 for what it proves.
