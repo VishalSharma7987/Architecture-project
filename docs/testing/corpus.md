@@ -67,7 +67,8 @@ Every drawing is tagged on **all** applicable axes. Pass rate is tracked **per t
 **B. Sheet and polarity**
 `sheet-white` · `sheet-blueprint` (white on blue) · `sheet-scan` (grey cast, skew, JPEG artefacts) · `sheet-photo` (phone, perspective, uneven lighting, shadow) · `sheet-coloured` (rooms flooded with floor tints) · `sheet-greyscale-fax` · `sheet-composite` (several panels on one sheet, only some of them the plan — legends, schedules, photographs)
 
-**B2. Not a plan at all**
+**B2. Artefact class** — asked before any question about quality
+`line-work` — an orthographic drawing whose walls are drawn as line work: the class the detector exists to read, however badly it arrives.
 `render-3d` — a 3D isometric or perspective view. Kept separate from every other tag because it is not a degraded plan that better handling could rescue: there is no orthographic projection, so no single scale describes it and no calibration is meaningful. **Refusing these is correct behaviour, not a gap.**
 
 **C. Annotation load** — everything the filters must reject
@@ -77,7 +78,7 @@ Every drawing is tagged on **all** applicable axes. Pass rate is tracked **per t
 `geom-orthogonal` · `geom-angled` (any wall off-axis — **known unsupported**, tracked to size the gap) · `geom-curved` (**known unsupported**) · `geom-lshape` · `geom-courtyard` (a hole in the plan) · `geom-multi-unit` (several plans on one sheet — **known unsupported**: there is no crop step, so both plans trace into one wall network with no storey relationship. STATE.md finding 36)
 
 **E. Dimensioning** — drives the calibration ladder, not the detector
-`dim-imperial` · `dim-metric` · `dim-mixed` · `dim-none` · `dim-scalebar-only` · `dim-indic-numerals`
+`dim-imperial` · `dim-metric` · `dim-mixed` · `dim-none` · `dim-scalebar-only` · `dim-indic-numerals` · `dim-stated-scale` (the sheet names its own ratio, e.g. `SCALE 1:100` — the only rung of the calibration ladder needing no measurement)
 
 **F. Provenance**
 `src-cad-export` · `src-scan-300dpi` · `src-scan-72dpi` · `src-photo` · `src-screenshot` · `src-listing-jpeg`

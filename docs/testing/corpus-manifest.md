@@ -10,6 +10,80 @@ Dimensions are read from the file header, not from any decode.
 
 ---
 
+## Batch 3 — the right artefact class (4 files)
+
+**Stated provenance:** architect contact, August 2026.
+**Stated permission:** validation only, not for redistribution.
+
+| # | File | Ref | SHA-256 (16) | Bytes | Header dims | Format |
+|---|---|---|---|---|---|---|
+| 10 | `image(10).png` | img1 | `95714c2c9b508bef` | 101 363 | 474 × 693 | png |
+| 11 | `image(11).png` | img2 | `5a07fc171ea219c4` | 424 477 | 474 × 842 | png |
+| 12 | `image(12).png` | img3 | `bab93e0754612113` | 51 823 | 473 × 496 | png |
+| 13 | `image(13).png` | img4 | `2595b80a9305a958` | 118 939 | 473 × 494 | png |
+
+**All four are genuine PNG** (`89504e470d0a1a0a`), unlike batch 2's JPEG-behind-a-`.png`.
+They decode headless, so batch 3 is the first to exercise the harness past the
+header read.
+
+> ### EVERY FILE IS 473–474 px WIDE
+>
+> Four drawings, four different aspect ratios (0.68, 0.56, 0.95, 0.96), and all
+> four land within one pixel of the same width. **That is a fixed-width resize,
+> not a coincidence** — a share, download or preview step normalised every image
+> to ~474 px across.
+>
+> **These are thumbnails of good drawings, not the drawings.** It changes how
+> every measurement below must be read: where a gate refuses, the question is
+> always whether it is refusing the drawing or the transmission. Batch 2's files
+> were also degraded, by JPEG re-encoding; batch 3's are degraded by
+> downscaling, which is worse, because detail that was resampled away cannot be
+> recovered by any amount of downstream work.
+>
+> **Asking for the originals is the single highest-value action available**, and
+> it costs the contributor one re-send.
+
+### Tagging
+
+| # | Ref | Tags | Usable for detection |
+|---|---|---|---|
+| 10 | img1 | `line-work` `sheet-white` `wall-solid` `anno-dimensions` `anno-furniture` `geom-orthogonal` `dim-metric` `dim-stated-scale` `src-cad-export` | **The best artefact in the corpus, and still not usable — at this size.** Clean CAD line work, solid black poché ~4 source px, column squares at junctions, metric dimension chains that close (2.00+4.00+3.00 = 9.00 across; 3.00+5.00+3.00 = 11.00 down), stated `SCALE 1:100 MTS.` Nothing about the *drawing* is wrong. It resolves to **36.0 px/m**, under Gate 1b's 40 px/m floor, purely because it arrived 474 px wide. |
+| 11 | img2 | `line-work` `sheet-photo` `sheet-composite` `wall-outlined` `anno-dimensions` `geom-orthogonal` `dim-metric` `src-photo` | **No — but it is the most valuable file in the corpus and should be kept.** A photographed sanction print: grey paper cast, a fold crease running through the plan, 0.59° skew, uneven lighting, elevation above the plan on one sheet, cm room dimensions (`300X144`, `288X300`), and a full mark set (`D1` `D2` `W1` `W2` `W3` `MD` `GW` `V`). It is the only file that exercises the paper-contrast masks against real paper. The sheet top is cropped mid-title. |
+| 12 | img3 | `line-work` `sheet-white` `wall-outlined` `anno-dimensions` `anno-none` `geom-orthogonal` `geom-lshape` `dim-imperial` `src-cad-export` | **No.** Thin double-line walls, hollow between — `mergeWallFaces`'s intended case — with no furniture at all, which makes it the cleanest input in the corpus by annotation load. But at 473 × 496 it is the smallest of the four and resolves to **24.2 px/m**, the lowest figure measured anywhere. It refuses at Gate 1a before that matters. |
+| 13 | img4 | `line-work` `sheet-white` `wall-tinted` `anno-dimensions` `anno-furniture` `geom-orthogonal` `dim-mixed` `src-cad-export` | **No.** Grey-filled wall bands, furniture as line symbols, `W`/`V`/`MD` marks, and dual-unit dimensions (`36' [10.97]`) on both axes — the only drawing in the corpus that states its size in imperial *and* metric, which is why its two axes can be cross-checked without unit conversion. 494 px longest edge; refuses at Gate 1a. |
+
+**Three corrections to the brief's reading of these sheets:**
+
+1. **img1's walls are solid poché, not hatched.** At 4× magnification the band is
+   filled black. The grid that reads as hatching at low resolution is the
+   **kitchen counter tiling**, and there is a second grid on the stair treads.
+   The distinction matters: `wall-hatched` is the case `mergeWallFaces` struggles
+   with, and this drawing is not it.
+2. **img4's walls are tinted, not solid** — a mid-grey fill between darker
+   edges, tagged `wall-tinted`.
+3. **img1 carries `8.00` *and* `11.00` vertically**, like img3. `11.00` is the
+   overall (3.00+5.00+3.00 on the right-hand chain); `8.00` is a partial chain
+   on the left that starts below the kitchen block. Only `11.00` is the
+   building.
+
+### Two tags this batch needed
+
+- **`line-work`** — an orthographic drawing whose walls are drawn as line work
+  rather than rendered. The opposite pole from `render-3d`, and the axis batch 2
+  proved matters most: it is the artefact-class question, asked before any
+  quality question.
+- **`dim-stated-scale`** — the sheet names its own ratio (`SCALE 1:100 MTS.`).
+  One file in thirteen has this, and it is the only rung of the calibration
+  ladder that needs no measurement at all.
+
+The brief proposed `scan-photo`, `hatched-wall`, `metric-dimensions` and
+`imperial-dimensions`. Those are synonyms for `sheet-photo`/`src-photo`,
+`wall-hatched`, `dim-metric` and `dim-imperial`, which already exist, so the
+existing names are used rather than a second vocabulary. `wall-hatched` turned
+out not to apply to anything in this batch (correction 1).
+
+---
+
 ## Batch 2 — first real batch (7 files)
 
 **Stated provenance:** architect contact, August 2026.

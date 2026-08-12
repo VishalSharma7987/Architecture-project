@@ -1298,11 +1298,18 @@ Detectable cheaply *if* two dimensions are read: measure both, compare, warn on
 disagreement. That needs OCR of dimension strings (Stage 2) or a second manual
 measurement. Not designed here.
 
-### 34. THE JUNCTION RATIO HAS NEVER FIRED ON A REAL IMAGE `OPEN`
+### 34. THE JUNCTION RATIO HAS NEVER FIRED ON A REAL IMAGE `OPEN` · measured over 11
 
-Gate 4 has two signals. On seven real sheets, **the ink fraction decided one
-outcome and the junction ratio decided none** — it measured exactly **1.00** on
-every image that produced any segments at all.
+Gate 4 has two signals. On seven marketing sheets and, after batch 3, four
+orthographic line drawings — **the ink fraction decided one outcome and the
+junction ratio decided none.** It measured exactly **1.00** on every image that
+produced any segments at all. A real photographed print does not change it.
+
+Batch 3 adds a second half to the same finding: **the ink fraction has nothing
+to do on line work either.** The highest candidate across the four is 0.154
+against a 0.35 ceiling. Gate 4 as a whole is a colour-and-render gate, and on
+the artefact class the detector actually exists for, neither of its signals
+engages.
 
 This is structural, not a loose threshold. `requireJunction` already discards
 non-junctioning bands upstream, and its escape hatch only opens when *nothing*
@@ -1475,19 +1482,60 @@ wrong thing.
 > **Fifty drawings would have found all of this in week one.** That is the
 > argument for sourcing them, and it no longer rests on principle.
 
-#### Where intake stands · 2026-08-12 (batch 2)
+#### Where intake stands · 2026-08-12 (batch 3)
 
 | | |
 |---|---|
-| **Real images measured** | **9** — [`corpus-baseline-2.csv`](testing/corpus-baseline-2.csv) |
-| **Delivered working drawings among them** | **ZERO** |
-| Batch 2 (7 files) | All pass Gate 1a (1024–1600 px). All **refuse at `scale-provenance`** |
-| Batch 1 (2 files) | Both **refuse at `raster-size`** — 400 px and 557 px against a 600 px floor |
+| **Files received** | **13** — [`corpus-baseline-3.csv`](testing/corpus-baseline-3.csv) |
+| **USABLE DRAWINGS** | **ZERO** |
+| Batch 3 (4 files) | The right artefact class at last — `line-work`, dimensioned, no furniture rendering. **All four unusable: every file is 473–474 px wide** |
+| Batch 2 (7 files) | Marketing sheets. All pass Gate 1a; all refuse at `scale-provenance` |
+| Batch 1 (2 files) | Both refuse at `raster-size` — 400 px and 557 px |
 | Manifest | [`corpus-manifest.md`](testing/corpus-manifest.md) — hash · dims · format · tags · usable-for-detection |
-| Gate report | [`corpus-batch-2-gates.md`](testing/corpus-batch-2-gates.md) |
-| Intake request | **corrected to v2** — [`corpus-request.md`](testing/corpus-request.md) — and still **unsent** |
+| Gate reports | [batch 2](testing/corpus-batch-2-gates.md) · [batch 3](testing/corpus-batch-3-gates.md) |
+| Intake request | **v2** — [`corpus-request.md`](testing/corpus-request.md) — still **unsent**, and now needs a v3 line about resolution |
 | Harness | `npm run corpus <dir>` · headless · one row per drawing |
-| Thresholds | **DERIVED, not validated.** No accuracy claim is permitted (§10 rule 6). **No threshold was changed by batch 2 and none may be** |
+| Thresholds | **DERIVED, not validated.** No accuracy claim is permitted (§10 rule 6). **No threshold was changed by batch 2 or batch 3 and none may be** |
+
+> #### BATCH 3 FIXED THE ARTEFACT CLASS AND EXPOSED THE NEXT CONSTRAINT
+>
+> The v2 request worked. Four drawings arrived that are exactly what was asked
+> for: orthographic CAD line work, closing dimension chains, no furniture
+> rendering, one of them a photographed sanction print, one stating
+> `SCALE 1:100 MTS.` on its face. **The artefact-class problem is solved.**
+>
+> **Every one of the four is 473–474 px wide.** Four different aspect ratios,
+> all within one pixel of the same width — a fixed-width resize in transit. We
+> received thumbnails, not drawings.
+>
+> The consequence is total. At 24–36 px/m a 115 mm partition is **2.8 to 4.1
+> source pixels**, and the line drawing it is 1–2. Every gate that fires is
+> firing on that single fact in its own vocabulary: Gate 1a on two of them, Gate
+> 2 on the other two, and Gate 1b, 3A and 3B on all four if the earlier
+> refusals are lifted. **Finding 28 — the upscale defeats the thresholds —
+> reproduced on good input.**
+>
+> **The corpus count stays at 0 usable. For the first time the fix is one
+> email**, not a different contributor: ask for the same four files at native
+> resolution.
+
+#### False refusals and true refusals, kept apart
+
+Conflating these is how a gate looks validated when it is only consistent. As of
+batch 3, over 13 files:
+
+| | Evidence |
+|---|---|
+| **True refusals — the gate was right about the file** | Gate 1a on 400 px, 557 px, 496 px, 494 px. Gate 2 on 9 files with no scale. Gate 4's ink ceiling on `Media (7)`, a 3D render: 20 segments unwired → 0 wired. |
+| **False refusals — the gate was wrong about the DRAWING** | **img3 and img4.** Clean orthographic CAD with closing chains, refused at Gate 1a. The gate was right about the *file* and its advice (*"re-upload it larger"*) is exactly correct — so this is a **degraded-copy refusal**, not a gate defect. It is the closest thing to a false positive the corpus holds, and it is not one. |
+| **Gates never yet exercised against the case they exist for** | Gate 1b, 3A, 3B have **never** seen a drawing at adequate resolution — every measured figure is 24–36 px/m against a 40 px/m floor. The fourth binarisation candidate (*lighter-than-paper*, for `sheet-blueprint`) has produced **zero segments on all 11 images measured**; the corpus contains no blueprints. |
+| **Gates measured and shown to decide nothing** | The junction ratio: **1.00 on every image that produced segments**, across 7 marketing sheets and 4 line drawings. Finding 34, now measured over 11 files. |
+
+**The one claim batch 3 does support**, and it is worth stating because it is the
+first: [`image(10)`](testing/corpus-manifest.md) is square to **99.7%** — 36.11 px/m across
+against 36.00 down, corroborated by all three of its dimension-chain division
+points landing inside detected wall bands. A correct drawing exists in the
+corpus and has been verified as correct. Nothing can yet be built from it.
 
 > #### THE CORPUS GAP IS NOT "TOO FEW DRAWINGS". IT IS "NO DRAWINGS OF THE RIGHT KIND"
 >
@@ -1528,11 +1576,12 @@ these entries are committed.
 #### What each intake milestone would let us claim
 
 Counted in **usable delivered working drawings**, which is not the same as
-files received. Batch 2 added 7 files and 0 to this table.
+files received. Batch 2 added 7 files and 0 to this table; batch 3 added 4 files
+and 0.
 
 | Drawings | Claimable |
 |---|---|
-| **0** *(today; 9 files received)* | The gates run headless and refuse nine real images for stated, checkable reasons; Gate 1a discriminates and Gate 4 refused a render. **Nothing about accuracy, and nothing about false refusals.** |
+| **0** *(today; 13 files received)* | The gates run headless and refuse thirteen real images for stated, checkable reasons; Gate 1a discriminates, Gate 4 refused a render, and one drawing has been verified square to 99.7%. **Nothing about accuracy. Nothing about Gate 1b, 3A or 3B, which have never seen adequate resolution.** |
 | **10** | Whether the thresholds refuse drawings they should accept — the first real test of Gate 1a's 600 px and Gate 1b's 40/80 px/m, since a normal delivered plan should pass. One practice's house style, so still not representative. |
 | **20** | Per-tag signal on the two or three axes that actually vary in a real sample — wall rendering and sheet polarity. Enough to say *"hatched walls fail"* with a number behind it. |
 | **50** | The published per-tag pass table `corpus.md` specifies, with per-tag floors. The point at which a detection-accuracy claim is supportable at all, and the point Stage 1 can exit. |

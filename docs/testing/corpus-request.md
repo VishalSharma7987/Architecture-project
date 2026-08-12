@@ -64,6 +64,14 @@ redact, rename, or tidy anything, the ask is wrong and the reply will not come.
 > first floor side by side that's fine and I'll cope, but a single plan per file
 > is easier for me.
 >
+> **Please send them at full size — don't let anything shrink them.** This is
+> the one thing that can't be fixed at my end. Email attachments, a Drive or
+> Dropbox link, or "send as file" rather than as a photo in a chat app all keep
+> the original; pasting into a message or sharing from a phone gallery usually
+> resizes it down to a few hundred pixels, and detail that's been resized away
+> can't be recovered. If it's easier to just send them however is convenient and
+> let me tell you whether they arrived intact, that's completely fine.
+>
 > **Quality genuinely does not matter.** A skewed 72 dpi scan, a phone photo
 > with a shadow across it, a fax-quality print, a title block over the corner —
 > those are the ones that break tools and the ones I most want. A pristine CAD
@@ -108,6 +116,14 @@ the excluded classes costs three lines and saves that effort next time.
 **Keep saying the messy ones are valuable — just not instead of the class.**
 Both statements are true and they are about different things. The failure was
 running them together so that "whatever state" swallowed "delivered drawing".
+
+**Resolution is the one axis where "whatever state" is wrong**, and v2 did not
+say so. Batch 3 answered v2 correctly — four genuine CAD drawings — and all four
+arrived **473–474 px wide**, a fixed-width resize applied in transit. At that
+size a 115 mm partition is under four pixels and no gate downstream can pass.
+Skew, creases, shadows and coffee rings are all recoverable in principle;
+**resampling is not**. Say it as a transport instruction rather than a quality
+demand, because the contributor did nothing wrong — their sharing app did.
 
 **Ask for dimension strings, not for the scale.** They are already on a working
 drawing, so it costs nothing, and it is worth more than a calibration number
