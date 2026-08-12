@@ -26,6 +26,15 @@ export type StructurePhase =
       scale: ScaleSource
     }
   | { kind: 'walls-only'; walls: number; reason: string }
+  /**
+   * A plausibility gate refused, so NOTHING was built.
+   *
+   * Its own phase rather than folding into `none`: "no walls found" and "this
+   * image cannot be read accurately enough to try" are different facts, and
+   * the second one tells the user what to do about it. `gate` names which
+   * check failed so the message can never degrade to "detection failed".
+   */
+  | { kind: 'refused'; gate: string; message: string }
   | { kind: 'none' }
 
 /**
@@ -96,6 +105,17 @@ export function useBlueprintStructure(): StructurePhase {
       const walls = await buildWallsFromBlueprint()
       if (!live) return
       if (!walls.ok) {
+        // A refusal is reported, never swallowed. Falling back to `idle` here
+        // would leave the 3D view empty with no explanation, which is exactly
+        // the "detection failed" non-message this session exists to replace.
+        if (walls.reason === 'implausible' && walls.gate) {
+          setPhase({
+            kind: 'refused',
+            gate: walls.gate.gate,
+            message: walls.gate.message,
+          })
+          return
+        }
         setPhase({ kind: walls.reason === 'none-found' ? 'none' : 'idle' })
         return
       }

@@ -1,6 +1,11 @@
 import { useDesignStore } from '../store/useDesignStore'
 import { provenance } from '../store/provenance'
 import { detectWallSegments, segmentsToWalls } from './detectWalls'
+import {
+  gateAfterDetection,
+  gateBeforeDetection,
+  type GateResult,
+} from './plausibility'
 import { rasterise, type RasterResult } from './raster'
 
 /**
@@ -27,7 +32,7 @@ const rasterFromSrc = (src: string): Promise<RasterResult> =>
   })
 
 export type BuildResult =
-  | { ok: true; count: number }
+  | { ok: true; count: number; warnings: GateResult[] }
   | {
       ok: false
       reason:
@@ -37,6 +42,10 @@ export type BuildResult =
         | 'has-walls'
         | 'decode'
         | 'none-found'
+        /** A plausibility gate refused. `gate` names which, and why. */
+        | 'implausible'
+      /** Present when `reason` is `'implausible'`. The user-facing sentence. */
+      gate?: GateResult
     }
 
 /**
@@ -61,11 +70,28 @@ export async function buildWallsFromBlueprint(): Promise<BuildResult> {
   if (!blueprint.src) return { ok: false, reason: 'no-image' }
   if (state.walls.length > 0) return { ok: false, reason: 'has-walls' }
 
+  // ── the gates that can be answered before a single pixel is read ──
+  // Fails CLOSED. This path is triggered by switching to 3D, so it is the one
+  // place the app could auto-create a bad 2D model just so that something
+  // appears in the 3D view. It must not.
+  const before = gateBeforeDetection({
+    sourceWidth: blueprint.width,
+    sourceHeight: blueprint.height,
+    sourceMetresPerPixel: blueprint.metresPerPixel,
+    calibrationSource: blueprint.calibration.source,
+    lockedByUser: blueprint.calibration.lockedByUser,
+  })
+  if (before.blocking) {
+    return { ok: false, reason: 'implausible', gate: before.blocking }
+  }
+
   const result = await rasterFromSrc(blueprint.src)
   if (!result.ok) return { ok: false, reason: 'decode' }
 
   const { raster } = result
-  const segments = detectWallSegments(raster.image)
+  // `rasterScale` is load-bearing: without it the thresholds size themselves
+  // against pixels the upscale manufactured. See `sizedDefaults`.
+  const segments = detectWallSegments(raster.image, { rasterScale: raster.scale })
   const walls = segmentsToWalls(segments, {
     // Detection runs on the possibly-downscaled raster, whose pixels are larger
     // than the source pixels the calibration is expressed in.
@@ -73,6 +99,17 @@ export async function buildWallsFromBlueprint(): Promise<BuildResult> {
     origin: blueprint.origin,
   })
   if (walls.length === 0) return { ok: false, reason: 'none-found' }
+
+  // ── and the gates that read what came out ──
+  // Thicknesses in metres, judged against the SOURCE scale — the upscale
+  // cannot be allowed to make a stroke look like a measurement.
+  const after = gateAfterDetection(
+    walls.map((w) => w.thickness),
+    blueprint.metresPerPixel,
+  )
+  if (after.blocking) {
+    return { ok: false, reason: 'implausible', gate: after.blocking }
+  }
 
   // Re-read: the await above yielded, and the floor could have changed under us.
   const store = useDesignStore.getState()
@@ -89,5 +126,10 @@ export async function buildWallsFromBlueprint(): Promise<BuildResult> {
       count += 1
     }
   }
-  return count > 0 ? { ok: true, count } : { ok: false, reason: 'none-found' }
+  // Warnings ride along on SUCCESS: a plan at 60 source px/m is worth
+  // building and worth saying something about, and swallowing that would be
+  // the silent-truncation failure the corpus spec forbids.
+  return count > 0
+    ? { ok: true, count, warnings: [...before.warnings, ...after.warnings] }
+    : { ok: false, reason: 'none-found' }
 }

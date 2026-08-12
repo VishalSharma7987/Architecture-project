@@ -139,6 +139,18 @@ export default function App() {
                   }. Fix any misses with the Door and Window tools.`}
                 {structure.kind === 'walls-only' &&
                   `Built ${structure.walls} walls, but the doors and windows could not be read (${structure.reason}). Add them from the Blueprint panel or by hand.`}
+                {/* A refusal says WHICH check failed and what it measured, and
+                    is deliberately wordier than the rest of this box. Nothing
+                    was built, so the whole message has to earn the user's next
+                    action — "detection failed" would leave them with an empty
+                    3D view and no idea whether the app or the image is at
+                    fault. See `blueprint/plausibility.ts`. */}
+                {structure.kind === 'refused' && (
+                  <span data-testid={`structure-refused-${structure.gate}`}>
+                    {structure.message} Nothing was built — trace the walls in
+                    2D, or start again from a better image.
+                  </span>
+                )}
                 {structure.kind === 'none' &&
                   'Could not read walls from this image automatically — trace them in 2D.'}
               </div>

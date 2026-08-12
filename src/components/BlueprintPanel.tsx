@@ -9,6 +9,10 @@ import {
   subscribeCalibration,
 } from '../blueprint/calibration'
 import { detectWallSegments, segmentsToWalls } from '../blueprint/detectWalls'
+import {
+  gateAfterDetection,
+  gateBeforeDetection,
+} from '../blueprint/plausibility'
 import { detectAndPlaceOpenings } from '../blueprint/detectOpenings'
 import { provenance } from '../store/provenance'
 import { loadBlueprintFromFile } from '../blueprint/load'
@@ -202,6 +206,22 @@ export function BlueprintPanel() {
   const detect = async () => {
     if (!blueprint) return
 
+    // The same gates the auto-build path runs, before any pixel is read. This
+    // path already stages its result behind a second click, so a refusal here
+    // costs the user nothing but the explanation — which is the point.
+    const before = gateBeforeDetection({
+      sourceWidth: blueprint.width,
+      sourceHeight: blueprint.height,
+      sourceMetresPerPixel: blueprint.metresPerPixel,
+      calibrationSource: blueprint.calibration.source,
+      lockedByUser: blueprint.calibration.lockedByUser,
+    })
+    if (before.blocking) {
+      setStatus({ kind: 'error', message: before.blocking.message })
+      setDetected(null)
+      return
+    }
+
     setStatus({ kind: 'detecting' })
     setDetected(null)
 
@@ -229,7 +249,9 @@ export function BlueprintPanel() {
 
     await yieldToPaint()
 
-    const segments = detectWallSegments(raster.image)
+    // `rasterScale` so the thresholds size against real evidence, not against
+    // pixels `MIN_RASTER_DIMENSION` manufactured — see `sizedDefaults`.
+    const segments = detectWallSegments(raster.image, { rasterScale: raster.scale })
     const walls = segmentsToWalls(segments, {
       // Detection runs on the downscaled raster, whose pixels are bigger than
       // the source pixels the calibration is expressed in.
@@ -237,8 +259,25 @@ export function BlueprintPanel() {
       origin: blueprint.origin,
     })
 
+    // Judged against the SOURCE scale, so an upscale cannot make a stroke look
+    // like a measurement. Staged results are discarded rather than offered:
+    // showing a preview of walls that cannot be trusted invites the click.
+    const after = gateAfterDetection(
+      walls.map((w) => w.thickness),
+      blueprint.metresPerPixel,
+    )
+    if (after.blocking) {
+      setStatus({ kind: 'error', message: after.blocking.message })
+      setDetected(null)
+      return
+    }
+
     setDetected(walls)
-    setStatus({ kind: 'idle' })
+    setStatus(
+      after.warnings.length > 0
+        ? { kind: 'error', message: after.warnings[0].message }
+        : { kind: 'idle' },
+    )
   }
 
   const addDetected = () => {

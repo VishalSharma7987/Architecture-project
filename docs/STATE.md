@@ -33,7 +33,7 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **Session 3a — COMPLETE.** User-invoked joint repair — a plan can be told to connect what looks connected |
+| Last completed task | **B5b — COMPLETE.** Detector plausibility gates: a bad reconstruction is refused rather than committed |
 | Before that | **Session 2** — `setWallLength` stopped detaching joins; **B25** — unenclosed spaces; **B24** — marks + schedule |
 | Next task | **Session 3b** — wire CV and AI ingest to the same weld (open question 27), or **B9** (drafting/snapping) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
@@ -91,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after Session 3a, at `9f2f134`+:
+Verified after B5b, at `c9f8850`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **556 passing / 556** · 35 files / 35 |
-| `npm run build` | **pass** (exit 0), 721 ms |
+| `npm test` | **582 passing / 582** · 37 files / 37 |
+| `npm run build` | **pass** (exit 0), 734 ms |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -1182,6 +1182,55 @@ Hatch is therefore a `WallType` **property** for v4 — §6 already declares
 `hatch: HatchId` there — not a missing representation. Lower priority than a
 first reading of the drawings suggests.
 
+### 28. THE UPSCALE DEFEATED THE THRESHOLDS `RESOLVED 2026-08-12 by B5b`
+
+`raster.ts` upscales anything under 1400 px (`MIN_RASTER_DIMENSION`), nearest
+neighbour. `sizedDefaults` then scaled its pixel thresholds by
+`longest / 2000` — against the **upscaled** dimension. On a 400 px plan:
+
+```
+400 px → ×3.5 → 1400 px      (manufactures pixels, adds no information)
+minThicknessPx = max(2, 3 × 0.7) = 2.10 upscaled px = 0.60 SOURCE px
+```
+
+**The two mechanisms that exist to make small drawings work are what let
+sub-pixel noise through.** `sizedDefaults` now takes `rasterScale` and floors
+every threshold at one pixel of the original image.
+
+### 29. RESOLUTION MUST BE MEASURED IN SOURCE PIXELS `RESOLVED 2026-08-12 by B5b`
+
+The same file reads **126.9 px/m** against the raster — *better than the
+100 px/m the detector's defaults were tuned at* — and **36.3 px/m** against the
+source. **A gate that measures the raster passes the document it exists to
+reject.** `plausibility.test.ts` asserts both numbers and asserts that the
+raster measure would have passed, so nobody can later "simplify" the gate to
+use the raster it already has.
+
+### 30. THE AUTO-BUILD PATH HAD NO REVIEW AT ALL `RESOLVED IN PART 2026-08-12`
+
+`BlueprintPanel` stages detection behind two clicks — detect, then add.
+`useBlueprintStructure` called `buildWallsFromBlueprint` and wrote **straight
+into the store**, triggered by switching to 3D. So the path with no review was
+the one triggered by *looking at the building*.
+
+B5b makes it fail closed with a named gate through the existing
+`StructurePhase`, which already carried a reason to `App.tsx`'s status line.
+**The review panel itself — original image, detected preview, per-gate
+explanation, approve/discard — is Engine 4 and is not built.**
+
+### 31. GATE 2 SHIPPED AS REFUSAL; THE TARGET IS A HELD PROPOSAL `OPEN`
+
+ADR 0003 records it: the right answer is neither refusing nor committing, but
+**holding the reconstruction outside the document** until the scale is
+measured — preview immediately, nothing baked in. That needs Engine 4.
+
+Refusal is the interim and is cheap because `buildWallsFromBlueprint` already
+fails closed. **Do not mistake it for the decision.** For a dimensioned drawing
+it is a redirect to manual calibration (rank 1, two picks and a typed length);
+for an undimensioned image whose real size the user does not know it is a
+genuine block — and there, every number the reconstruction would produce is
+meaningless anyway.
+
 ### 27. THREE INGEST PATHS STILL ADMIT UNWELDED COORDINATES `OPEN` · next
 
 Session 2's inventory found `setWallLength` and fixed it. Three paths still
@@ -1247,6 +1296,32 @@ wrong thing.
 ## Blockers
 
 ### The real architect-drawing corpus — Stage 1 cannot exit without it
+
+> #### ONE drawing has now made this argument from evidence, not principle
+>
+> `samples/real-plan-cv-untitled.json` arrived on 2026-08-12: a user's real
+> saved project, 30 walls, reporting **3 rooms and 176 sq ft on a 950 sq ft
+> building**. It is one file. In its first hour it demonstrated **six** things
+> the synthetic suite had never shown in months:
+>
+> | | |
+> |---|---|
+> | 1 | Detector output can be **physically implausible** — 19 of 30 walls under 90 mm, ten of them **sub-pixel** in the source image |
+> | 2 | An **AI calibration is silently trusted** into permanent geometry, and nothing rescales walls afterwards |
+> | 3 | `MIN_RASTER_DIMENSION` **upscaling defeats the very thresholds** meant to protect small inputs — `minThicknessPx` resolved to 0.60 source px |
+> | 4 | Low-resolution input yields **stroke measurements, not wall measurements** |
+> | 5 | Downstream repair **cannot recover the topology** — 3 rooms before, 3 after |
+> | 6 | **Session 3a's code contained a bug**, and the synthetic suite never exercised the merge+extend interaction that found it |
+>
+> **And a seventh, about this file's own record-keeping:** Session 3B reported
+> the thicknesses as quarter-pixels and that was wrong — they are exact
+> integers in a ×3.5 upscaled raster. The conclusion survived; the mechanism
+> did not, and it was carried into the next brief as verified. Finding 14 warns
+> about exactly this.
+>
+> **Fifty drawings would have found all of this in week one.** That is the
+> argument for sourcing them, and it no longer rests on principle.
+
 
 **What:** ≥50 real architect drawings, tagged on six axes (wall rendering, sheet and
 polarity, annotation load, geometry, dimensioning, provenance), with per-tag pass
@@ -1372,6 +1447,14 @@ Neither `corpus/` nor a manifest exists yet.
 - **Do not hand-write the swing icon's paths.** It calls `doorSwing` on a
   synthetic east-running wall precisely so it cannot drift from the renderers
   (SD14). Four literal SVG paths would be a fifth implementation of the rule.
+- **Do not measure detector resolution in raster pixels** (finding 29). The
+  upscale makes a bad image look better than the reference. Source pixels only.
+- **Do not size a detector threshold against an upscaled dimension** (finding
+  28). Pass `rasterScale`; upscaling manufactures pixels, not evidence.
+- **Do not invent a confidence score to populate `Provenance.confidence`.**
+  Every B5b gate is pass/warn/fail. Two of its outputs are bounded 0–1 but both
+  describe the READING, and `confidence` is per element — the distinction C1
+  drew. Absent still means "not assessed".
 - **Do not weld coordinates inside `parseDesign`** (SD24). It runs on autosave
   restore, so it would rewrite the user's own document every time they opened
   it, invisibly and with no undo step. The repair is user-invoked for a reason.
