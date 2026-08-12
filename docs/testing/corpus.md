@@ -65,13 +65,16 @@ Every drawing is tagged on **all** applicable axes. Pass rate is tracked **per t
 | `wall-hairline` | Under ~3 px at source resolution. `MIN_RASTER_DIMENSION` exists for this. |
 
 **B. Sheet and polarity**
-`sheet-white` · `sheet-blueprint` (white on blue) · `sheet-scan` (grey cast, skew, JPEG artefacts) · `sheet-photo` (phone, perspective, uneven lighting, shadow) · `sheet-coloured` (rooms flooded with floor tints) · `sheet-greyscale-fax`
+`sheet-white` · `sheet-blueprint` (white on blue) · `sheet-scan` (grey cast, skew, JPEG artefacts) · `sheet-photo` (phone, perspective, uneven lighting, shadow) · `sheet-coloured` (rooms flooded with floor tints) · `sheet-greyscale-fax` · `sheet-composite` (several panels on one sheet, only some of them the plan — legends, schedules, photographs)
+
+**B2. Not a plan at all**
+`render-3d` — a 3D isometric or perspective view. Kept separate from every other tag because it is not a degraded plan that better handling could rescue: there is no orthographic projection, so no single scale describes it and no calibration is meaningful. **Refusing these is correct behaviour, not a gap.**
 
 **C. Annotation load** — everything the filters must reject
 `anno-none` · `anno-dimensions` · `anno-grid` · `anno-titleblock` · `anno-furniture` · `anno-hatchfill` · `anno-text-heavy` · `anno-watermark` · `anno-northarrow-scalebar`
 
 **D. Geometry**
-`geom-orthogonal` · `geom-angled` (any wall off-axis — **known unsupported**, tracked to size the gap) · `geom-curved` (**known unsupported**) · `geom-lshape` · `geom-courtyard` (a hole in the plan) · `geom-multi-unit` (several flats on one sheet)
+`geom-orthogonal` · `geom-angled` (any wall off-axis — **known unsupported**, tracked to size the gap) · `geom-curved` (**known unsupported**) · `geom-lshape` · `geom-courtyard` (a hole in the plan) · `geom-multi-unit` (several plans on one sheet — **known unsupported**: there is no crop step, so both plans trace into one wall network with no storey relationship. STATE.md finding 36)
 
 **E. Dimensioning** — drives the calibration ladder, not the detector
 `dim-imperial` · `dim-metric` · `dim-mixed` · `dim-none` · `dim-scalebar-only` · `dim-indic-numerals`

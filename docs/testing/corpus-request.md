@@ -6,11 +6,27 @@ One page. Paste the block below into an email, fill the three brackets, send.
 files that already exist*. If a reply needs someone to open CAD, re-export,
 redact, rename, or tidy anything, the ask is wrong and the reply will not come.
 
+> **This is version 2.** Version 1 asked for "about ten floor plans you've
+> already delivered, whatever you have, in whatever state", and led with *"the
+> messy ones are the most useful"*. It produced seven marketing sheets:
+> coloured, furnished, laid out for a property listing, two of them 3D isometric
+> renders that are not plans at all. **Zero working drawings.**
+>
+> The request was not wrong about *quality* — a bad scan really is more useful
+> than a clean export. It was wrong about **artefact class**, and it never said
+> which class it meant, so "floor plan" was read as "a picture of a floor plan",
+> which is a much larger and much more colourful set. See
+> [corpus-manifest.md](corpus-manifest.md) for what arrived and
+> [corpus-batch-2-gates.md](corpus-batch-2-gates.md) for what it measured.
+>
+> **Separate the two axes and state both.** The class is not negotiable; the
+> quality is come-as-you-are.
+
 ---
 
 ## The email
 
-> **Subject:** Can I borrow ~10 of your floor plans to test a drawing tool?
+> **Subject:** Can I borrow ~10 working drawings to test a drawing tool?
 >
 > Hi [name],
 >
@@ -19,22 +35,48 @@ redact, rename, or tidy anything, the ask is wrong and the reply will not come.
 > point where it needs to be tested against real drawings rather than ones I
 > made up. Mine are too clean, and they're hiding problems.
 >
-> **Could you forward about ten floor plans you've already delivered?**
+> **Could you forward about ten floor plans that actually went out — sent to a
+> client, issued to a contractor, or submitted for sanction?**
 >
-> Whatever you have, in whatever state:
+> That last part is the whole ask, so to be specific about what I mean:
 >
-> - PDFs, JPEGs, PNGs, scans, phone photos of a printed sheet — all useful
-> - **the messy ones are the most useful.** A skewed scan, a photo with a shadow
->   across it, a fax-quality print, something with a watermark or a title block
->   over the corner — those are the ones that break tools, and clean exports
->   tell me nothing I don't already know
-> - part-sets are fine; I don't need a complete package
+> **What I'm after**
 >
-> **If it's easy** (and please skip any of these if it isn't):
+> - the **DWG or the PDF that left your office** — the drawing itself, not a
+>   presentation of it
+> - **black-and-white line work**: walls as poché or double lines, doors and
+>   windows as symbols, room names as text
+> - **with the dimension strings on** — that's how I check the tool got the
+>   sizes right, and it's the single most valuable thing on the sheet
+> - **scans and photos of printed sheets are very welcome**, including bad ones
 >
-> - the scale, or just one real dimension you know — "the building is 12.4 m
->   across", "that wall is 9 feet". One number per drawing is plenty
-> - the CAD or DWG original, if it happens to exist alongside
+> **What isn't useful, so please don't spend time finding them**
+>
+> - coloured presentation plans with furniture, tiles and cars drawn in
+> - 3D views, isometrics, cutaways, walkthrough stills
+> - anything laid out as a sales or listing sheet — legends, photos and the plan
+>   arranged as a poster
+>
+> Not a criticism of those; my tool just can't read them, and knowing that is
+> already settled.
+>
+> **One plan per sheet if that's how they come.** If a sheet has the ground and
+> first floor side by side that's fine and I'll cope, but a single plan per file
+> is easier for me.
+>
+> **Quality genuinely does not matter.** A skewed 72 dpi scan, a phone photo
+> with a shadow across it, a fax-quality print, a title block over the corner —
+> those are the ones that break tools and the ones I most want. A pristine CAD
+> export is the case that already works. Old projects, superseded revisions and
+> part-sets are all fine; I don't need complete packages and I don't need
+> anything current.
+>
+> **If it's easy** (and please skip either if it isn't):
+>
+> - one real dimension you know — "the building is 12.4 m across", "that wall is
+>   9 feet". One number per drawing is plenty, and the dimension strings on the
+>   sheet usually cover this anyway
+> - the DWG alongside the PDF, if it happens to exist
 >
 > **What I'd do with them:** run them through the tool, record where it fails,
 > and use that to fix it. They stay on my machine, they aren't republished,
@@ -53,19 +95,30 @@ redact, rename, or tidy anything, the ask is wrong and the reply will not come.
 
 ## Notes for whoever sends it
 
-**Say the messy ones are valuable, and say it early.** The instinct is to send
-the tidiest CAD exports. Those are the case that already works. A 72 dpi scan
-with a coffee ring is worth five clean PDFs.
+**Name the class in the subject line and the first sentence.** "Working
+drawings", "issued for construction", "submitted for sanction" — these are
+phrases with a precise meaning to an architect, and they exclude presentation
+artwork without anyone having to be told their renders are unwanted. "Floor
+plan" does not exclude anything.
+
+**Say what isn't useful, explicitly, and say why it isn't their fault.** The
+version-1 reply was seven files someone went to real trouble to find. Listing
+the excluded classes costs three lines and saves that effort next time.
+
+**Keep saying the messy ones are valuable — just not instead of the class.**
+Both statements are true and they are about different things. The failure was
+running them together so that "whatever state" swallowed "delivered drawing".
+
+**Ask for dimension strings, not for the scale.** They are already on a working
+drawing, so it costs nothing, and it is worth more than a calibration number
+because it lets a *drawing* be checked for internal consistency. One sheet in
+batch 2 turned out to be stretched to fit its panel — the width and height
+implied scales 15% apart. A supplied `metresPerPixel` would have hidden that;
+the dimension strings revealed it.
 
 **Do not ask for ground truth.** Tracing a drawing accurately is an hour of an
 architect's time per sheet. That work is ours, later, and only for the subset
 that turns out to matter.
-
-**One known dimension is worth a lot and costs nothing.** It moves a drawing
-from "we can see whether detection finds walls" to "we can see whether the
-walls are the right size", which is a different and harder question. But it is
-genuinely optional — a drawing with no scale still exercises every gate except
-the resolution one.
 
 **Permission wording is deliberately narrow.** "Engineering validation, not
 redistribution" is a claim we can actually keep: the corpus lives in a
@@ -73,16 +126,17 @@ gitignored directory and only a manifest of hashes and tags is committed. Do
 not widen it to anything that sounds like a licence.
 
 **What arrives is not the corpus yet.** It is intake. Sorting, tagging against
-`corpus.md`'s six axes, and hashing into the manifest come after, and that work
-is ours.
+`corpus.md`'s axes, and hashing into the manifest come after, and that work is
+ours.
 
 ## Where the files go
 
 ```
 corpus/                     gitignored — real drawings never enter the repo
-  <hash>.<ext>              the image, as delivered
-  <hash>.meta.json          optional: { "metresPerPixel", "calibrationSource", "note" }
-docs/testing/corpus-manifest.md   committed: hash · tags · source · licence
+  <name>.<ext>              the image, as delivered
+  <name>.<ext>.meta.json    optional: { "metresPerPixel", "calibrationSource", "note" }
+docs/testing/corpus-manifest.md   committed: hash · dims · tags · source · permission
+docs/testing/corpus-baseline-*.csv  committed: one row per drawing, per run
 ```
 
 `npm run corpus corpus/` reads that directory and writes one row per drawing.

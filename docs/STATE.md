@@ -1231,6 +1231,94 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 36. THE DETECTOR HAS NO CROP STEP, AND MOST REAL SHEETS NEED ONE `OPEN`
+
+**Was this already recorded?** No. `corpus.md` had `geom-multi-unit` ("several
+flats on one sheet") as a *tag*, so the situation was nameable — but it was
+listed among the tagging axes, not among the known gaps, and nothing anywhere
+said the detector cannot handle it. `geom-angled` and `geom-curved` are both
+marked **known unsupported** in the same paragraph; this was not. Recording it
+now.
+
+`detectWallSegments` takes a whole raster and traces everything in it. There is
+no region-of-interest step anywhere between file drop and wall commit —
+`BlueprintPanel` places and scales the image, and calibration measures on it,
+but nothing selects a *part* of it.
+
+**Five of the seven images in batch 2 are composite sheets.** The measured cost
+is not marginal. Cropping `Media (9)` to its plan panel:
+
+| | whole sheet | plan panel |
+|---|---|---|
+| ink fraction | 0.295 | **0.082** |
+| thickness families | 6 | **1** |
+| dominant share | 0.696 | **1.00** |
+
+Six thickness families collapse to one. **The 62% of that sheet which is
+photographs was generating five spurious wall types on its own.** On this
+evidence, sheet composition — not wall rendering — is the dominant source of
+implausibility in real-world input, and the gates are being asked to reject
+noise that a crop would have removed for free.
+
+Two further consequences worth stating:
+
+- **`geom-multi-unit` is worse than noise, it is silent corruption.** Two
+  storeys side by side (`Media (4)`, `Media (5)`) trace into a single wall
+  network with no storey relationship. That is not a refused drawing; it is a
+  *committed* one that is wrong, and no gate is looking for it.
+- **A crop would interact with calibration**, which measures in image
+  coordinates. Cropping after calibrating invalidates the scale. Not designed
+  here; flagged because a crop step cannot be added in isolation.
+
+Not built. It is a UI decision (marquee on the blueprint layer? a "which part is
+the plan?" step?) and this session was documentation and harness only.
+
+### 35. GATE 2 CHECKS SCALE *PROVENANCE*, NOT SCALE *CONSISTENCY* `OPEN`
+
+`gateScaleProvenance` asks where a `metresPerPixel` came from and admits
+`manual`, `dxf-units`, `vector` and `ocr`. It cannot ask whether the drawing
+*has* a single scale.
+
+`Media (9)` does not. Its plan panel states `17'-5"` across and `20'` down; the
+drawn extents give **131.4 px/m horizontally and 113.0 px/m vertically** —
+agreement 85.9%, against a stated aspect of 0.871 and a drawn aspect of 1.013.
+The drawing was stretched to fill its panel.
+
+**A user could measure that drawing perfectly and Gate 2 would pass it**, because
+the measurement would be impeccably sourced and the drawing would still not be
+to scale. Whichever axis they happened to measure along, everything on the other
+axis is 15% wrong — permanently, in committed geometry.
+
+That 15% straddles Gate 3A: at 131 px/m the panel's walls are 59–72 mm and 3A
+refuses hard; at 113 px/m they are 68–84 mm and it partly passes. **So the gate
+that would refuse the best drawing in the corpus does so on a scale-dependent
+judgement, downstream of the gate whose entire subject is scale.**
+
+Detectable cheaply *if* two dimensions are read: measure both, compare, warn on
+disagreement. That needs OCR of dimension strings (Stage 2) or a second manual
+measurement. Not designed here.
+
+### 34. THE JUNCTION RATIO HAS NEVER FIRED ON A REAL IMAGE `OPEN`
+
+Gate 4 has two signals. On seven real sheets, **the ink fraction decided one
+outcome and the junction ratio decided none** — it measured exactly **1.00** on
+every image that produced any segments at all.
+
+This is structural, not a loose threshold. `requireJunction` already discards
+non-junctioning bands upstream, and its escape hatch only opens when *nothing*
+junctions. Segments arriving at Gate 4 therefore junction almost by
+construction.
+
+`MIN_JUNCTION_RATIO`'s only demonstrated catch remains B5c's synthetic
+parallel-strips fixture. That case is real and the gate does catch it — but the
+gate must not be described as validated, and **§10 rule 6 forbids reading seven
+ratios of 1.00 as evidence the threshold is well placed.** It is evidence the
+signal is saturated.
+
+Left alone deliberately. Changing or removing it on this evidence would be
+tuning against seven marketing sheets, which is the failure the rule exists to
+prevent.
+
 ### 33. `unlockCalibration` IS THE SAME DEFECT AS GATE 4 `OPEN`
 
 Found by the audit B5c ran for exactly this class. `unlockCalibration`
@@ -1387,30 +1475,64 @@ wrong thing.
 > **Fifty drawings would have found all of this in week one.** That is the
 > argument for sourcing them, and it no longer rests on principle.
 
-#### Where intake stands · 2026-08-12
+#### Where intake stands · 2026-08-12 (batch 2)
 
 | | |
 |---|---|
-| **Real images measured** | **2** — `docs/testing/corpus-baseline.json` |
-| Both | **refused at `raster-size`**, and both correctly: 400 px and 557 px against a 600 px floor |
-| Intake request | written — [`corpus-request.md`](corpus-request.md) — **and unsent** |
+| **Real images measured** | **9** — [`corpus-baseline-2.csv`](testing/corpus-baseline-2.csv) |
+| **Delivered working drawings among them** | **ZERO** |
+| Batch 2 (7 files) | All pass Gate 1a (1024–1600 px). All **refuse at `scale-provenance`** |
+| Batch 1 (2 files) | Both **refuse at `raster-size`** — 400 px and 557 px against a 600 px floor |
+| Manifest | [`corpus-manifest.md`](testing/corpus-manifest.md) — hash · dims · format · tags · usable-for-detection |
+| Gate report | [`corpus-batch-2-gates.md`](testing/corpus-batch-2-gates.md) |
+| Intake request | **corrected to v2** — [`corpus-request.md`](testing/corpus-request.md) — and still **unsent** |
 | Harness | `npm run corpus <dir>` · headless · one row per drawing |
-| Thresholds | **DERIVED, not validated.** No accuracy claim is permitted from 2 images (§10 rule 6) |
+| Thresholds | **DERIVED, not validated.** No accuracy claim is permitted (§10 rule 6). **No threshold was changed by batch 2 and none may be** |
 
-**What the baseline actually shows, and what it does not.** Two drawings were
-refused before a pixel was decoded. That confirms Gate 1a *fires*; it says
-nothing about whether it fires on the right things, because **no image has yet
-passed it.** A gate with a 100% refusal rate over two samples is
-indistinguishable from a gate that refuses everything.
+> #### THE CORPUS GAP IS NOT "TOO FEW DRAWINGS". IT IS "NO DRAWINGS OF THE RIGHT KIND"
+>
+> Seven real images arrived on 2026-08-12. **Not one is a delivered working
+> drawing.** Five are coloured, furnished property-listing sheets with legends,
+> schedules and photographs on the same page; two are 3D isometric renders that
+> are not plans at all. One panel of one sheet — `Media (9)`'s top-left — is
+> genuine black-and-white line work, and it is a drawing *inside* a marketing
+> composite rather than a drawing that was issued to anyone.
+>
+> **The count is now 9 and the useful count is still 0.** The milestone table
+> below counts *usable* drawings, and batch 2 moved it by zero. Nothing in it
+> may be read as progress toward Stage 1 exit.
+>
+> **The cause was our own request**, which asked for "floor plans you've already
+> delivered, whatever you have, in whatever state" and led with *"the messy ones
+> are the most useful"*. It conflated two independent axes — **artefact class**
+> (must be a working drawing) and **quality** (may be a terrible scan) — so
+> "whatever state" swallowed "delivered drawing". v2 separates them, names the
+> class in the subject line, and lists the excluded classes explicitly.
 
-The `corpus/` directory is gitignored. Only the measured rows and this entry
-are committed.
+**What batch 2 established.** Gate 1a now *discriminates* rather than merely
+refusing: it passes all seven 1024–1600 px images and still refuses the 400 px
+and 557 px ones. Gate 4's ink ceiling refused a real 3D render — `Media (7)`,
+20 segments unwired → **0 wired** — the first gate in this project shown to
+change an outcome on a real image.
+
+**What it did not.** Gate 2 refused 7/7 identically, which is no evidence about
+its threshold at all. The junction ratio measured **1.00 on every image that
+produced segments** and decided nothing — its only demonstrated catch remains
+the synthetic strips fixture (**question 34**). And nothing whatsoever about
+detection accuracy: no wall was compared to a ground truth, because there is
+none.
+
+The `corpus/` directory is gitignored. Only the manifest, the measured rows and
+these entries are committed.
 
 #### What each intake milestone would let us claim
 
+Counted in **usable delivered working drawings**, which is not the same as
+files received. Batch 2 added 7 files and 0 to this table.
+
 | Drawings | Claimable |
 |---|---|
-| **2** *(today)* | The gates run headless and refuse two real images for stated, checkable reasons. **Nothing about accuracy, and nothing about false refusals.** |
+| **0** *(today; 9 files received)* | The gates run headless and refuse nine real images for stated, checkable reasons; Gate 1a discriminates and Gate 4 refused a render. **Nothing about accuracy, and nothing about false refusals.** |
 | **10** | Whether the thresholds refuse drawings they should accept — the first real test of Gate 1a's 600 px and Gate 1b's 40/80 px/m, since a normal delivered plan should pass. One practice's house style, so still not representative. |
 | **20** | Per-tag signal on the two or three axes that actually vary in a real sample — wall rendering and sheet polarity. Enough to say *"hatched walls fail"* with a number behind it. |
 | **50** | The published per-tag pass table `corpus.md` specifies, with per-tag floors. The point at which a detection-accuracy claim is supportable at all, and the point Stage 1 can exit. |
@@ -1454,7 +1576,12 @@ B11 (DXF) inherits the same blind spot.
 - Commit a **manifest** (hash · tags · source · licence) so per-tag pass rates are
   reproducible without redistributing anyone's drawings.
 
-Neither `corpus/` nor a manifest exists yet.
+`corpus/` exists and is gitignored; the manifest exists at
+[`docs/testing/corpus-manifest.md`](testing/corpus-manifest.md). **Point 3 above —
+house-plan sites, "plentiful and Indian, but copyright-encumbered" — is what
+batch 2 turned out to be**, and it warns about copyright rather than about
+artefact class. The class is the bigger problem: those sites publish marketing
+sheets, not issued drawings, so that route cannot supply the corpus at all.
 
 ---
 

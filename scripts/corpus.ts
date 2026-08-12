@@ -41,7 +41,7 @@ import {
   thicknessFamilies,
   type GateResult,
 } from '../src/blueprint/plausibility'
-import { rasterise } from '../src/blueprint/raster'
+import { headlessRaster } from './headlessRaster'
 import type { CalibrationSource } from '../src/store/useDesignStore'
 
 /* ─── image headers, without decoding ─────────────────────────────────── */
@@ -279,22 +279,21 @@ function measure(file: string): Row {
   }
 
   const png = PNG.sync.read(readFileSync(file))
-  const raster = rasterise({
-    element: { data: new Uint8ClampedArray(png.data), width: png.width, height: png.height },
+  // NOT `blueprint/raster.ts`'s `rasterise` — that builds a <canvas> and throws
+  // `document is not defined` headless. This harness imported it for a whole
+  // session without noticing, because nothing had ever reached the decode step:
+  // every corpus image so far refuses at Gate 1a or Gate 2 first. The first
+  // batch to clear Gate 1a is what exposed it. See `headlessRaster.ts` for what
+  // it does and does not reproduce.
+  const raster = headlessRaster({
+    data: new Uint8ClampedArray(png.data),
     width: png.width,
     height: png.height,
-    release: () => {},
-  } as never)
-  if (!raster.ok) {
-    row.message = raster.error
-    return row
-  }
-
-  const segments = detectWallSegments(raster.raster.image, {
-    rasterScale: raster.raster.scale,
   })
+
+  const segments = detectWallSegments(raster.image, { rasterScale: raster.scale })
   const walls = segmentsToWalls(segments, {
-    metresPerPixel: meta.metresPerPixel / raster.raster.scale,
+    metresPerPixel: meta.metresPerPixel / raster.scale,
     origin: { x: 0, z: 0 },
   })
   const thicknesses = walls.map((w) => w.thickness)
@@ -304,8 +303,8 @@ function measure(file: string): Row {
   // Not the losing candidates' evidence: `detectWallSegments` returns
   // segments, not the per-candidate record it judged them on. What a row wants
   // is what the ACCEPTED reading looks like, and that is this.
-  row.inkFraction = round(fractionOfInk(inkMask(raster.raster.image)))
-  row.junctionRatio = round(ratioOfJunctions(segments, raster.raster.scale * 2))
+  row.inkFraction = round(fractionOfInk(inkMask(raster.image)))
+  row.junctionRatio = round(ratioOfJunctions(segments, raster.scale * 2))
 
   const after = gateAfterDetection(thicknesses, meta.metresPerPixel)
   row.gates = { ...row.gates, ...verdicts(after.results) }
