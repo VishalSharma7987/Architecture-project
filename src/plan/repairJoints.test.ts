@@ -1,5 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { findLooseJoints, weldJoints, REPAIR_EXTEND } from './repairJoints'
+import {
+  findLooseJoints,
+  weldJoints,
+  REPAIR_EXTEND,
+  REPAIR_MERGE,
+} from './repairJoints'
 import { detectRoomsUncached } from './rooms'
 import { useDesignStore } from '../store/useDesignStore'
 import { resetStore } from '../test/fixtures'
@@ -246,6 +252,112 @@ describe('★ repair — the properties it has to have', () => {
   it('does not treat the two ends of one wall as a joint', () => {
     const stub: Wall[] = [{ ...wall('a', 0, 0, 0, 0, 0.1), end: { x: 0.01, z: 0 } }]
     expect(findLooseJoints(stub)).toEqual([])
+  })
+})
+
+describe('★ repair — the real plan, which is what found the bugs', () => {
+  /**
+   * `samples/real-plan-cv-untitled.json` — a user's actual saved project.
+   *
+   * Both properties below were already asserted against synthetic fixtures and
+   * both passed, because no synthetic ever put a MERGE and an EXTEND on the
+   * same endpoint. This file does, twice, and it broke both:
+   *
+   *   idempotent            weldJoints(weldJoints(w)) !== weldJoints(w)
+   *   travel <= 160 mm      one endpoint moved 169.4 mm
+   *
+   * Pass 2 now skips any slot pass 1 claimed, and measures travel from the
+   * ORIGINAL endpoint rather than from wherever pass 1 left it.
+   */
+  const real = (): Wall[] => {
+    const doc = JSON.parse(
+      readFileSync('samples/real-plan-cv-untitled.json', 'utf8'),
+    ) as { walls: Wall[] }
+    return doc.walls
+  }
+
+  /**
+   * The bound is `extendReach`, which SCALES WITH THE TARGET'S THICKNESS —
+   * `max(REPAIR_EXTEND, thickness/2 + REPAIR_MERGE)`. For this plan's 276 mm
+   * shell that is 188 mm, not 160.
+   *
+   * Session 3B reported "one endpoint moved 169.4 mm against a 160 mm bound"
+   * and called it a bug. **That was my own misreading of my own code**: 169.4
+   * is inside 188, and no bound was ever exceeded. The real defect was the
+   * double-emit below. Recorded because a wrong diagnosis repeated as verified
+   * is what finding 14 warns about.
+   */
+  it('★ moves each endpoint at most once, within the thickness-scaled bound', () => {
+    const walls = real()
+    const joints = findLooseJoints(walls)
+
+    // TWELVE, not the fourteen the status bar showed before this fix. Two of
+    // the fourteen were the same endpoint counted twice — once merged, once
+    // extended — so the old number was inflated by the bug it was reporting.
+    expect(joints.length).toBe(12)
+
+    // Derived from the plan's own walls, so the assertion cannot drift from
+    // the rule it is checking.
+    const widest = Math.max(...walls.map((w) => w.thickness))
+    const bound = Math.max(REPAIR_EXTEND, widest / 2 + REPAIR_MERGE)
+    expect(bound).toBeCloseTo(0.1879, 4)
+
+    for (const j of joints) {
+      expect(Math.hypot(j.to.x - j.at.x, j.to.z - j.at.z)).toBeLessThanOrEqual(bound)
+    }
+  })
+
+  /**
+   * ★ CONVERGES rather than being idempotent in one call, and that is a
+   * deliberate choice the real plan forced.
+   *
+   * Merging a corner genuinely moves geometry, which can bring a third wall
+   * within reach that was not within reach before. On this file the sequence
+   * is 12 joints, then 1, then 0.
+   *
+   * One-pass idempotence is reachable only by iterating internally to a fixed
+   * point — and that is precisely the bug just fixed, generalised: N passes
+   * inside one call let a single endpoint travel N x REPAIR_EXTEND while the
+   * UI promises one bound. **The per-call promise is what must hold**, so each
+   * call moves each endpoint at most once, and the status bar shows what is
+   * left. The user can see the remaining count and click again.
+   */
+  it('★ converges to a fixed point, moving each endpoint at most once per call', () => {
+    let walls = real()
+    const counts: number[] = []
+
+    for (let pass = 0; pass < 6; pass++) {
+      const joints = findLooseJoints(walls)
+      counts.push(joints.length)
+      // The invariant that matters, on EVERY pass and not just the first.
+      const bound = Math.max(
+        REPAIR_EXTEND,
+        Math.max(...walls.map((w) => w.thickness)) / 2 + REPAIR_MERGE,
+      )
+      for (const j of joints) {
+        expect(Math.hypot(j.to.x - j.at.x, j.to.z - j.at.z)).toBeLessThanOrEqual(bound)
+      }
+      if (joints.length === 0) break
+      walls = weldJoints(walls)
+    }
+
+    // Asserted as the actual sequence, not merely "reaches zero": a run that
+    // oscillated 12, 1, 12, 1 would satisfy "reaches zero eventually" on a
+    // lucky pass and would still be a broken repair.
+    expect(counts).toEqual([12, 1, 0])
+    // …and at the fixed point the same array comes back, so no undo step.
+    expect(weldJoints(walls)).toBe(walls)
+  })
+
+  it('★ emits at most one joint per endpoint', () => {
+    // The defect itself, named directly rather than through its symptoms: one
+    // slot produced two joints and `weldJoints` applied both, last winning.
+    const seen = new Set<string>()
+    for (const j of findLooseJoints(real())) {
+      const slot = `${j.wallId}:${j.which}`
+      expect(seen.has(slot)).toBe(false)
+      seen.add(slot)
+    }
   })
 })
 

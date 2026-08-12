@@ -200,6 +200,18 @@ export function findLooseJoints(walls: Wall[]): LooseJoint[] {
   const joints: LooseJoint[] = []
   /** Where each slot ends up after pass 1, for pass 2 to work from. */
   const moved = slots.map((s) => pointOf(s))
+  /**
+   * Slots pass 1 has already claimed.
+   *
+   * Pass 2 must skip these, and the real plan is what proved it: an endpoint
+   * could be merged into a corner AND then extended onto a wall, emitting two
+   * joints for one slot. `weldJoints` applied both, last one winning — so the
+   * function was NOT idempotent, and the travel bound was measured from the
+   * position pass 1 had already moved to, letting one endpoint travel 169.4 mm
+   * against a 160 mm promise. Both tests passed on the synthetic fixtures,
+   * because none of them ever put a merge and an extend on the same endpoint.
+   */
+  const claimed = new Array<boolean>(slots.length).fill(false)
 
   for (const members of clusters.values()) {
     if (members.length < 2) continue
@@ -214,6 +226,9 @@ export function findLooseJoints(walls: Wall[]): LooseJoint[] {
 
     for (const i of members) {
       moved[i] = target
+      // Claimed either way: a slot that pass 1 decided was already coincident
+      // is still pass 1's answer, and pass 2 must not reopen it.
+      claimed[i] = true
       // Already coincident within the noise guard: nothing to repair, nothing
       // to report. This is what keeps a healthy plan reporting zero.
       if (dist(points[members.indexOf(i)], target) <= JOIN_TOLERANCE) continue
@@ -233,9 +248,17 @@ export function findLooseJoints(walls: Wall[]): LooseJoint[] {
   // short of a shell centreline needs EXTENDING to it, not moving to some
   // other endpoint.
   for (let i = 0; i < slots.length; i++) {
+    // One slot, one answer. See `claimed`.
+    if (claimed[i]) continue
+
     const slot = slots[i]
     const wall = walls[slot.wallIndex]
-    const here = moved[i]
+    // The ORIGINAL position, not `moved[i]`. Belt and braces with the skip
+    // above: measuring travel from a position pass 1 had already shifted is
+    // how one endpoint moved 169.4 mm against a 160 mm bound. Reading the
+    // wall directly means the two passes cannot compose even if the skip is
+    // ever removed.
+    const here = at(wall, slot.which)
     const other = at(wall, slot.which === 'start' ? 'end' : 'start')
 
     let best: { to: Point; distance: number; id: string } | null = null
@@ -280,7 +303,6 @@ export function findLooseJoints(walls: Wall[]): LooseJoint[] {
       to: best.to,
       kind: 'extend',
     })
-    moved[i] = best.to
   }
 
   return joints
@@ -331,10 +353,15 @@ export function weldJoints(walls: Wall[]): Wall[] {
   return walls.map((wall) => {
     const mine = byWall.get(wall.id)
     if (!mine) return wall
-    let next = wall
-    for (const joint of mine) {
-      next = { ...next, [joint.which]: { ...joint.to } }
+    // One slot yields at most one joint now, so a wall has at most two — its
+    // start and its end. Built in one literal rather than by spreading in a
+    // loop, which allocated a Wall per joint and tripped no-accumulating-spread.
+    const start = mine.find((j) => j.which === 'start')
+    const end = mine.find((j) => j.which === 'end')
+    return {
+      ...wall,
+      ...(start ? { start: { ...start.to } } : {}),
+      ...(end ? { end: { ...end.to } } : {}),
     }
-    return next
   })
 }
