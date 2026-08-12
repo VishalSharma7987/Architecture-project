@@ -178,6 +178,33 @@ const mm = (m: number) => Math.round(m * 1000)
  *
  * Scale-free, so it runs first and depends on nothing. Takes the SOURCE
  * dimensions, before any upscale.
+ *
+ * ── What the message may and may not say ──
+ * This gate has DECODED NOTHING. It holds two integers. It therefore cannot
+ * report how wide the walls came out or how dark the ink is, however much more
+ * useful that would be — those need detection, and detection is the thing this
+ * gate exists to run before.
+ *
+ * So the wording is split, deliberately, between the gate that has the
+ * measurement and the gate that has the timing:
+ *
+ *   - the MEASUREMENT of band width lives in Gate 3B, which is post-detection
+ *     and already says "the typical wall here was measured across 2.0 pixels of
+ *     the original image". That is where the transport advice is attached.
+ *   - the TRANSPORT ADVICE lives here too, because this refusal fires first and
+ *     is often the only thing the user ever sees.
+ *
+ * What changed, and why: the old message led with the threshold — "this image
+ * is 494 px … a floor plan needs at least 600 px". Corpus batch 3 showed that
+ * axis is wrong (STATE.md finding 38: a 180 px image reads cleanly and an
+ * 1892 px one does not), so leading with the number taught the user something
+ * untrue about their drawing. The threshold is unchanged and still governs the
+ * refusal; it is simply no longer the explanation offered for it.
+ *
+ * The message must stay true under BOTH hypotheses, because this gate cannot
+ * tell them apart: the file may be a resized copy of a good drawing (batch 3,
+ * where a bigger original exists) or a drawing that is only available small
+ * (where it does not). It names both and asks the user, who knows.
  */
 export function gateRasterSize(
   sourceWidth: number,
@@ -198,9 +225,11 @@ export function gateRasterSize(
     gate: 'raster-size',
     status: 'fail',
     message:
-      `This image is ${longest} px on its longest edge. A floor plan needs at ` +
-      `least ${MIN_SOURCE_LONGEST_PX} px before a wall is more than a few ` +
-      'pixels wide. Re-upload it larger — enlarging this one adds no detail.',
+      `At ${longest} px across, the walls in this drawing come out only a ` +
+      'pixel or two wide — too thin to tell a wall from the line that draws ' +
+      'it. If this arrived through a chat app or a download, the original ' +
+      'will be sharper; send that instead. If it is the only copy you have, ' +
+      'it cannot be traced automatically.',
     measured,
   }
 }
@@ -406,10 +435,17 @@ export function gateThicknessDistribution(
     return {
       gate: 'thickness-distribution',
       status: 'fail',
+      // This is the only gate that HAS the band measurement, so it is the only
+      // one that can offer the transport advice honestly — Gate 1a has decoded
+      // nothing and can only say the same thing from its file dimensions. The
+      // sentence is duplicated between them on purpose: whichever refusal the
+      // user reaches, it is usually the only one they see.
       message:
         `The typical wall here was measured across ${px(medianPx)} pixels of ` +
         'the original image. That is the width of a drawn line, so these are ' +
-        'stroke widths rather than wall thicknesses.',
+        'stroke widths rather than wall thicknesses. If this drawing came ' +
+        'through a chat app or a download it has been resized on the way — ' +
+        'the original will measure properly.',
       measured,
     }
   }

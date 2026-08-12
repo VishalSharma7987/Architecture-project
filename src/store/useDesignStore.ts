@@ -9,6 +9,7 @@ import type { FurnitureType } from '../furniture/catalog'
 import { provenance } from './provenance'
 import { samePlacePoint } from '../units/tolerance'
 import { findLooseJoints, weldJoints } from '../plan/repairJoints'
+import { rememberImage, type ImageObservation } from '../blueprint/transport'
 
 /**
  * A point on the floor plane, in metres.
@@ -704,6 +705,23 @@ type DesignState = {
   plot: Plot | null
   /** Traced-under reference drawing, or null when none is loaded. */
   blueprint: Blueprint | null
+  /**
+   * Natural dimensions of every image supplied this SESSION, newest last.
+   *
+   * The store holds one `blueprint` at a time, so nothing else in the app can
+   * see that four separate drawings all arrived at the same width — which is
+   * the whole of the transport signature (`blueprint/transport.ts`). This is
+   * the smallest thing that can carry it: `setBlueprint` is the choke point
+   * every ingest path goes through, and an observation costs three numbers.
+   *
+   * SESSION state, not design state, and deliberately in neither allow-list:
+   * `persistedFingerprint` would write it into the project file, where it
+   * describes the user's file-sharing habits rather than their building, and
+   * `snapshotOf` would let undo un-observe something that was observed. Both
+   * are allow-lists, so omission is the mechanism — `transport.test.ts` asserts
+   * it stays omitted rather than trusting that.
+   */
+  imagesSeen: ImageObservation[]
   /** Name of the open project, or null for an unsaved draft. */
   projectName: string | null
   aiPanelOpen: boolean
@@ -1361,6 +1379,10 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   northOffset: 0,
   plotFacing: DEFAULT_FACING,
   blueprint: null,
+  // Session-scoped and deliberately NOT reset by 'new project': how a user's
+  // files reach them does not change because they closed a design, and the
+  // signature needs two observations to say anything at all.
+  imagesSeen: [],
   projectName: null,
   aiPanelOpen: false,
   furniturePanelOpen: false,
@@ -1634,7 +1656,19 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       if (previous?.src && previous.src !== blueprint?.src) {
         URL.revokeObjectURL(previous.src)
       }
-      return { blueprint }
+      // Clearing the underlay is not an observation about a file, and a
+      // placement restored from a saved project (`src === null`) is a
+      // remembered image rather than one the user just supplied — neither adds
+      // evidence about how their images travel.
+      if (!blueprint || blueprint.src === null) return { blueprint }
+      return {
+        blueprint,
+        imagesSeen: rememberImage(state.imagesSeen, {
+          fileName: blueprint.fileName,
+          width: blueprint.width,
+          height: blueprint.height,
+        }),
+      }
     }),
 
   updateBlueprint: (patch) =>

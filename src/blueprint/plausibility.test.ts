@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  MIN_SOURCE_LONGEST_PX,
   gateAfterDetection,
   gateBeforeDetection,
   gateRasterSize,
@@ -190,6 +191,32 @@ describe('★ B5b — every threshold, both sides', () => {
     expect(gateRasterSize(601, 400).status).toBe('pass')
     // Longest edge, not width — a portrait sheet is judged the same way.
     expect(gateRasterSize(400, 601).status).toBe('pass')
+  })
+
+  /**
+   * The message was previously pinned by NOTHING, so it could have been
+   * rewritten to say anything without a test noticing — which matters more
+   * than usual here, because it is the only thing most users of this gate ever
+   * see, and because corpus batch 3 showed the old wording taught them
+   * something untrue (STATE.md finding 38).
+   *
+   * Pinned by PROPERTIES rather than by the exact sentence, so the wording can
+   * be improved without a test edit but its two obligations cannot be dropped:
+   *
+   *   1. it must not present 600 px as what a drawing needs — the corpus has a
+   *      180 px image that reads and an 1892 px one that does not;
+   *   2. it must stay true whether or not a larger original exists, because
+   *      this gate has decoded nothing and cannot tell.
+   */
+  it('raster size: the refusal explains the drawing, not the threshold', () => {
+    const message = gateRasterSize(494, 473).message
+
+    expect(message).toContain('494 px')
+    expect(message).not.toContain(String(MIN_SOURCE_LONGEST_PX))
+    expect(message).toMatch(/pixel or two wide|too thin/)
+    // Both branches present: a resized copy, and a drawing only available small.
+    expect(message).toMatch(/chat app|download/)
+    expect(message).toMatch(/only copy/)
   })
 
   /**

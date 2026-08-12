@@ -25,8 +25,13 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { extname, join, resolve } from 'node:path'
 import { PNG } from 'pngjs'
-import { detectWallSegments, inkMask } from '../src/blueprint/detectWalls'
-import { thicknessFamilies } from '../src/blueprint/plausibility'
+import {
+  detectWallSegments,
+  inkMask,
+  paperContrastMasks,
+  type RasterLike,
+} from '../src/blueprint/detectWalls'
+import { MAX_INK_FRACTION, thicknessFamilies } from '../src/blueprint/plausibility'
 import { headlessRaster } from './headlessRaster'
 
 const round = (n: number) => Number(n.toFixed(3))
@@ -81,6 +86,43 @@ console.log(
     '  thicknessesPx',
 )
 
+/**
+ * Paints a mask into a pure black-on-white raster so it can be re-detected.
+ *
+ * A PROXY for the private `segmentsFromMask`, and reported as one: on a bimodal
+ * 0/255 image Otsu lands between the modes so `inkMask` recovers the mask
+ * exactly, but it is not the same call. Validated by checking that the best
+ * candidate's segment count equals the real `detectWallSegments` output — it
+ * did, on all four batch-3 drawings.
+ *
+ * Nothing in `detectWalls.ts` was opened up for this. `inkMask` and
+ * `paperContrastMasks` are both already exported, and `candidateMasks` is
+ * `[inkMask(image), ...paperContrastMasks(image)]`.
+ */
+function paintMask(mask: Uint8Array, width: number, height: number): RasterLike {
+  const data = new Uint8ClampedArray(width * height * 4)
+  for (let i = 0; i < mask.length; i++) {
+    const v = mask[i] ? 0 : 255
+    data[i * 4] = v; data[i * 4 + 1] = v; data[i * 4 + 2] = v; data[i * 4 + 3] = 255
+  }
+  return { data, width, height }
+}
+
+/**
+ * `--candidates` breaks the winner down by mask, which is what answered "what
+ * do the four binarisations do with a photographed print?" for batch 3:
+ *
+ *   inkMask 0.097 -> 31 segments and WINS; the two paper-contrast readings
+ *   0.076 -> 10 each; the fourth 0.000 -> 0.
+ *
+ * Two things fell out. Plain Otsu beat both paper-contrast masks on real paper,
+ * which is the case they were written for. And the FOURTH candidate — the
+ * lighter-than-paper mask, for `sheet-blueprint` — has produced zero segments
+ * on all eleven images ever measured, because the corpus holds no blueprints.
+ * Unexercised, not dead.
+ */
+const SHOW_CANDIDATES = process.argv.includes('--candidates')
+
 for (const file of files) {
   const png = PNG.sync.read(readFileSync(file))
   const name = file.split(/[\\/]/).pop()!.replace('.png', '')
@@ -89,6 +131,23 @@ for (const file of files) {
     width: png.width,
     height: png.height,
   })
+
+  if (SHOW_CANDIDATES) {
+    const masks = [inkMask(image), ...paperContrastMasks(image)]
+    console.log(`\n${name} — ${masks.length} candidates`)
+    masks.forEach((mask, i) => {
+      const fraction = inkFractionOf(mask)
+      const found = detectWallSegments(paintMask(mask, image.width, image.height), {
+        rasterScale: scale,
+      })
+      console.log(
+        `  ${i}  ${(i === 0 ? 'inkMask' : `paperContrast[${i - 1}]`).padEnd(18)}` +
+          `ink ${round(fraction).toString().padStart(6)}  ` +
+          `segs ${String(found.length).padStart(4)}  ` +
+          (fraction > MAX_INK_FRACTION ? `REJECTED by the ${MAX_INK_FRACTION} ceiling` : 'ok'),
+      )
+    })
+  }
 
   const ink = inkFractionOf(inkMask(image))
   const segments = detectWallSegments(image, { rasterScale: scale })

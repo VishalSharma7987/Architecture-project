@@ -1231,6 +1231,171 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 42. THE PROPOSED GATE ARCHITECTURE `OPEN` · blocked on one native-resolution drawing
+
+Where findings 38–41 lead. **Designed, argued, and deliberately not built** — every
+threshold in it would be derived from 474 px thumbnails and one JPEG crop, which
+is the §10 rule 6 failure with extra steps.
+
+| | |
+|---|---|
+| **Decode guard** | Not a gate, no threshold talk in its message. Refuses the undecodable and the absurd only. Replaces Gate 1a's *role*; the 600 px number goes. |
+| **Readability check** | **Scale-free, post-detection, pre-calibration.** Median band thickness in SOURCE px, with family count and dominant share as supporting evidence, never alone. This is what Gate 1a has been pretending to be. |
+| **Gate 2** | Unchanged. |
+| **Gate 1b** | Retained but **demoted** — it answers a different question (finding 41), and where the two disagree that is information. |
+
+**Use the median, not the family count.** The family count conflates *unreadable*
+with *heavily annotated*: img4 at 1892 px still shows 5 families because it is
+full of furniture symbols and dimension lines, and refusing it for that would be
+wrong. The median band survives annotation — thin furniture strokes do not move
+the middle of a 64-segment distribution.
+
+The discriminator, measured:
+
+| | median band, file px | outcome of a smooth ×2 upsample |
+|---|---|---|
+| control at 474 px | 5.1 | full recovery of the native reading |
+| img4 | 7.1 | partial — 6 → 4 families, bbox becomes exactly square |
+| img3 | **2.1** | **none** — 9 → 6 families, still failing |
+
+**Blocked, and the block is one email.** Reproduce with `npm run corpus:resample`
+and `npm run corpus:geometry` the moment a full-resolution drawing arrives.
+
+### 41. GATE 1b IS A PROXY TOO `OPEN`
+
+Finding 38 says Gate 1a's axis is wrong. Replacing it with px/m would be
+replacing one proxy with a better-motivated proxy, not with a measurement.
+
+`gateResolution` converts px/m into an assumed **115 mm partition**. It cannot
+see how that partition was *drawn*, and that is what decides whether it can be
+read:
+
+- **Solid or tinted (filled) walls** — the band is a blob and survives to ~2 px.
+  The control still reads as one clean family at **180 px**, where its band is
+  1.9 file px.
+- **Outlined walls** — needs line + gap + line resolvable *and* the lines dark
+  enough to threshold consistently. img3 has a 7 px gap and still fails
+  (finding 40).
+
+So the two disagree in both directions: img4 **fails** 1b at 35.1 px/m while its
+bands are 7 px and it partly reads; the control **passes nothing** and reads
+perfectly. The honest minimum is rendering-dependent, and no single px/m number
+expresses it.
+
+### 40. img3's DEFECT IS LINE WEIGHT, NOT RESOLUTION `OPEN`
+
+`image(12).png` is the batch-3 drawing that upsampling cannot rescue, and the
+reason is not its 473 px width.
+
+**The darkest 0.5% of the entire image sits at luminance 89. There is no true
+black anywhere in it.** Its walls are outlined — two faces about 7 px apart,
+which is resolvable — but each face is a 1 px grey line. Otsu finds *a*
+threshold, so segments appear; the faces threshold inconsistently from run to
+run along their length, so they are never paired into a wall, and the detector
+reports the lines themselves. Hence 9 thickness families and a 2.1 px median
+where real walls would be 2.8–5.6 px.
+
+**Upsampling cannot add contrast.** ×4 bicubic moves it from 9 families to 6 and
+no further, while the same treatment restores the control exactly. A drawing
+whose line weight was chosen for a larger canvas is not a small drawing; it is a
+drawing rendered below its own line weight, and only the original fixes it.
+
+Recorded because it is the clearest counter-example to "just make it bigger",
+and because it is the case the readability check of finding 42 must catch.
+
+### 39. `raster.ts:135`'s NEAREST-NEIGHBOUR UPSCALE COSTS 2.4% OF THE GEOMETRY `OPEN` · needs its own session
+
+Controlled, single-variable: the same 474 px file upscaled to the same 1400 px
+output, `headlessRaster` a no-op in both, only the kernel differing.
+
+| upscale kernel | families | dominant | bbox | vs ground truth 698 × 689 |
+|---|---|---|---|---|
+| **bicubic** | 2 | 0.91 | **698 × 689** | **exact** |
+| **nearest** (production) | 3 | 0.82 | 715 × 697 | **2.4% too large** |
+
+Production takes the second row. The comment above the line gives its reasoning:
+
+> *"smoothing would ramp a crisp 1px wall into a grey gradient that thresholding
+> then splits at some arbitrary point, eating the wall's edges. Nearest-neighbour
+> keeps the ink binary, so a hairline becomes a clean band of exactly the same
+> shape."*
+
+**That reasoning is sound for a synthetic crisp line and false for anything
+real.** Real input has already been through a camera, a scan, a JPEG or a
+resize, so there is no binary ink to keep. Nearest-neighbour replicates the greys
+already present into blocky stair-steps, and the stair-steps become spurious
+thickness families and an inflated bounding box.
+
+**Not changed here.** One controlled test on one drawing is a strong signal, not
+a validation, and `raster.ts`'s decision was reasoned rather than accidental —
+overturning it needs more than one fixture, which needs the corpus. It is the
+highest-value single line in the codebase to revisit once drawings arrive.
+
+### 38. GATE 1a's AXIS IS WRONG — PIXEL COUNT DOES NOT PREDICT READABILITY `OPEN`
+
+The measurement, across a factor of ten in pixel count:
+
+| image | source px | thickness families |
+|---|---|---|
+| control (Media(9) plan panel) | **180** | **1** |
+| control | 830 | 1 |
+| img4 | 473 | 6 |
+| img4 | **1892** | **5** |
+| img3 | 473 | 9 |
+| img3 | 1892 | 6 |
+
+**A 180 px image reads cleanly. An 1892 px image does not.** The family count
+tracks *which drawing it is* — its line weight, wall rendering and annotation
+load — and never how big it is.
+
+This is stronger than the argument batch 3 first suggested. That argument was
+that Gate 1a *under*-refuses: img1 and img2 passed at 693 and 842 px and then
+failed Gate 1b at 36.0 and 33.6 px/m, so the 600 px floor is too **low**, not too
+high. True, and it points at the same conclusion — but moving a threshold along
+an axis that does not correlate with the outcome buys nothing.
+
+**Also settled here: upsampling is not futile.** The predicted result was that it
+recovers nothing. With a smooth kernel it recovers the control's native reading
+*exactly* — 10 segments, 1 family, dominant 1.00, bbox 698 × 689 — from a 474 px
+copy, and still does from 360, 300 and 240 px, breaking only at 180. With
+nearest-neighbour it recovers nothing (finding 39). What it cannot recover is
+contrast that was never there (finding 40).
+
+**Shipped from this: the message only.** `gateRasterSize` still refuses at 600 px
+— the threshold is untouched — but it no longer explains itself with a number
+that would teach the user something untrue about their drawing. The architecture
+that follows is finding 42, and it is blocked.
+
+### 37. A FIXED-WIDTH TRANSPORT PIPELINE IS RESHAPING EVERY DRAWING WE RECEIVE `ADDRESSED 2026-08-12`
+
+Corpus batch 3: `474×693`, `474×842`, `473×496`, `473×494`. Four unrelated CAD
+drawings, four aspect ratios — 0.68, 0.56, 0.95, 0.96 — **all four within one
+pixel of the same width.** Nothing about four different drawings makes their
+widths agree. A share, download or chat step normalised every one of them.
+
+Every gate then refused them, each in its own vocabulary, and every refusal was
+really about that single fact. **The user could have fixed all of it by
+re-sending the files another way, and nothing told them so.**
+
+**Shipped:** [`blueprint/transport.ts`](../src/blueprint/transport.ts) — a cross-file check needing no pixels
+decoded, surfaced in `BlueprintPanel` as a note, never a refusal. The store holds
+one `blueprint` at a time, so `imagesSeen` (session-scoped, in neither the
+persistence nor the undo allow-list, asserted by test) is what carries the
+observation.
+
+**Deliberately NOT shipped: the within-file provenance signals.** Both were
+measured and both are real — edge softness rises monotonically with downsampling
+(0.30 native → 0.48 at 474 px → 0.76 at 180 px), and img3 contains no true black
+at all. **Neither separates a downsampled copy from a small native vector
+export**, because a native export anti-aliases its thin lines too. A provenance
+claim on that evidence would be a guess with a number attached. Recorded as
+measured, unshipped.
+
+**Known false positive:** a practice exporting every sheet at a fixed pixel width
+from CAD trips this, and *"the originals will work"* is wrong advice for them.
+Accepted — it is a note costing one sentence, naming a checkable fact about their
+own files, against silence in the case that has actually occurred.
+
 ### 36. THE DETECTOR HAS NO CROP STEP, AND MOST REAL SHEETS NEED ONE `OPEN`
 
 **Was this already recorded?** No. `corpus.md` had `geom-multi-unit` ("several

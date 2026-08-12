@@ -13,6 +13,7 @@ import {
   gateAfterDetection,
   gateBeforeDetection,
 } from '../blueprint/plausibility'
+import { detectFixedAxisTransport, transportMessage } from '../blueprint/transport'
 import { detectAndPlaceOpenings } from '../blueprint/detectOpenings'
 import { provenance } from '../store/provenance'
 import { loadBlueprintFromFile } from '../blueprint/load'
@@ -94,6 +95,11 @@ const scaleLabel = (metresPerPixel: number) => {
  */
 export function BlueprintPanel() {
   const blueprint = useDesignStore((s) => s.blueprint)
+  const imagesSeen = useDesignStore((s) => s.imagesSeen)
+  const transportSignature = detectFixedAxisTransport(imagesSeen)
+  const transportNote = transportSignature
+    ? transportMessage(transportSignature)
+    : null
   const calibrating = useDesignStore((s) => s.blueprintCalibrating)
   const setBlueprintPanelOpen = useDesignStore((s) => s.setBlueprintPanelOpen)
   const setBlueprintCalibrating = useDesignStore(
@@ -696,6 +702,23 @@ export function BlueprintPanel() {
             data-testid="blueprint-error"
           >
             {status.message}
+          </p>
+        )}
+
+        {/*
+          The one thing this panel cannot work out on its own. It sees a single
+          `blueprint`; the signature is that SEVERAL images arrived at the same
+          width, which only the session's record can show. Placed directly under
+          the refusal because it is usually the reason for it — and shown
+          whether or not a gate has refused, since a user who has fed in three
+          resized drawings wants to know before the fourth.
+        */}
+        {transportNote && (
+          <p
+            className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] leading-relaxed text-amber-800"
+            data-testid="blueprint-transport-note"
+          >
+            {transportNote}
           </p>
         )}
 
