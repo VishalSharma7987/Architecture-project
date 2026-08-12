@@ -26,7 +26,11 @@ import { writeFileSync } from 'node:fs'
 import { PNG } from 'pngjs'
 import { drawPlan } from '../src/plan/draw'
 import { resolveRoomsUncached } from '../src/rooms/resolve'
-import type { RoomLabel, Wall } from '../src/store/useDesignStore'
+import type { Point, RoomLabel, Wall } from '../src/store/useDesignStore'
+import { SNAP_RADIUS_PX, resolveWallPoint } from '../src/plan/snap'
+import { snapToGrid } from '../src/plan/viewport'
+import { findLooseJoints } from '../src/plan/repairJoints'
+import { GRID_STEP } from '../src/units/length'
 
 type M = [number, number, number, number, number, number]
 const mul = (m: M, n: M): M => [
@@ -309,3 +313,72 @@ for (const [name, scale, cx, cz] of VIEWS) {
   writeFileSync(`${OUT}/plan-${name}.png`, png())
   console.log(`wrote plan-${name}.png at ${scale} px/m`)
 }
+
+/* ── B28: draw a closed room by hand, and look at what the user sees ── */
+
+/**
+ * Simulates the editor's drawing loop with the REAL `resolveWallPoint`, the
+ * real grid step and the real snap radius, then renders each interesting frame.
+ *
+ * This is as close to "open the app and draw a room" as an environment with no
+ * browser gets: every decision below is production code, and only the pointer
+ * positions are scripted. What it cannot show is feel — whether the snap grabs
+ * when you did not want it — which is why the frames are looked at rather than
+ * asserted.
+ */
+const SNAP_SCALE = 44
+const CELL = GRID_STEP.ftin.cell
+const snapRadius = SNAP_RADIUS_PX / SNAP_SCALE
+
+/** A hand aiming at a point and missing by a few centimetres. */
+const hand = (x: number, z: number, jx = 0.03, jz = -0.02) => ({ x: x + jx, z: z + jz })
+
+const frames: { name: string; walls: Wall[]; anchor: Point | null; cursor: Point; snap: ReturnType<typeof resolveWallPoint>['target'] }[] = []
+const drawn: Wall[] = []
+let anchor: Point | null = null
+let n = 0
+
+const step = (name: string, world: Point, suppressed = false, commit = true) => {
+  const r = resolveWallPoint({
+    walls: drawn, world, grid: snapToGrid(world, CELL), radius: snapRadius, suppressed,
+  })
+  frames.push({ name, walls: [...drawn], anchor, cursor: r.point, snap: r.target })
+  if (!commit) return
+  if (anchor) {
+    drawn.push({
+      id: `d${n++}`, start: anchor, end: r.point,
+      height: 3, thickness: 0.23, openings: [], material: 'white-paint',
+    })
+  }
+  anchor = r.point
+}
+
+step('01-first-click', hand(0, 0))
+step('02-second', hand(5, 0))
+step('03-third', hand(5, 4))
+step('04-fourth', hand(0, 4))
+// Returning to the start: this is the frame that matters.
+step('05-closing-hover', hand(0, 0, 0.035, 0.025), false, false)
+step('06-closed', hand(0, 0, 0.035, 0.025))
+// A partition drawn to the middle of the south wall, and to a point along it.
+step('07-midpoint-hover', hand(2.5, 4, 0.02, 0.02), false, false)
+step('08-centreline-hover', hand(3.8, 4, 0.01, 0.015), false, false)
+// The same aim with Alt held.
+step('09-alt-suppressed', hand(0, 0, 0.035, 0.025), true, false)
+
+console.log('')
+for (const f of frames) {
+  const { ctx, png } = planContext(760, 620)
+  drawPlan(ctx, {
+    width: 760, height: 620,
+    viewport: { center: { x: 2.5, z: 2 }, scale: SNAP_SCALE },
+    walls: f.walls, furniture: [], rooms: [],
+    selection: null, units: 'ftin', anchor: f.anchor, cursor: f.cursor,
+    showCursor: true, snap: f.snap,
+  })
+  writeFileSync(`${OUT}/snap-${f.name}.png`, png())
+  console.log(`snap-${f.name}.png  cursor ${f.cursor.x.toFixed(4)},${f.cursor.z.toFixed(4)}  snap ${f.snap?.kind ?? '—'}`)
+}
+const closed = drawn.length === 4 && drawn[3].end.x === drawn[0].start.x && drawn[3].end.z === drawn[0].start.z
+console.log(`\nwalls drawn: ${drawn.length}   chain closed bit-identically: ${closed}`)
+console.log(`loose joints: ${findLooseJoints(drawn).length}`)

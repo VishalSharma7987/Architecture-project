@@ -1269,6 +1269,41 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 44. ENDPOINT SNAP `SHIPPED 2026-08-12 by B28` · closes the drawing half of Session 1
+
+Session 1 measured why plans fail to enclose rooms: endpoints land **1–152 mm
+apart**. Session 2 established that welding at DETECTION time is the wrong
+layer — the model stays wrong and every consumer (3D, BOQ, DXF, IFC,
+`sharedEnds`) re-implements the tolerance. **B28 fixes it at the layer where
+the coordinate is created.**
+
+[`plan/snap.ts`](../src/plan/snap.ts), pure and in world metres. Targets: wall **endpoint**,
+**midpoint**, and a point on a wall's **centreline**. `resolveWallPoint` holds
+the whole snap-or-grid decision so every rule is testable without a DOM.
+
+| Decision | Argument |
+|---|---|
+| **Priority** endpoint → midpoint → centreline | By what the target CLAIMS, not by distance. A centreline is a LINE and is by construction never further than an endpoint on the same wall — the endpoint lies on it — so ranking by distance would mean the endpoint could never win and the feature would silently never do its job. Ranking by distance breaks 8 tests. |
+| **Radius 12 screen px** | Derived from two bounds: it must exceed one grid cell on screen (152.4 mm = 6.7 px at the default 44 px/m) or grid snap wins routinely; and stay well under the narrowest door (0.75 m = 33 px) or it grabs the far jamb. Also above `HIT_TOLERANCE_PX` (7), so a snap engages before the same position would pick. |
+| **Snap beats grid, unrounded** | Rounding a snapped point would move it by up to half a cell — 76 mm, the middle of the band Session 1 measured. Grid is the fallback. |
+| **Alt suppresses** | The only unclaimed modifier: Ctrl/Cmd is wheel-zoom and undo, Shift is the compass free-rotate and the walker's run. Falls back to GRID, never to a raw coordinate — a modifier that produced an unsnapped coordinate would be a supported way to reintroduce the bug. |
+| **Wall tool only** | Walls are the only elements that must JOIN. Openings project onto their wall and cannot be loose; stairs and unenclosed spaces stand IN a room; furniture wants a wall FACE, which is a different target set. |
+| **A corner is ONE target** | The thing worth snapping to is the COORDINATE, not the wall. A third wall drawn to a corner joins both walls already there; two targets at one place would force a meaningless choice and stack two indicators. `wallIds` carries both. |
+
+**L2 is not violated.** The target is on screen, under the cursor, before the
+button goes down, and Alt suppresses it. The user is clicking the indicator.
+
+**What looking revealed.** Every target lies on a wall's centreline, which is
+INSIDE the wall body — so the marker is always drawn over dark poché, never
+over paper. The first build's midpoint triangle was legible only where its tip
+cleared the wall. Fixed with a paper-coloured halo stroked under the marker.
+**This was invisible to the tests and visible in the first frame**, which is the
+argument for B26's rule that looking is part of done.
+
+**Still open:** perpendicular, tangent and extension snaps; snapping while
+MOVING an existing endpoint (that tool does not exist yet); and face-snapping
+for furniture.
+
 ### 43. COULD `scene/*` CONSUME `wallBody.ts` TOO? `OPEN` · argued, not built
 
 B26's brief asked for the argument and no code. The argument is **yes for the

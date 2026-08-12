@@ -15,6 +15,7 @@ import { selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
 import { SELECTION } from '../scene/config'
 import { doorSwing, planBounds, pointAlongWall } from '../scene/wallGeometry'
 import { glazingLines, sharedEnds, wallBodyQuad } from './wallBody'
+import type { SnapTarget } from './snap'
 import type { LooseJoint } from './repairJoints'
 import {
   buildableRect,
@@ -46,6 +47,11 @@ const COLORS = {
   gridMajor: '#c7cedb',
   axis: '#a3adbe',
   wallFill: '#334155',
+  /** The snap indicator. Warm, so it reads against the cool wall/grid palette. */
+  snap: '#b45309',
+  snapFill: 'rgba(251, 191, 36, 0.92)',
+  /** Paper-coloured halo, so the marker reads over the wall it sits on. */
+  snapHalo: 'rgba(247, 248, 250, 0.95)',
   // `vertex` went with the 2.5 px dot B26 deleted. The dot existed only to
   // mask the square notch two butting walls left at a corner, which the
   // half-thickness pad now fills — leaving it would have put a blob on top of
@@ -309,6 +315,15 @@ export type PlanScene = {
   spaceCorner?: Point | null
   /** Snapped cursor position, or null when the pointer is off-canvas. */
   cursor: Point | null
+  /**
+   * What the wall endpoint is snapping to, or null.
+   *
+   * Drawn from the POINTER-MOVE path, which is what makes the indicator appear
+   * before the click rather than after it — the editor computes this and the
+   * committed point with one function, so the marker cannot disagree with what
+   * clicking would do.
+   */
+  snap?: SnapTarget | null
   /** Suppresses the snap marker for tools that act on walls, not the grid. */
   showCursor: boolean
   /** Reference image to trace, or null/absent when there is none to show. */
@@ -360,6 +375,7 @@ export function drawPlan(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   drawDraft(ctx, scene)
   drawSpaceDraft(ctx, scene)
   if (scene.showCursor) drawCursor(ctx, scene)
+  if (scene.snap) drawSnapIndicator(ctx, scene, scene.snap)
   drawCalibration(ctx, scene)
 }
 
@@ -1656,6 +1672,64 @@ function outwardNormal(
 function readingAngle(ux: number, uy: number): number {
   const angle = Math.atan2(uy, ux)
   return Math.abs(angle) > Math.PI / 2 ? angle + Math.PI : angle
+}
+
+/**
+ * The snap indicator: a distinct shape per target kind, at the target.
+ *
+ * Distinct shapes rather than one marker in three colours, because the three
+ * targets mean different things and the user has to be able to AVOID the one
+ * they did not want — a snap you cannot tell apart is a snap you cannot
+ * refuse. The shapes are the drafting conventions: a square for a vertex, a
+ * triangle for a midpoint, a circle for a point on a line.
+ *
+ * Drawn last, over the walls and over the draft rubber-band, because it is the
+ * thing being aimed at.
+ */
+function drawSnapIndicator(
+  ctx: CanvasRenderingContext2D,
+  scene: PlanScene,
+  snap: SnapTarget,
+) {
+  const { width, height, viewport: vp } = scene
+  const p = worldToScreen(snap.point, vp, width, height)
+  const r = 6
+
+  // The shape, traced once and stroked twice.
+  //
+  // Every one of these targets lies ON a wall's centreline, which is INSIDE
+  // the wall body — so the marker is always drawn over dark poché, never over
+  // paper. Looking at the first build showed exactly that: the midpoint
+  // triangle was legible only where its tip cleared the wall. The halo is a
+  // wide paper-coloured stroke laid down first, so the marker reads against
+  // the wall it is necessarily sitting on.
+  const trace = () => {
+    ctx.beginPath()
+    if (snap.kind === 'endpoint') {
+      ctx.rect(p.x - r, p.y - r, r * 2, r * 2)
+    } else if (snap.kind === 'midpoint') {
+      ctx.moveTo(p.x, p.y - r)
+      ctx.lineTo(p.x + r, p.y + r * 0.7)
+      ctx.lineTo(p.x - r, p.y + r * 0.7)
+      ctx.closePath()
+    } else {
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+    }
+  }
+
+  ctx.save()
+  trace()
+  ctx.strokeStyle = COLORS.snapHalo
+  ctx.lineWidth = 4.5
+  ctx.stroke()
+
+  trace()
+  ctx.fillStyle = COLORS.snapFill
+  ctx.fill()
+  ctx.strokeStyle = COLORS.snap
+  ctx.lineWidth = 1.75
+  ctx.stroke()
+  ctx.restore()
 }
 
 function drawDraft(ctx: CanvasRenderingContext2D, scene: PlanScene) {

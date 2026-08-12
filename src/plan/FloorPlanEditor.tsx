@@ -22,6 +22,12 @@ import {
   projectOntoWall,
 } from '../scene/wallGeometry'
 import { GRID_STEP } from '../units/length'
+import {
+  SNAP_RADIUS_PX,
+  resolveWallPoint,
+  type SnapResult,
+  type SnapTarget,
+} from './snap'
 import { vastuZones, type ZoneCell } from '../vastu/zones'
 import { drawPlan, pickStair } from './draw'
 import { findLooseJoints, type LooseJoint } from './repairJoints'
@@ -76,6 +82,8 @@ export function FloorPlanEditor() {
   const viewportRef = useRef<Viewport>(createViewport())
   const cursorRef = useRef<Point | null>(null)
   const anchorRef = useRef<Point | null>(null)
+  /** The snap target under the cursor, drawn as the indicator. */
+  const snapRef = useRef<SnapTarget | null>(null)
   const sizeRef = useRef({ width: 0, height: 0 })
   const frameRef = useRef<number | null>(null)
   const panRef = useRef<{
@@ -148,6 +156,7 @@ export function FloorPlanEditor() {
       units: useDesignStore.getState().units,
       showDimensions: useDesignStore.getState().showDimensions,
       anchor: anchorRef.current,
+      snap: snapRef.current,
       spaceCorner: spaceDragRef.current,
       looseJoints: looseRef.current,
       cursor: cursorRef.current,
@@ -209,6 +218,47 @@ export function FloorPlanEditor() {
         GRID_STEP[useDesignStore.getState().units].cell,
       ),
     [worldAt],
+  )
+
+  /**
+   * Where a WALL endpoint goes: an existing wall's geometry if one is in
+   * range, otherwise the grid.
+   *
+   * ── Snap beats grid, and returns the target EXACTLY ──
+   * No grid rounding is applied to a snapped point. Rounding it would defeat
+   * the entire feature: the target is only worth snapping to because landing
+   * on it makes two walls share a coordinate bit-for-bit, and the grid would
+   * move it by up to half a cell — 76 mm, which is the middle of the 1–152 mm
+   * band Session 1 measured as the reason rooms fail to close.
+   *
+   * ── Wall tool only ──
+   * `snappedAt` is deliberately left alone. Stairs and unenclosed spaces place
+   * on the grid because they stand IN a room rather than joining anything;
+   * openings never touch either function, since they project onto the wall
+   * they are dropped on and so cannot be loose; and furniture wants to meet a
+   * wall's FACE, which is a different target set and a different session.
+   * Walls are the only elements that have to JOIN, and joining is the finding.
+   *
+   * ── Alt suppresses ──
+   * Alt is the only unclaimed modifier: Ctrl/Cmd is wheel-zoom and undo,
+   * Shift is the compass's free-rotate and the walker's run. It is also the
+   * conventional "ignore snapping for a moment" key, and holding it falls back
+   * to grid rather than to nothing — an unsnapped free coordinate is exactly
+   * the state this session exists to stop producing.
+   */
+  const wallPointAt = useCallback(
+    (clientX: number, clientY: number, suppressed: boolean): SnapResult => {
+      return resolveWallPoint({
+        walls: useDesignStore.getState().walls,
+        world: worldAt(clientX, clientY),
+        grid: snappedAt(clientX, clientY),
+        // Screen pixels to world metres: the radius is constant on screen, so
+        // it behaves the same at every zoom.
+        radius: SNAP_RADIUS_PX / viewportRef.current.scale,
+        suppressed,
+      })
+    },
+    [snappedAt, worldAt],
   )
 
   // Wheel handling, Figma-style: two-finger scroll pans the canvas, and pinch
@@ -520,7 +570,11 @@ export function FloorPlanEditor() {
     }
 
     if (tool === 'wall') {
-      const point = snappedAt(e.clientX, e.clientY)
+      // The SAME function the pointer-move indicator used, so what is drawn
+      // before the click is what the click commits. Anything else would be a
+      // preview that lies.
+      const { point, target } = wallPointAt(e.clientX, e.clientY, e.altKey)
+      snapRef.current = target
       const anchor = anchorRef.current
 
       // A zero-length segment is rejected by the store, which is what makes the
@@ -732,9 +786,20 @@ export function FloorPlanEditor() {
 
     // The calibration rubber-band has to track the pointer exactly, or the
     // preview would disagree with the point the click actually records.
-    cursorRef.current = useDesignStore.getState().blueprintCalibrating
-      ? worldAt(e.clientX, e.clientY)
-      : snappedAt(e.clientX, e.clientY)
+    const { blueprintCalibrating, tool: activeTool } = useDesignStore.getState()
+    if (blueprintCalibrating) {
+      // The calibration rubber-band has to track the pointer exactly, or the
+      // preview would disagree with the point the click actually records.
+      cursorRef.current = worldAt(e.clientX, e.clientY)
+      snapRef.current = null
+    } else if (activeTool === 'wall') {
+      const { point, target } = wallPointAt(e.clientX, e.clientY, e.altKey)
+      cursorRef.current = point
+      snapRef.current = target
+    } else {
+      cursorRef.current = snappedAt(e.clientX, e.clientY)
+      snapRef.current = null
+    }
     requestDraw()
   }
 
