@@ -27,7 +27,8 @@ import { PNG } from 'pngjs'
 import { drawPlan } from '../src/plan/draw'
 import { resolveRoomsUncached } from '../src/rooms/resolve'
 import type { Point, RoomLabel, Wall } from '../src/store/useDesignStore'
-import { SNAP_RADIUS_PX, resolveWallPoint } from '../src/plan/snap'
+import { moveWallEndpointIn } from '../src/store/useDesignStore'
+import { SNAP_RADIUS_PX, findSnap, resolveWallPoint } from '../src/plan/snap'
 import { snapToGrid } from '../src/plan/viewport'
 import { findLooseJoints } from '../src/plan/repairJoints'
 import {
@@ -479,4 +480,66 @@ console.log('')
 for (const built of typedWalls) {
   const m = Math.hypot(built.end.x - built.start.x, built.end.z - built.start.z)
   console.log(`  wall ${built.id}: ${m.toFixed(6)} m  = ${(m / 0.3048).toFixed(4)} ft`)
+}
+
+/* ── B30: drag an endpoint, and look at the handles ── */
+
+/**
+ * The real `moveWallEndpointIn` and the real `findSnap`, driven by a scripted
+ * pointer. Only the pointer positions are scripted; the preview rendered at
+ * each step is the exact wall array the drop would commit.
+ */
+const dragBase: Wall[] = [
+  w('n', 0, 0, 5, 0, 0.23),
+  w('e', 5, 0, 5, 4, 0.23),
+  w('far', 6.4, 1.2, 9, 1.2, 0.23), // something to snap onto
+]
+const junction: Wall[] = [...dragBase, w('x', 5, 0, 8, -2.4, 0.23)]
+
+const dragFrames: {
+  name: string
+  walls: Wall[]
+  handles: { wallId: string; blocked: number; which: 'start' | 'end' }
+  snap: ReturnType<typeof findSnap>
+}[] = []
+
+const dragTo = (base: Wall[], wallId: string, which: 'start' | 'end', p: Point, name: string) => {
+  const probe = moveWallEndpointIn(base, wallId, which, base.find((x) => x.id === wallId)![which])
+  const blocked = probe.ok ? 0 : probe.attached
+  const target = blocked
+    ? null
+    : findSnap(base, p, SNAP_RADIUS_PX / 66, new Set([wallId]))
+  const to = target ? target.point : snapToGrid(p, CELL)
+  const result = blocked ? null : moveWallEndpointIn(base, wallId, which, to)
+  dragFrames.push({
+    name,
+    walls: result && result.ok ? result.walls : base,
+    handles: { wallId, blocked, which },
+    snap: target,
+  })
+}
+
+dragTo(dragBase, 'n', 'end', { x: 5, z: 0 }, 'd1-grabbed')
+dragTo(dragBase, 'n', 'end', { x: 6.1, z: 0.9 }, 'd2-dragging')
+dragTo(dragBase, 'n', 'end', { x: 6.37, z: 1.18 }, 'd3-snapped')
+dragTo(junction, 'n', 'end', { x: 6.1, z: 0.9 }, 'd4-refused')
+
+console.log('')
+for (const f of dragFrames) {
+  const { ctx, png } = planContext(760, 560)
+  drawPlan(ctx, {
+    width: 760, height: 560,
+    viewport: { center: { x: 4, z: 0.8 }, scale: 66 },
+    walls: f.walls, furniture: [], rooms: [],
+    selection: { kind: 'wall', wallId: f.handles.wallId },
+    units: 'm', anchor: null, cursor: null, showCursor: false,
+    handles: f.handles, snap: f.snap,
+  })
+  writeFileSync(`${OUT}/drag-${f.name}.png`, png())
+  const nw = f.walls.find((x) => x.id === 'n')!
+  const ew = f.walls.find((x) => x.id === 'e')!
+  const shut = nw.end.x === ew.start.x && nw.end.z === ew.start.z
+  console.log(
+    `drag-${f.name}.png  blocked ${f.handles.blocked}  snap ${f.snap?.kind ?? '—'}  corner shut ${shut}`,
+  )
 }

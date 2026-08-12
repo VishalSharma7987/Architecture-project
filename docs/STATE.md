@@ -1269,6 +1269,68 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 48. NOTHING FLAGS A CORNER PULLED FULLY APART `OPEN`
+
+Found while writing B30's headline test, which was going to assert that
+abandoning a neighbour raises the `findLooseJoints` count. **It does not.**
+
+`mergeReach` is `REPAIR_EXTEND` (160 mm) for perpendicular walls, so
+`findLooseJoints` detects **near-misses**, not disconnections. Drag a corner
+1.5 m and leave its neighbour behind and the scan reports **zero** loose
+joints — the two endpoints are not a broken joint, they are simply two
+endpoints.
+
+So the instrument that exists to find joint damage is blind to the worst kind
+of it, and a test written the obvious way would have been green against
+exactly the corruption Session 2 spent a session removing. B30's fixture moves
+**100 mm** — inside the near-miss band and outside `JOIN_TOLERANCE` — and the
+large move is covered by a separate disconnection assertion instead.
+
+Not fixed here. A "walls that used to meet and no longer do" check needs a
+record of what used to meet, which nothing keeps; the cheap version — flag any
+endpoint within a wall thickness of another wall's body — is a different scan
+with its own false-positive profile.
+
+### 47. MOVE A WALL ENDPOINT `SHIPPED 2026-08-12 by B30` · the third correction tool
+
+Nothing wrote `Wall.start` before this. `setWallLength` pivoted on `start` and
+swung `end` along the EXISTING direction only, so **re-angling a wall meant
+delete-and-redraw** — the operation a user needs most when fixing a
+reconstruction, where the import measurement found walls right in position and
+30–64% short in extent.
+
+**Session 2's cascade now has ONE implementation**, `moveWallEndpointIn`, and
+`setWallLength` and the drag handles both go through it:
+
+| walls at the moving end | |
+|---|---|
+| 1 (free) | move it |
+| 2 (a simple corner) | move both |
+| **≥ 3** | **refuse, and say how many** |
+
+At three or more there is no move that is right: dragging all bends a
+through-wall stored as two collinear segments, dragging none detaches the wall
+being edited, and telling those apart needs collinearity inference this project
+has rejected.
+
+| Decision | Argument |
+|---|---|
+| **`HANDLE_HIT_PX` = 10** | Between the two numbers already in play: above `HIT_TOLERANCE_PX` (7) so the handle beats re-selecting the wall it sits on, below `SNAP_RADIUS_PX` (12) so a handle is never grabbable from outside the zone snapping calls near. |
+| **A filled circle in the selection colour** | A handle is a CONTROL on the selection; B28's amber square/triangle/ring are TARGETS. Both carry the same paper halo, because both sit on a wall centreline and are therefore always over dark poché. The snap marker draws AFTER, so during a drag the destination wins over the grab. |
+| **One handle at a shared corner** | Handles are drawn on the selected wall only. Two would imply two independent controls; the cascade moves both walls from one. Consistent with B28, where a corner is one snap target because the thing worth aiming at is the coordinate. |
+| **The drag writes ONCE, on drop** | Every pointermove computes a PURE preview with the same function the drop commits, and nothing reaches the store until the pointer comes up. One undo step by construction, not by landing inside the recorder's 200 ms window (§4 invariant 1). Rooms deliberately do not follow the preview — re-detecting per move walks the whole graph (finding 6). |
+| **Refused at the grab, not at the drop** | `grabEndpoint` probes before the drag begins, so the red handle and the count are on screen from the moment the handle is pressed. |
+
+**Snapping while moving an existing endpoint** — the gap left open under
+finding 44 — is closed: B28's `findSnap` unchanged, with the dragged wall
+excluded so it cannot snap to its own far end or its own centreline.
+
+**What the first rendered frames caught, twice, that no assertion did:** the
+refusal label was drawn at `wall.start` regardless of which end was grabbed, so
+on a 5 m wall the explanation sat 5 m from the junction it described; and BOTH
+handles turned red when only one was blocked, saying the wall could not be
+moved at all when its other end was free. Three sessions running.
+
 ### 46. TYPED LENGTH `SHIPPED 2026-08-12 by B29` · §7 Stage 2's "single largest gap versus AutoCAD"
 
 A wall chain was click-only: a 13'-0" wall could not be DRAWN, only

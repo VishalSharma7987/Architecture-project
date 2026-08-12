@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useDesignStore, type Point, type Tool } from '../store/useDesignStore'
+import {
+  moveWallEndpointIn,
+  useDesignStore,
+  type Point,
+  type Tool,
+  type Wall,
+} from '../store/useDesignStore'
 import { provenance } from '../store/provenance'
 import {
   clearCalibrationPicks,
@@ -27,6 +33,7 @@ import {
   resolveWallPoint,
   type SnapResult,
   type SnapTarget,
+  findSnap,
 } from './snap'
 import {
   entryLength,
@@ -48,6 +55,15 @@ import {
 
 /** Click slop for hitting walls and openings, in screen pixels. */
 const HIT_TOLERANCE_PX = 7
+
+/**
+ * How near an endpoint handle has to be pressed, in screen pixels.
+ *
+ * Between the two numbers already in play: above `HIT_TOLERANCE_PX` (7) so the
+ * handle beats selecting the wall it sits on, and below `SNAP_RADIUS_PX` (12)
+ * so a handle is never grabbable from outside the zone snapping calls near.
+ */
+const HANDLE_HIT_PX = 10
 
 /**
  * The four corners of the rectangle two opposite corners describe, wound so
@@ -109,8 +125,20 @@ export function FloorPlanEditor() {
   const dragRef = useRef<
     | { kind: 'furniture' | 'stair'; id: string; dx: number; dz: number }
     | { kind: 'opening'; wallId: string; openingId: string; tOffset: number }
+    | { kind: 'endpoint'; wallId: string; which: 'start' | 'end'; blocked: number }
     | null
   >(null)
+  /**
+   * The walls as they WOULD be if the endpoint drag were dropped now.
+   *
+   * Nothing is written to the store until the pointer comes up, and this is
+   * what makes one drag exactly one undo step without depending on the
+   * recorder's 200 ms coalescing window (§4 invariant 1) — there is only ever
+   * one write, so timing cannot make it two. It is not an approximation of the
+   * result either: it IS the result, from the same `moveWallEndpointIn` the
+   * drop calls.
+   */
+  const previewRef = useRef<Wall[] | null>(null)
   /** The traced image, once decoded. Null while it loads, or when there is none. */
   const imageRef = useRef<HTMLImageElement | null>(null)
   /** Mirrors the memoised resolve, for the imperative paint and the hit test. */
@@ -150,7 +178,6 @@ export function FloorPlanEditor() {
       viewport: viewportRef.current,
       // Read through getState so the paint always sees current state without
       // this callback needing to be rebuilt on every store change.
-      walls: useDesignStore.getState().walls,
       furniture: useDesignStore.getState().furniture,
       stairs: useDesignStore.getState().stairs,
       rooms: roomsRef.current,
@@ -163,12 +190,19 @@ export function FloorPlanEditor() {
       selection: useDesignStore.getState().selection,
       units: useDesignStore.getState().units,
       showDimensions: useDesignStore.getState().showDimensions,
+      // The endpoint drag's preview stands in for the stored walls while it
+      // runs. `rooms` deliberately does NOT follow: re-detecting on every
+      // pointermove walks the whole wall graph (finding 6), and the rooms
+      // settle the moment the drag is dropped.
+      walls: previewRef.current ?? useDesignStore.getState().walls,
       anchor: anchorRef.current,
       // Hidden while a length is being typed. The indicator means "the
       // endpoint lands here", and that stops being true the moment a number
       // overrides the distance — the snapped point still supplies the
       // DIRECTION, which the draft line shows by pointing through it.
       snap: entryRef.current ? null : snapRef.current,
+      // Handles show on the selected wall whenever the Select tool is live.
+      handles: handlesFor(),
       typed: entryRef.current?.text ?? null,
       spaceCorner: spaceDragRef.current,
       looseJoints: looseRef.current,
@@ -687,6 +721,11 @@ export function FloorPlanEditor() {
       return
     }
 
+    // An endpoint handle on the SELECTED wall beats everything else at this
+    // position: it is a control the user asked for by selecting the wall, and
+    // it is drawn on top of it.
+    if (tool === 'select' && grabEndpoint(e.clientX, e.clientY)) return
+
     handleWallTargetedClick(tool, e.clientX, e.clientY)
 
     // With the Select tool the click above has done any selecting. If it did
@@ -834,11 +873,105 @@ export function FloorPlanEditor() {
     }
   }
 
+  /**
+   * Grabs an endpoint handle on the selected wall, if the press is on one.
+   *
+   * ── Sizes, and why they are these ──
+   * `HANDLE_HIT_PX` (10) is larger than `HIT_TOLERANCE_PX` (7) so that near an
+   * endpoint the HANDLE wins over selecting the wall — otherwise pressing the
+   * control would just re-select what is already selected. It is smaller than
+   * B28's `SNAP_RADIUS_PX` (12) so a handle is never grabbable from further
+   * away than snapping considers "near", which would let a drag begin from
+   * outside the zone the snap indicator is describing.
+   *
+   * ── One handle at a shared corner ──
+   * Handles are drawn on the SELECTED wall only, so a corner shared by two
+   * walls shows one. That is the honest count: the cascade moves both, and two
+   * handles would imply two independent controls. It also matches B28, where a
+   * corner is one snap target because the thing worth aiming at is the
+   * COORDINATE rather than the wall.
+   */
+  /** The selected wall's handles, and the refusal state of the grabbed one. */
+  const handlesFor = (): {
+    wallId: string
+    blocked: number
+    which?: 'start' | 'end'
+  } | null => {
+    const store = useDesignStore.getState()
+    if (store.tool !== 'select') return null
+    const selection = store.selection
+    if (selection?.kind !== 'wall') return null
+    const drag = dragRef.current
+    return {
+      wallId: selection.wallId,
+      blocked: drag?.kind === 'endpoint' ? drag.blocked : 0,
+      which: drag?.kind === 'endpoint' ? drag.which : undefined,
+    }
+  }
+
+  const grabEndpoint = (clientX: number, clientY: number): boolean => {
+    const store = useDesignStore.getState()
+    const selection = store.selection
+    const wallId = selection?.kind === 'wall' ? selection.wallId : null
+    if (!wallId) return false
+    const wall = store.walls.find((w) => w.id === wallId)
+    if (!wall) return false
+
+    const world = worldAt(clientX, clientY)
+    const reach = HANDLE_HIT_PX / viewportRef.current.scale
+
+    for (const which of ['start', 'end'] as const) {
+      const point = wall[which]
+      if (Math.hypot(world.x - point.x, world.z - point.z) > reach) continue
+
+      // Asked BEFORE the drag begins, so the refusal is on screen from the
+      // moment the handle is pressed rather than after the pointer comes up.
+      // A drag that silently does nothing reads as a broken app.
+      const probe = moveWallEndpointIn(store.walls, wallId, which, point)
+      dragRef.current = {
+        kind: 'endpoint',
+        wallId,
+        which,
+        blocked: probe.ok ? 0 : probe.attached,
+      }
+      previewRef.current = null
+      requestDraw()
+      return true
+    }
+    return false
+  }
+
   const onPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current
     if (drag) {
       const point = worldAt(e.clientX, e.clientY)
       const store = useDesignStore.getState()
+
+      if (drag.kind === 'endpoint') {
+        if (drag.blocked) return // refused at the grab; nothing follows the pointer
+
+        // B28's snap, unchanged — this is the "snapping while moving an
+        // existing endpoint" gap recorded under finding 44. The wall being
+        // dragged is excluded, or its own far end and its own centreline would
+        // be the nearest targets and it would snap to itself.
+        const target = findSnap(
+          store.walls,
+          point,
+          SNAP_RADIUS_PX / viewportRef.current.scale,
+          new Set([drag.wallId]),
+        )
+        const to = target
+          ? target.point
+          : snapToGrid(point, GRID_STEP[store.units].cell)
+
+        snapRef.current = target
+        // PURE. Nothing is written until the drop, so the whole drag is one
+        // undo step by construction rather than by timing.
+        const result = moveWallEndpointIn(store.walls, drag.wallId, drag.which, to)
+        previewRef.current = result.ok ? result.walls : null
+        requestDraw()
+        return
+      }
 
       // A door or window slides along its wall: project the cursor onto that
       // wall and set the opening's distance-from-start. The store clamps it so
@@ -889,6 +1022,33 @@ export function FloorPlanEditor() {
   }
 
   const onPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    /*
+     * The endpoint drag's ONE write.
+     *
+     * Everything up to here was a pure preview, so this is the only `set` the
+     * whole gesture performs and undo cannot see it as more than one step —
+     * by construction, not by landing inside the recorder's 200 ms coalescing
+     * window (§4 invariant 1).
+     */
+    const drag = dragRef.current
+    if (drag?.kind === 'endpoint') {
+      const preview = previewRef.current
+      previewRef.current = null
+      dragRef.current = null
+      snapRef.current = null
+
+      if (preview && !drag.blocked) {
+        const moved = preview.find((w) => w.id === drag.wallId)
+        if (moved) {
+          useDesignStore
+            .getState()
+            .moveWallEndpoint(drag.wallId, drag.which, moved[drag.which])
+        }
+      }
+      requestDraw()
+      return
+    }
+
     const corner = spaceDragRef.current
     if (corner) {
       spaceDragRef.current = null

@@ -982,6 +982,16 @@ type DesignState = {
    * moving the start would detach this wall from the one before it.
    */
   setWallLength: (id: string, length: number) => boolean
+  /**
+   * Moves one endpoint of a wall, dragging the neighbour that shares it.
+   * Refuses at a junction of three or more and says so — see
+   * `moveWallEndpointIn` for why there is no right answer there.
+   */
+  moveWallEndpoint: (
+    id: string,
+    which: 'start' | 'end',
+    to: Point,
+  ) => EndpointMoveResult
   /** Closes joints that look connected but are not. Returns how many moved. */
   repairJoints: () => number
   removeWall: (id: string) => void
@@ -1032,6 +1042,73 @@ function joinsAt(walls: Wall[], point: Point, exceptWallId: string): Join[] {
     if (samePlacePoint(wall.end, point)) found.push({ wallId: wall.id, which: 'end' })
   }
   return found
+}
+
+/**
+ * Why an endpoint move was refused, or that it was not.
+ *
+ * `junction` carries the count so a caller can say "three walls meet here"
+ * rather than "cannot move", which is the difference between a refusal the
+ * user can act on and one they can only be annoyed by.
+ */
+export type EndpointMoveResult =
+  | { ok: true; walls: Wall[]; movedWallIds: string[] }
+  | { ok: false; reason: 'no-wall' | 'junction'; attached: number }
+
+/**
+ * Moves one wall endpoint, dragging the neighbour that shares it.
+ *
+ * ── THE CASCADE RULE, from Session 2, and the ONE implementation of it ──
+ * `setWallLength` was a model-corrupting operation: it moved one wall and left
+ * the neighbour resting on its old endpoint behind, breaking every join at
+ * that end. The rule that fixed it:
+ *
+ *   1 wall at the moving end (free)   → move it
+ *   2 walls (a simple corner)         → move both
+ *   >= 3 walls                        → REFUSE, and say why
+ *
+ * At three or more there is no move that is right. Dragging them all bends a
+ * through-wall stored as two collinear segments; dragging none detaches the
+ * wall being edited, which is the original bug. Telling them apart needs
+ * collinearity inference this project has rejected, and §4's guidance is that
+ * a refusal the user can see beats a change they cannot.
+ *
+ * Dragging a handle is the SAME operation as typing a length, with a different
+ * input device — so both go through here rather than through two cascades that
+ * would drift apart. Pure: it returns the next wall array and never writes, so
+ * the caller owns the single `set` that makes it one undo step.
+ */
+export function moveWallEndpointIn(
+  walls: Wall[],
+  wallId: string,
+  which: 'start' | 'end',
+  to: Point,
+): EndpointMoveResult {
+  const wall = walls.find((w) => w.id === wallId)
+  if (!wall) return { ok: false, reason: 'no-wall', attached: 0 }
+
+  // Every OTHER wall endpoint resting on the point about to move.
+  const attached = joinsAt(walls, wall[which], wallId)
+  if (attached.length > 1) {
+    return { ok: false, reason: 'junction', attached: attached.length + 1 }
+  }
+
+  const moved = { ...to }
+  const movedWallIds = [wallId, ...attached.map((a) => a.wallId)]
+
+  return {
+    ok: true,
+    movedWallIds,
+    walls: walls.map((w) => {
+      // Shortening can strand an opening past the new end, so re-clamp.
+      if (w.id === wallId) return normalizeWall({ ...w, [which]: moved })
+      const join = attached.find((a) => a.wallId === w.id)
+      if (!join) return w
+      // The SAME object identity for the neighbour's endpoint, so the corner
+      // is closed to the bit rather than to a tolerance.
+      return normalizeWall({ ...w, [join.which]: moved })
+    }),
+  }
 }
 
 const clamp = (value: number, min: number, max: number) =>
@@ -1941,32 +2018,29 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       z: wall.start.z + uz * target,
     }
 
-    // Every OTHER wall endpoint sitting on the point about to move.
-    const attached = joinsAt(state.walls, wall.end, id)
+    // The cascade lives in `moveWallEndpointIn` and is shared with the drag
+    // handles (B30). Two copies of the >=3 rule would be two chances to drift.
+    const result = moveWallEndpointIn(state.walls, id, 'end', moved)
+    if (!result.ok) return false
 
-    // Three walls or more meeting here: there is no move that is right.
-    // Dragging them all deforms walls the user did not select — and a
-    // through-wall stored as two collinear segments would visibly bend.
-    // Leaving them behind detaches this one, which is the bug being fixed.
-    // Telling the user is the only honest option; §4's guidance is that a
-    // refusal the user can see beats a change they cannot.
-    if (attached.length > 1) return false
-
-    set((s) => ({
-      // ONE `set`, so the resize and the neighbour it drags are ONE undo step.
-      // Not two writes 200 ms apart relying on the recorder's coalescing —
-      // that would make undo depend on how fast the machine ran.
-      walls: s.walls.map((w) => {
-        if (w.id === id) {
-          // Shortening can strand an opening past the new end, so re-clamp.
-          return normalizeWall({ ...w, end: moved })
-        }
-        const join = attached.find((a) => a.wallId === w.id)
-        if (!join) return w
-        return normalizeWall({ ...w, [join.which]: { ...moved } })
-      }),
-    }))
+    // ONE `set`, so the resize and the neighbour it drags are ONE undo step.
+    // Not two writes 200 ms apart relying on the recorder's coalescing — that
+    // would make undo depend on how fast the machine ran.
+    set({ walls: result.walls })
     return true
+  },
+
+  /**
+   * Drags one endpoint to a new place, taking a shared neighbour with it.
+   *
+   * The same cascade as `setWallLength`, because it is the same operation with
+   * a different input device. Returns the refusal so the caller can SHOW it —
+   * a drag that silently does nothing reads as a broken app.
+   */
+  moveWallEndpoint: (id, which, to) => {
+    const result = moveWallEndpointIn(get().walls, id, which, to)
+    if (result.ok) set({ walls: result.walls })
+    return result
   },
 
   /**

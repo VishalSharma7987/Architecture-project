@@ -55,6 +55,11 @@ const COLORS = {
   /** The typed-length field: an INPUT, so it does not look like the readout. */
   entry: '#ffffff',
   entryBg: '#b45309',
+  /** Endpoint handles: a CONTROL on the selection, not a target. */
+  handle: SELECTION.color2d,
+  handleFill: '#ffffff',
+  handleBlocked: '#b91c1c',
+  handleBlockedFill: '#fecaca',
   // `vertex` went with the 2.5 px dot B26 deleted. The dot existed only to
   // mask the square notch two butting walls left at a corner, which the
   // half-thickness pad now fills — leaving it would have put a blob on top of
@@ -335,6 +340,18 @@ export type PlanScene = {
    * quietly change what the user typed.
    */
   typed?: string | null
+  /**
+   * The selected wall's draggable endpoint handles, and whether the endpoint
+   * under the pointer refused to move. `blocked` is the number of walls
+   * meeting there — 3 or more has no correct answer (see `moveWallEndpointIn`).
+   */
+  handles?: {
+    wallId: string
+    /** How many walls meet at the grabbed endpoint; 0 when it is free to move. */
+    blocked: number
+    /** Which endpoint was grabbed, so the refusal is drawn where the hand is. */
+    which?: 'start' | 'end'
+  } | null
   /** Suppresses the snap marker for tools that act on walls, not the grid. */
   showCursor: boolean
   /** Reference image to trace, or null/absent when there is none to show. */
@@ -386,6 +403,7 @@ export function drawPlan(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   drawDraft(ctx, scene)
   drawSpaceDraft(ctx, scene)
   if (scene.showCursor) drawCursor(ctx, scene)
+  if (scene.handles) drawEndpointHandles(ctx, scene, scene.handles)
   if (scene.snap) drawSnapIndicator(ctx, scene, scene.snap)
   drawCalibration(ctx, scene)
 }
@@ -1683,6 +1701,77 @@ function outwardNormal(
 function readingAngle(ux: number, uy: number): number {
   const angle = Math.atan2(uy, ux)
   return Math.abs(angle) > Math.PI / 2 ? angle + Math.PI : angle
+}
+
+/**
+ * Draggable endpoint handles on the selected wall.
+ *
+ * ── Told apart from B28's snap markers, which sit in the same places ──
+ * A handle is a CONTROL on the current selection; a snap marker is a TARGET
+ * the pointer has found. So a handle is a filled circle in the selection
+ * colour, and the markers stay amber squares, triangles and rings. Both need
+ * the same paper halo, because both are drawn on a wall's centreline, which is
+ * inside the wall body and therefore always over dark poché — the lesson B28's
+ * first rendered frame taught.
+ *
+ * When both are on screen the snap marker is drawn AFTER, so the target wins:
+ * during a drag, where the endpoint is GOING matters more than where the grab
+ * started.
+ *
+ * ── Refusal is drawn, not just returned ──
+ * At a junction of three or more the handle turns red and says how many walls
+ * meet there. It appears the instant the handle is pressed, because
+ * `grabEndpoint` asks before the drag begins — a drag that silently does
+ * nothing reads as a broken app.
+ */
+function drawEndpointHandles(
+  ctx: CanvasRenderingContext2D,
+  scene: PlanScene,
+  handles: { wallId: string; blocked: number; which?: 'start' | 'end' },
+) {
+  const { width, height, viewport: vp } = scene
+  const wall = scene.walls.find((w) => w.id === handles.wallId)
+  if (!wall) return
+
+  // Only the endpoint that was GRABBED is blocked. Reddening both would say
+  // the wall cannot be moved at all, when the other end is usually free —
+  // which the first rendered frame of this feature showed doing exactly that.
+  const blockedEnd = handles.blocked > 0 ? handles.which : undefined
+
+  for (const which of ['start', 'end'] as const) {
+    const p = worldToScreen(wall[which], vp, width, height)
+    const blocked = which === blockedEnd
+
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, 5, 0, Math.PI * 2)
+    ctx.strokeStyle = COLORS.snapHalo
+    ctx.lineWidth = 4
+    ctx.stroke()
+
+    ctx.beginPath()
+    ctx.arc(p.x, p.y, 5, 0, Math.PI * 2)
+    ctx.fillStyle = blocked ? COLORS.handleBlockedFill : COLORS.handleFill
+    ctx.fill()
+    ctx.strokeStyle = blocked ? COLORS.handleBlocked : COLORS.handle
+    ctx.lineWidth = 1.75
+    ctx.stroke()
+  }
+
+  if (blockedEnd) {
+    // At the endpoint the hand is on. Drawing it at `wall.start` regardless —
+    // which the first build did — puts the explanation up to a wall's length
+    // away from the thing it explains.
+    const p = worldToScreen(wall[blockedEnd], vp, width, height)
+    label(
+      ctx,
+      `${handles.blocked} walls meet here — move them apart first`,
+      p.x,
+      p.y - 18,
+      '#ffffff',
+      LABEL_FONT,
+      COLORS.handleBlocked,
+    )
+  }
 }
 
 /**
