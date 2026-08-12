@@ -1,4 +1,5 @@
 import type { Point } from '../store/useDesignStore'
+import { rankCandidates } from './plausibility'
 
 /**
  * An axis-aligned wall found in a blueprint image.
@@ -808,19 +809,82 @@ export function detectWallSegments(
   // saturated wall colour can sit at the same lightness as a grid line. Scoring
   // the actual candidates is more honest than guessing the drawing's style up
   // front, and costs one extra pass over an image already in memory.
-  let best: PixelSegment[] = []
-  let bestScore = -1
-
-  for (const mask of candidateMasks(image)) {
+  // ── Gate 4 (B5b / ADR 0003) ──
+  // Every candidate is judged CREDIBLE before it is scored, and the score
+  // still ranks the ones that pass. That ordering is the whole point: total
+  // detected length is a reasonable tiebreak between plausible readings and a
+  // terrible judge of plausibility, which is what ADR 0002 measured when a
+  // degenerate mask won with 75 imaginary walls at 77,592 px against 7 real
+  // ones at 6,300 px.
+  //
+  // §3 is satisfied by construction and the argued reason lives in ADR 0003:
+  // the four-way binarisation above is untouched, `scoreSegments` is
+  // untouched, and `mergeWallFaces` → `typicalThickness` inside
+  // `segmentsFromMask` is untouched (§10 rule 9).
+  const candidates = candidateMasks(image).map((mask) => {
     const segments = segmentsFromMask(mask, width, height, opts)
-    const score = scoreSegments(segments)
-    if (score > bestScore) {
-      bestScore = score
-      best = segments
+    return {
+      segments,
+      inkFraction: inkFraction(mask),
+      junctionRatio: junctionRatio(segments, opts.junctionTolerancePx),
+      thicknessesPx: segments.map((s) => s.thickness),
+      totalLengthPx: scoreSegments(segments),
+    }
+  })
+
+  // No credible reading is an empty result, not the least-bad one. A caller
+  // that gets nothing reports `none-found`; a caller handed a degenerate
+  // reading commits it.
+  return rankCandidates(candidates)[0]?.segments ?? []
+}
+
+/** Share of the image a mask calls ink, 0–1. See `MAX_INK_FRACTION`. */
+function inkFraction(mask: Uint8Array): number {
+  if (mask.length === 0) return 0
+  let ink = 0
+  for (let i = 0; i < mask.length; i++) if (mask[i]) ink++
+  return ink / mask.length
+}
+
+/**
+ * Share of segments touching at least one other, 0–1.
+ *
+ * Measured on the SEGMENTS a candidate produced rather than on its bands,
+ * because that is the reading being judged. Segments are axis-aligned, so
+ * "touching" is an overlap of their spans once each is widened by the junction
+ * slack — the same question `hasJunction` asks of bands, restated for the
+ * shape that comes out.
+ *
+ * This is the signal that separates a plan from a sliced field. ADR 0002
+ * measured 75 imaginary segments averaging 1,035 px beating 7 real ones at
+ * 900 px, so neither count nor mean length can tell them apart. What can:
+ * real walls meet each other, and strips cut out of a white background by a
+ * grid never do.
+ */
+function junctionRatio(segments: PixelSegment[], slack: number): number {
+  if (segments.length === 0) return 0
+
+  const box = (s: PixelSegment) => ({
+    minX: Math.min(s.x1, s.x2) - slack - s.thickness / 2,
+    maxX: Math.max(s.x1, s.x2) + slack + s.thickness / 2,
+    minY: Math.min(s.y1, s.y2) - slack - s.thickness / 2,
+    maxY: Math.max(s.y1, s.y2) + slack + s.thickness / 2,
+  })
+  const boxes = segments.map(box)
+
+  let touching = 0
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i]
+    for (let j = 0; j < boxes.length; j++) {
+      if (i === j) continue
+      const b = boxes[j]
+      if (a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY) {
+        touching++
+        break
+      }
     }
   }
-
-  return best
+  return touching / segments.length
 }
 
 /**

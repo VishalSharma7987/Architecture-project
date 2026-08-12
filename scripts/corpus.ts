@@ -17,8 +17,12 @@
  * Every field that could not be measured says WHY, and the reasons are
  * distinct: `not-reached` (an earlier gate refused, so this one never ran) is a
  * different fact from `no-decoder` (the format cannot be read headless) and
- * from `not-wired` (the gate exists but no production code calls it). Collapsing
- * those into one blank is how a harness reports coverage it does not have.
+ * from `no-scale`. Collapsing those into one blank is how a harness reports
+ * coverage it does not have.
+ *
+ * There used to be a fourth, `not-wired`, for Gate 4 — which shipped as a
+ * tested module that no production code called. B5c wired it, so the ink
+ * fraction and junction ratio are now measured rather than excused.
  *
  * Deliberately no summary line and no pass rate. A single number over a corpus
  * of two is theatre.
@@ -26,7 +30,11 @@
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
 import { PNG } from 'pngjs'
-import { detectWallSegments, segmentsToWalls } from '../src/blueprint/detectWalls'
+import {
+  detectWallSegments,
+  inkMask,
+  segmentsToWalls,
+} from '../src/blueprint/detectWalls'
 import {
   gateAfterDetection,
   gateBeforeDetection,
@@ -120,9 +128,55 @@ function readMeta(file: string): Meta {
   }
 }
 
+/* ─── Gate 4's two signals, restated for a report ─────────────────────── */
+
+/**
+ * Share of the raster a mask calls ink, 0–1.
+ *
+ * `detectWalls.ts` computes this per candidate and keeps it private, so this
+ * measures the PRIMARY ink mask — which is the one candidate every drawing
+ * has. A row saying 0.91 is a row saying "this drawing's obvious reading is
+ * the paper", which is ADR 0002's failure in one number.
+ */
+const fractionOfInk = (mask: Uint8Array): number => {
+  if (mask.length === 0) return 0
+  let ink = 0
+  for (let i = 0; i < mask.length; i++) if (mask[i]) ink++
+  return ink / mask.length
+}
+
+/** Share of accepted segments touching at least one other, 0–1. */
+function ratioOfJunctions(
+  segments: { x1: number; y1: number; x2: number; y2: number; thickness: number }[],
+  slack: number,
+): number {
+  if (segments.length === 0) return 0
+  const boxes = segments.map((s) => ({
+    minX: Math.min(s.x1, s.x2) - slack - s.thickness / 2,
+    maxX: Math.max(s.x1, s.x2) + slack + s.thickness / 2,
+    minY: Math.min(s.y1, s.y2) - slack - s.thickness / 2,
+    maxY: Math.max(s.y1, s.y2) + slack + s.thickness / 2,
+  }))
+  let touching = 0
+  for (let i = 0; i < boxes.length; i++) {
+    const a = boxes[i]
+    if (
+      boxes.some(
+        (b, j) =>
+          i !== j && a.minX <= b.maxX && b.minX <= a.maxX && a.minY <= b.maxY && b.minY <= a.maxY,
+      )
+    ) {
+      touching++
+    }
+  }
+  return touching / segments.length
+}
+
+const round = (n: number) => Number(n.toFixed(4))
+
 /* ─── one drawing ─────────────────────────────────────────────────────── */
 
-type Unmeasured = 'not-reached' | 'no-decoder' | 'not-wired' | 'no-scale'
+type Unmeasured = 'not-reached' | 'no-decoder' | 'no-scale'
 
 type Row = {
   file: string
@@ -170,11 +224,11 @@ function measure(file: string): Row {
     thicknessFamilies: null,
     dominantShare: null,
     medianSourcePx: null,
-    // Gate 4 exists as a tested module and is called by NO production code.
-    // Reported as `not-wired` rather than blank, because "we did not measure
-    // it" and "nothing measures it" are different facts.
-    junctionRatio: 'not-wired',
-    inkFraction: 'not-wired',
+    // Measured once detection runs (B5c wired Gate 4). Until then they carry
+    // the reason, not a blank — `not-reached` and `no-decoder` are different
+    // facts and a harness that blanks both reports coverage it does not have.
+    junctionRatio: 'not-reached',
+    inkFraction: 'not-reached',
   }
 
   if (!dims) {
@@ -208,6 +262,8 @@ function measure(file: string): Row {
   if (!DECODABLE.has(dims.format)) {
     row.gates['thickness-minimum'] = 'no-decoder'
     row.gates['thickness-distribution'] = 'no-decoder'
+    row.junctionRatio = 'no-decoder'
+    row.inkFraction = 'no-decoder'
     row.message = `Passed the pre-detection gates; ${dims.format} cannot be decoded headless.`
     return row
   }
@@ -217,6 +273,8 @@ function measure(file: string): Row {
     // a placeholder and report a confident number.
     row.gates['thickness-minimum'] = 'no-scale'
     row.gates['thickness-distribution'] = 'no-scale'
+    row.junctionRatio = 'no-scale'
+    row.inkFraction = 'no-scale'
     return row
   }
 
@@ -240,6 +298,14 @@ function measure(file: string): Row {
     origin: { x: 0, z: 0 },
   })
   const thicknesses = walls.map((w) => w.thickness)
+
+  // Gate 4's two signals, measured on the reading that WON.
+  //
+  // Not the losing candidates' evidence: `detectWallSegments` returns
+  // segments, not the per-candidate record it judged them on. What a row wants
+  // is what the ACCEPTED reading looks like, and that is this.
+  row.inkFraction = round(fractionOfInk(inkMask(raster.raster.image)))
+  row.junctionRatio = round(ratioOfJunctions(segments, raster.raster.scale * 2))
 
   const after = gateAfterDetection(thicknesses, meta.metresPerPixel)
   row.gates = { ...row.gates, ...verdicts(after.results) }
@@ -278,7 +344,7 @@ function collect(target: string): string[] {
 const CSV_COLUMNS = [
   'file', 'format', 'width', 'height', 'calibrationSource', 'metresPerPixel',
   'raster-size', 'scale-provenance', 'resolution',
-  'thickness-minimum', 'thickness-distribution', 'gate-4',
+  'thickness-minimum', 'thickness-distribution',
   'firstRefusal', 'wallsCommitted', 'wallCount',
   'thicknessFamilies', 'dominantShare', 'medianSourcePx',
   'junctionRatio', 'inkFraction', 'message',
@@ -292,7 +358,6 @@ const cell = (value: unknown) => {
 function toCsv(rows: Row[]): string {
   const line = (row: Row) =>
     CSV_COLUMNS.map((column) => {
-      if (column === 'gate-4') return cell('not-wired')
       if (column in row.gates) return cell(row.gates[column])
       return cell((row as unknown as Record<string, unknown>)[column])
     }).join(',')

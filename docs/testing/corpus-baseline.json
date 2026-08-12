@@ -20,8 +20,8 @@
     "thicknessFamilies": null,
     "dominantShare": null,
     "medianSourcePx": null,
-    "junctionRatio": "not-wired",
-    "inkFraction": "not-wired"
+    "junctionRatio": "not-reached",
+    "inkFraction": "not-reached"
   },
   {
     "file": "first-floor-557px.png",
@@ -44,7 +44,7 @@
     "thicknessFamilies": null,
     "dominantShare": null,
     "medianSourcePx": null,
-    "junctionRatio": "not-wired",
-    "inkFraction": "not-wired"
+    "junctionRatio": "not-reached",
+    "inkFraction": "not-reached"
   }
 ]

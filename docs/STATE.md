@@ -33,7 +33,7 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B5b — COMPLETE.** Detector plausibility gates: a bad reconstruction is refused rather than committed |
+| Last completed task | **B5c — COMPLETE.** Gate 4 wired into the candidate loop; a degenerate reading no longer wins on length |
 | Before that | **Session 2** — `setWallLength` stopped detaching joins; **B25** — unenclosed spaces; **B24** — marks + schedule |
 | Next task | **Session 3b** — wire CV and AI ingest to the same weld (open question 27), or **B9** (drafting/snapping) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
@@ -91,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B5b, at `c9f8850`+:
+Verified after B5c, at `8d11fdc`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **582 passing / 582** · 37 files / 37 |
-| `npm run build` | **pass** (exit 0), 734 ms |
+| `npm test` | **586 passing / 586** · 38 files / 38 |
+| `npm run build` | **pass** (exit 0), 833 ms |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -1231,7 +1231,34 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
-### 32. GATE 4 IS A TESTED MODULE THAT NOTHING CALLS `OPEN`
+### 33. `unlockCalibration` IS THE SAME DEFECT AS GATE 4 `OPEN`
+
+Found by the audit B5c ran for exactly this class. `unlockCalibration`
+([`calibration.ts:223`](../src/blueprint/calibration.ts#L223)) demotes a locked
+manual scale so automated sources may propose again — implemented, carefully
+reasoned, and **tested**. Its own doc comment says:
+
+> *"Only ever called from an explicit user action. There is no code path that
+> unlocks a scale on the user's behalf, which is the point."*
+
+**There is also no code path that unlocks it WITH the user, because no UI calls
+it.** `calibration.test.ts` is the only caller in the repo. So a user who
+measures a scale, locks it, and then wants to re-measure has no way back — §8's
+open item about re-calibration, one layer down.
+
+Not fixed here: adding the control is a UI decision (where it lives, what it
+warns, whether it offers to rescale existing walls) and B5c was scoped to
+Gate 4.
+
+**The audit's other candidates are all deliberate**, and each says so in its own
+comment: `buildPdfBytes` is the seam `pdf.test.ts` needs, `gridPlan` is
+benchmark-only and states *"nothing in the app imports this"*,
+`resolveRoomsUncached` is the documented uncached entry point, and the rest are
+constants or `__reset` hooks that tests assert against. `conflictingRows`
+(B24) is unused only because `RoomSchedulePanel` inlines the same filter —
+duplication, not an unreachable rule.
+
+### 32. GATE 4 IS A TESTED MODULE THAT NOTHING CALLS `RESOLVED 2026-08-12 by B5c`
 
 `maskIsCredible` and `rankCandidates` ship in
 [`plausibility.ts`](../src/blueprint/plausibility.ts) with tests against ADR
@@ -1243,10 +1270,31 @@ So the ink-fraction ceiling and the junction ratio protect nothing today. B5b's
 commit message described Gate 4's design accurately and the module implements
 it; the wiring into the candidate loop was never done.
 
-Wiring it means touching `detectWallSegments`'s mask selection, which is §3
-territory and wants its own session with the ordering held. **Until then the
-corpus harness reports both fields as `not-wired`, not as blank** — "nothing
-measures this" is a different fact from "we did not measure it".
+**Wired in B5c.** `detectWallSegments` now builds a candidate record per mask —
+ink fraction, junction ratio, thicknesses, total length — and calls
+`rankCandidates`, which filters on credibility and *then* ranks the survivors on
+total length. §3 is satisfied by construction: the four-way binarisation,
+`scoreSegments` and the `mergeWallFaces` → `typicalThickness` ordering are all
+untouched. The argued reason is ADR 0003's.
+
+**Measured either side on a synthetic fixture that can be regenerated** —
+eight parallel bands that never meet, against a rectangle whose four walls do:
+
+| | strips | rectangle |
+|---|---|---|
+| unwired | **4 segments, 7,200 px**, 110 px thick | 4 segments, 4,980 px, 10 px thick |
+| wired | **0 segments** | 4 segments, 4,980 px *(unchanged)* |
+
+The wrong reading is **1.45× longer**, so total length alone prefers it — ADR
+0002's failure at a smaller ratio and in a fixture that is not a mystery.
+
+**Four segments, not eight:** `mergeWallFaces` fused each 100 px-apart pair into
+one 110 px band, because the pair fits inside `maxThicknessPx`. That is the
+SD4(b) failure mode again — fusing two things that are not two faces of one
+wall — and it is *why* the bogus reading looked plausible enough to win.
+
+The corpus harness's `not-wired` reason is gone; ink fraction and junction ratio
+are now measured on the accepted reading.
 
 ### 27. THREE INGEST PATHS STILL ADMIT UNWELDED COORDINATES `OPEN` · next
 
