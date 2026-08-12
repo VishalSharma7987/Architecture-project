@@ -82,6 +82,13 @@ export type DesignDocument = {
   /** The site boundary, or null when the design is not on a defined plot. */
   plot: Plot | null
   /**
+   * The building's intended extent in metres, or null when none was stated.
+   * Absent in every file written before B31, which reads as "no target" — the
+   * only migration this needs, and the only one that is honest: a document
+   * that never stated a size does not acquire one on being reopened.
+   */
+  targetExtent: { width: number; depth: number } | null
+  /**
    * Every storey. The top-level `walls` / `furniture` / `rooms` remain the
    * ground floor so that a file written now still opens in a build that
    * predates multiple floors, and one written then still opens here.
@@ -123,6 +130,7 @@ export function serializeDesign(input: {
   stairs?: Stair[]
   floors?: FloorData[]
   plot?: Plot | null
+  targetExtent?: { width: number; depth: number } | null
   floorMaterial?: MaterialId
   units?: Unit
   constructionRate?: number
@@ -154,6 +162,7 @@ export function serializeDesign(input: {
     // ~35 ms against §9.2's 20 ms budget.
     rooms: withBoundaryHints(input.walls, input.roomLabels ?? []),
     plot: input.plot ?? null,
+    targetExtent: input.targetExtent ?? null,
     floors: input.floors ?? [],
     blueprint: input.blueprint ? stripSrc(input.blueprint) : null,
   }
@@ -490,6 +499,25 @@ function parseRoomLabel(
  * boundary, so anything malformed drops the whole thing rather than inventing
  * a size the user never set.
  */
+/**
+ * The stated building extent, or null.
+ *
+ * All-or-nothing like the plot: a target with one dimension missing is not a
+ * target, and inventing the other half would state a size the user never did.
+ * Absent, malformed and non-positive all read as "no target" — the state the
+ * status bar stays silent in.
+ */
+function parseTargetExtent(
+  value: unknown,
+): { width: number; depth: number } | null {
+  if (!isRecord(value)) return null
+  const width = num(value.width)
+  const depth = num(value.depth)
+  if (width === null || depth === null) return null
+  if (width <= 0 || depth <= 0) return null
+  return { width, depth }
+}
+
 function parsePlot(value: unknown): Plot | null {
   if (!isRecord(value)) return null
 
@@ -948,6 +976,7 @@ export function parseDesign(value: unknown): ParseResult {
   }
 
   // Optional — files written before Milestone 12 have no plot at all.
+  const targetExtent = parseTargetExtent(value.targetExtent)
   const plot = value.plot === undefined ? null : parsePlot(value.plot)
   if (value.plot !== undefined && value.plot !== null && !plot) {
     warnings.push('dropped an invalid plot boundary')
@@ -998,6 +1027,7 @@ export function parseDesign(value: unknown): ParseResult {
       furniture,
       rooms,
       plot,
+      targetExtent,
       floors,
       blueprint,
     },

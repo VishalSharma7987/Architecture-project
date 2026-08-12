@@ -703,6 +703,20 @@ type DesignState = {
   plotFacing: Facing
   /** The site boundary, or null when the design is not on a defined plot. */
   plot: Plot | null
+  /**
+   * The building's INTENDED overall extent in metres, or null when none was
+   * stated.
+   *
+   * A sibling of `plot`, not a field on it: `Plot` is a SITE — it has an
+   * origin, four setbacks and a buildable zone, and a building sitting on a
+   * 30 × 40 ft plot may be intended to be 9 × 11 m. Folding the two together
+   * would make "the target" mean the site on some documents and the building
+   * on others, decided by whether a plot happens to exist.
+   *
+   * Null is the normal state and must stay silent: someone sketching has not
+   * committed to a size and must not be nagged about one.
+   */
+  targetExtent: { width: number; depth: number } | null
   /** Traced-under reference drawing, or null when none is loaded. */
   blueprint: Blueprint | null
   /**
@@ -857,6 +871,8 @@ type DesignState = {
   setPlotFacing: (facing: Facing) => void
 
   /** Replaces the traced image, revoking the previous one's object URL. */
+  /** States the building's intended extent, or clears it with null. */
+  setTargetExtent: (extent: { width: number; depth: number } | null) => void
   setBlueprint: (blueprint: Blueprint | null) => void
   /**
    * Patches the traced image's placement and appearance.
@@ -1250,6 +1266,7 @@ export type PersistedFingerprint = {
   stairs: Stair[]
   floors: FloorData[]
   plot: Plot | null
+  targetExtent: { width: number; depth: number } | null
   blueprint: Blueprint | null
   floorMaterial: MaterialId
   viewMode: ViewMode
@@ -1268,6 +1285,7 @@ export function persistedFingerprint(s: DesignState): PersistedFingerprint {
     stairs: s.stairs,
     floors: s.floors,
     plot: s.plot,
+    targetExtent: s.targetExtent,
     blueprint: s.blueprint,
     floorMaterial: s.floorMaterial,
     viewMode: s.viewMode,
@@ -1333,6 +1351,7 @@ export type DesignSnapshot = Pick<
   | 'activeFloor'
   | 'plot'
   | 'plotFacing'
+  | 'targetExtent'
   | 'northOffset'
   | 'floorMaterial'
   | 'blueprint'
@@ -1348,6 +1367,7 @@ function snapshotOf(s: DesignState): DesignSnapshot {
     activeFloor: s.activeFloor,
     plot: s.plot,
     plotFacing: s.plotFacing,
+    targetExtent: s.targetExtent,
     northOffset: s.northOffset,
     floorMaterial: s.floorMaterial,
     blueprint: forgetPixels(s.blueprint),
@@ -1455,6 +1475,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   plot: null,
   northOffset: 0,
   plotFacing: DEFAULT_FACING,
+  targetExtent: null,
   blueprint: null,
   // Session-scoped and deliberately NOT reset by 'new project': how a user's
   // files reach them does not change because they closed a design, and the
@@ -1727,6 +1748,14 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   // Object URLs live until revoked; dropping the reference alone would leak
   // the whole decoded image for the life of the tab. A null `src` is a
   // remembered placement with no pixels attached and has nothing to revoke.
+  setTargetExtent: (extent) =>
+    set({
+      targetExtent:
+        extent && extent.width > 0 && extent.depth > 0
+          ? { width: extent.width, depth: extent.depth }
+          : null,
+    }),
+
   setBlueprint: (blueprint) =>
     set((state) => {
       const previous = state.blueprint

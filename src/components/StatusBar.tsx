@@ -1,4 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
+import {
+  deviationFrom,
+  describeDeviation,
+  extentOf,
+  formatExtent,
+} from '../plan/extent'
 import { totalFloorArea } from '../plan/rooms'
 import { findLooseJoints } from '../plan/repairJoints'
 import { useDesignStore } from '../store/useDesignStore'
@@ -14,6 +20,23 @@ import { formatArea } from '../units/length'
 export function StatusBar() {
   const walls = useDesignStore((s) => s.walls)
   const units = useDesignStore((s) => s.units)
+  const target = useDesignStore((s) => s.targetExtent)
+
+  /**
+   * The size check, and it is SILENT without a target.
+   *
+   * The whole finding B31 closes is that every readout here was an absolute
+   * statement — 299.7 m² is only wrong if something holds 99. But someone
+   * sketching has stated nothing and must not be told they are off a size
+   * they never chose, so no target means no extra text at all.
+   */
+  const size = useMemo(() => {
+    if (!target) return null
+    const actual = extentOf(walls)
+    if (!actual) return null
+    const deviation = deviationFrom(actual, target)
+    return deviation ? { actual, deviation } : null
+  }, [walls, target])
 
   // totalFloorArea walks the whole wall graph, and the store is written on
   // every pointer move while drawing, so this hangs off the walls array alone.
@@ -52,6 +75,27 @@ export function StatusBar() {
           </span>
         )}
       </div>
+
+      {size && (
+        <div className="flex items-center gap-2" data-testid="extent-check">
+          <span className="tabular-nums text-slate-600">
+            {formatExtent(size.actual, units)}
+          </span>
+          <span className="text-slate-400">
+            target {formatExtent(size.deviation.target, units)}
+          </span>
+          <span
+            className={
+              size.deviation.onTarget
+                ? 'font-semibold text-emerald-600'
+                : 'font-semibold text-amber-600'
+            }
+            data-testid="extent-deviation"
+          >
+            {describeDeviation(size.deviation)}
+          </span>
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <AutosaveIndicator />

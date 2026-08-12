@@ -40,6 +40,17 @@ several sessions. Nothing here is scheduled by being here.
 
 ---
 
+## Dimensional correctness
+
+Added 2026-08-12, after B31. The bar below was about whether a plan LOOKS like
+the reference. It said nothing about whether it IS the reference, and that
+omission is what produced a plan three times too big that satisfied every
+criterion written here.
+
+> Dimensional correctness. The editor must let a user state the building's
+> intended overall extent and must show, while drawing, how far the
+> current plan is from it.
+
 ## The rule that outranks the rest
 
 > dimensional correctness before visual fidelity — a plan that looks

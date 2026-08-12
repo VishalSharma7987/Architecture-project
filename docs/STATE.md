@@ -1269,6 +1269,71 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 50. THE ROOM CAPTION COLLIDES WITH FURNITURE, AND B31 TRIPLED IT `OPEN`
+
+Found in B31's rendered frames, not by any assertion.
+
+`placeCaption` fits a caption against the room's CLEAR SPAN — the polygon
+through the anchor — and knows nothing about what is standing in the room. So
+a caption has always been drawn over a bed or a sofa that happened to be under
+it. **B31 made the caption three lines instead of one, tripling its vertical
+footprint from 21 px to 63 px, and the overlap went from occasional to
+routine**: at reference size with a bed, a sofa and a counter placed, three of
+seven rooms collide.
+
+Two things worth recording with it:
+
+- **Dimensions do NOT collide.** They are strung outside the building and the
+  captions sit inside it, exactly as `drawOpeningDimensions`' comment claims.
+  That separation held.
+- **It is a CORRECTLY-SIZED plan's problem.** At 3× the furniture is tiny
+  relative to the rooms and nothing overlaps — the same effect that made the
+  3× plan's furniture look like grey boxes in the B31 audit. Getting the size
+  right is what surfaces this.
+
+Not fixed here: the caption would have to know the furniture footprints, which
+is a layout problem of its own rather than a line of B31's scope. The cheap
+mitigation is to fall to the two-line stack when a piece overlaps the caption
+box, using the footprints `drawFurniture` already computes.
+
+### 49. A STATED BUILDING SIZE `SHIPPED 2026-08-12 by B31`
+
+The reference plan was drawn by hand at 20.5 × 14.5 m against a 9.00 × 11.00
+target — 299.7 m² against 99 m², every room correct in proportion and three
+times too big. **The status bar was reporting 299.7 m² the whole time and it
+was useless, because nothing in the app knew what the user was aiming at.**
+Every readout is an absolute statement; a 3× error is only visible as a ratio.
+
+Typed length (B29) was never going to cover it: it is per-segment and the
+reference is sixteen walls. One is a drafting tool, the other a design
+constraint.
+
+| Decision | Argument |
+|---|---|
+| `targetExtent` is a **sibling** of `plot`, not a field on it | `Plot` is a SITE — origin, four setbacks, a buildable zone. A house meant to be 9 × 11 m can sit on a 30 × 40 ft plot, and folding them together would make "the target" mean whichever the document happened to have. |
+| Deviation is a **factor on area**, reported as the geometric mean of the two axis factors | It is the number to multiply every wall by to land on target — the correction the user actually has to make. Reporting one axis understates it; reporting area overstates how wrong each wall is. |
+| **Ratio far from 1, percentage near it**, crossing at 1.5× | Neither form reads across the whole range: "3.0× over" is instant where "200% over" is arithmetic, and "8% over" is instant where "1.08×" is noise. This is the difference between a readout that NAMES the 3× error and one that technically contains it. |
+| Under-target says **"2.0× under"**, never "0.5× over" | The reader wants the size of the mistake, not a fraction to invert. |
+| **Silent** with no target | Someone sketching has committed to nothing and must not be nagged about a size they never chose. Asserted as byte-identical status-bar markup. |
+| 3% on-target tolerance | Derived: the editor measures to wall CENTRELINES, and a 230 mm shell on a 9 m building puts that 2.6% above a finished-face measurement. A tighter tolerance would fire on the difference between two correct ways of measuring the same building. |
+
+**The caption gained the room's dimensions** — `[name, 3.00 m × 3.50 m, 10.5 m²]`
+— which the 3D chip has always carried and the canvas never did. The size stack
+outranks the old name-and-area line because the dimensions are what catch a
+wrong building and the area is what a wrong building still looks plausible in.
+Every pre-B31 tier survives below it, so a small room degrades exactly as
+before.
+
+**The draft label now reads `9.00 m · type to set`**, dropped rather than
+truncated when the segment is too short — the caption ladder's rule. Numeric
+entry previously appeared only after a digit was typed, so a user had to know
+it existed to discover that it existed.
+
+**`REFERENCE_TARGET.md` gained the rule that was missing from it.** The bar was
+about whether a plan LOOKS like the reference and said nothing about whether it
+IS the reference — the omission that let a plan three times too big satisfy
+every criterion on the page.
+
 ### 48. NOTHING FLAGS A CORNER PULLED FULLY APART `OPEN`
 
 Found while writing B30's headline test, which was going to assert that

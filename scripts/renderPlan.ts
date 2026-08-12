@@ -32,6 +32,12 @@ import { SNAP_RADIUS_PX, findSnap, resolveWallPoint } from '../src/plan/snap'
 import { snapToGrid } from '../src/plan/viewport'
 import { findLooseJoints } from '../src/plan/repairJoints'
 import {
+  deviationFrom,
+  describeDeviation,
+  extentOf,
+  formatExtent,
+} from '../src/plan/extent'
+import {
   entryLength,
   keyToAction,
   typedEndpoint,
@@ -542,4 +548,72 @@ for (const f of dragFrames) {
   console.log(
     `drag-${f.name}.png  blocked ${f.handles.blocked}  snap ${f.snap?.kind ?? '—'}  corner shut ${shut}`,
   )
+}
+
+/* ── B31: the reference plan at its real size, with size captions ── */
+
+/**
+ * The reference — 9.00 x 11.00 m, three bedrooms — drawn at reference size
+ * and at the 3x that produced this session, so the caption stack and the
+ * draft hint can be LOOKED at rather than asserted.
+ */
+const refWall = (id: string, ax: number, az: number, bx: number, bz: number, t: number): Wall =>
+  ({ id, start: { x: ax, z: az }, end: { x: bx, z: bz }, height: 3, thickness: t, openings: [], material: 'white-paint' })
+
+function refPlan(k: number): Wall[] {
+  const p = (v: number) => v * k
+  const T = 0.23
+  return [
+    refWall('n', p(0), p(0), p(9), p(0), T),
+    refWall('e', p(9), p(0), p(9), p(11), T),
+    refWall('s', p(9), p(11), p(0), p(11), T),
+    refWall('w', p(0), p(11), p(0), p(0), T),
+    refWall('b1', p(0), p(3.5), p(9), p(3.5), 0.115),
+    refWall('b2', p(3), p(0), p(3), p(3.5), 0.115),
+    refWall('b3', p(6), p(0), p(6), p(3.5), 0.115),
+    refWall('b4', p(0), p(8), p(9), p(8), 0.115),
+    refWall('b5', p(3), p(8), p(3), p(11), 0.115),
+    refWall('b6', p(6), p(8), p(6), p(11), 0.115),
+  ]
+}
+
+const pv = (source: string) => ({ source, createdAt: '2026-08-12T00:00:00.000Z', confidence: 1 }) as RoomLabel['provenance']
+const refLabels = (k: number): RoomLabel[] => [
+  { id: 'l1', type: 'bedroom', anchor: { x: 1.5 * k, z: 1.75 * k }, provenance: pv('manual') },
+  { id: 'l2', type: 'bedroom', anchor: { x: 4.5 * k, z: 1.75 * k }, provenance: pv('manual') },
+  { id: 'l3', type: 'bedroom', anchor: { x: 7.5 * k, z: 1.75 * k }, provenance: pv('manual') },
+  { id: 'l4', type: 'living', anchor: { x: 4.5 * k, z: 5.75 * k }, provenance: pv('manual') },
+  { id: 'l5', type: 'kitchen', anchor: { x: 1.5 * k, z: 9.5 * k }, provenance: pv('manual') },
+  { id: 'l6', type: 'toilet', anchor: { x: 4.5 * k, z: 9.5 * k }, provenance: pv('manual') },
+  { id: 'l7', type: 'bedroom', anchor: { x: 7.5 * k, z: 9.5 * k }, provenance: pv('manual') },
+]
+
+console.log('')
+for (const [name, k, scale] of [['ref-1x', 1, 62], ['ref-3x', 3, 21]] as const) {
+  const walls = refPlan(k)
+  const labels = refLabels(k)
+  const { ctx, png } = planContext(880, 900)
+  drawPlan(ctx, {
+    width: 880, height: 900,
+    viewport: { center: { x: 4.5 * k, z: 5.5 * k }, scale },
+    walls,
+    // Dimensions ON and furniture placed: the brief asks whether a caption
+    // gaining a third line collides with either.
+    showDimensions: true,
+    furniture: [
+      { id: 'f1', type: 'bed', position: { x: 1.5 * k, z: 1.2 * k }, rotation: 0, provenance: pv('manual') },
+      { id: 'f2', type: 'sofa', position: { x: 3.2 * k, z: 5.2 * k }, rotation: 0, provenance: pv('manual') },
+      { id: 'f3', type: 'table', position: { x: 6.2 * k, z: 5.8 * k }, rotation: 0, provenance: pv('manual') },
+      { id: 'f4', type: 'kitchen-counter', position: { x: 1.5 * k, z: 8.6 * k }, rotation: 0, provenance: pv('manual') },
+    ] as never,
+    rooms: resolveRoomsUncached(walls, labels),
+    selection: null, units: 'm',
+    // A live draft, so the "type to set" hint is in frame too.
+    anchor: { x: 0, z: 11 * k }, cursor: { x: 9 * k, z: 11 * k },
+    showCursor: false,
+  })
+  writeFileSync(`${OUT}/b31-${name}.png`, png())
+  const actual = extentOf(walls)!
+  const dev = deviationFrom(actual, { width: 9, depth: 11 })!
+  console.log(`b31-${name}.png  ${formatExtent(actual, 'm')}  ->  ${describeDeviation(dev)}`)
 }

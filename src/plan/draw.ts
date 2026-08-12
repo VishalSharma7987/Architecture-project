@@ -11,7 +11,7 @@ import type {
 } from '../store/useDesignStore'
 import { furnitureSize } from '../furniture/catalog'
 import { getRoomType, roomDisplayName } from '../rooms/catalog'
-import { selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
+import { roomSize, selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
 import { SELECTION } from '../scene/config'
 import { doorSwing, planBounds, pointAlongWall } from '../scene/wallGeometry'
 import { glazingLines, sharedEnds, wallBodyQuad } from './wallBody'
@@ -1013,7 +1013,14 @@ function drawRoomCaptions(ctx: CanvasRenderingContext2D, scene: PlanScene) {
     for (const extra of room.extraLabels) {
       const info = getRoomType(extra.type)
       const spot = worldToScreen(extra.anchor, vp, width, height)
-      placeCaption(ctx, sr, spot, [info.label, info.short], ROOM_FONT, COLORS.roomName)
+      placeCaption(
+        ctx,
+        sr,
+        spot,
+        [[info.label], [info.short]],
+        ROOM_FONT,
+        COLORS.roomName,
+      )
     }
   }
   ctx.restore()
@@ -1028,18 +1035,30 @@ function placeCaption(
   ctx: CanvasRenderingContext2D,
   sr: ScreenRoom,
   at: ScreenPoint,
-  options: string[],
+  options: string[][],
   font: string,
   color: string,
 ) {
-  if (clearSpan(sr, at, 'y') < ROOM.lineHeightPx + ROOM.marginPx) return
-
   ctx.font = font
-  const available = clearSpan(sr, at, 'x') - ROOM.marginPx * 2
-  const text = options.find((option) => ctx.measureText(option).width <= available)
-  if (!text) return
+  const acrossPx = clearSpan(sr, at, 'x') - ROOM.marginPx * 2
+  const downPx = clearSpan(sr, at, 'y')
 
-  label(ctx, text, at.x, at.y, color, font)
+  // Each option is a STACK of lines, tallest first. A stack has to fit both
+  // ways: its widest line across, and its full height down — the vertical
+  // check was already here for one line and now scales with the count, so a
+  // room that could hold a name but not a name over its dimensions falls to
+  // the shorter stack rather than overflowing into the walls.
+  const stack = options.find(
+    (lines) =>
+      lines.every((line) => ctx.measureText(line).width <= acrossPx) &&
+      downPx >= lines.length * ROOM.lineHeightPx + ROOM.marginPx,
+  )
+  if (!stack) return
+
+  const top = at.y - ((stack.length - 1) * ROOM.lineHeightPx) / 2
+  stack.forEach((line, i) => {
+    label(ctx, line, at.x, top + i * ROOM.lineHeightPx, color, font)
+  })
 }
 
 /**
@@ -1050,17 +1069,35 @@ function placeCaption(
  * measuring the space is the whole point of detecting it, but it must not
  * borrow a name it was never given.
  */
-function captions(room: ResolvedRoom, units: Unit): string[] {
+function captions(room: ResolvedRoom, units: Unit): string[][] {
   const area = formatArea(room.area, units)
-  if (!room.label) return [area]
+  if (!room.label) return [[area]]
 
   const full = roomDisplayName(room.label)
   // A custom name has no separate abbreviation, so it stands in for the short
   // form too; a typed type falls back to its catalogue short.
   const short = room.label.name?.trim() ? full : getRoomType(room.label.type).short
-  // A toilet is often thirty pixels wide, so the name alone is the last resort
-  // before the caption is dropped: which room it is beats how big it is.
-  return [`${full} — ${area}`, `${short} — ${area}`, short]
+
+  const { width, length } = roomSize(room.polygon)
+  const size = `${formatLength(width, units)} × ${formatLength(length, units)}`
+
+  // B31 — the room's DIMENSIONS, which the 3D chip has always carried
+  // (`RoomLabels.tsx`) and the canvas never did. It is the cheapest
+  // dimensional check in the editor: 3.50 × 3.00 against 7.6 × 6.0 is
+  // unmissable in a way that 45.7 m² is not, and a plan drawn 3× too big
+  // satisfied every other criterion on the reference page.
+  //
+  // The size stack outranks the name-and-area line for that reason — the
+  // dimensions are what catch a wrong building, and the area is what a wrong
+  // building still looks plausible in. Every pre-B31 tier survives below,
+  // unchanged, so a room too small for the stack degrades exactly as before.
+  return [
+    [full, size, area],
+    [full, size],
+    [`${full} — ${area}`],
+    [`${short} — ${area}`],
+    [short],
+  ]
 }
 
 /**
@@ -1882,12 +1919,26 @@ function drawDraft(ctx: CanvasRenderingContext2D, scene: PlanScene) {
     } else if (length > 0) {
       // The full form, not the compact one: this is the number the user is
       // aiming with, and it has the whole canvas to sit in.
-      label(
-        ctx,
-        formatLength(length, scene.units),
-        (a.x + b.x) / 2,
-        (a.y + b.y) / 2 - 12,
-      )
+      const measured = formatLength(length, scene.units)
+
+      /*
+       * B31 — numeric entry announces itself.
+       *
+       * The field only appears once a digit has been typed, so before B31 you
+       * had to know it existed to discover it existed. The hint rides on the
+       * readout the user is already watching rather than adding chrome.
+       *
+       * It is DROPPED rather than truncated when the segment is too short to
+       * hold it — the caption ladder's rule, and for the same reason: a
+       * clipped hint is noise, and the number underneath it is the thing that
+       * must survive.
+       */
+      ctx.font = LABEL_FONT
+      const hinted = `${measured} · type to set`
+      const span = Math.hypot(b.x - a.x, b.y - a.y)
+      const fits = ctx.measureText(hinted).width + 16 <= span
+
+      label(ctx, fits ? hinted : measured, (a.x + b.x) / 2, (a.y + b.y) / 2 - 12)
     }
   }
 

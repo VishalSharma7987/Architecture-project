@@ -51,6 +51,8 @@ export function PlotPanel() {
   const setPlotPanelOpen = useDesignStore((s) => s.setPlotPanelOpen)
   const walls = useDesignStore((s) => s.walls)
   const units = useDesignStore((s) => s.units)
+  const target = useDesignStore((s) => s.targetExtent)
+  const setTargetExtent = useDesignStore((s) => s.setTargetExtent)
   const plotFacing = useDesignStore((s) => s.plotFacing)
   const northOffset = useDesignStore((s) => s.northOffset)
 
@@ -117,6 +119,46 @@ export function PlotPanel() {
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto p-4">
+          {/*
+            The BUILDING's intended size, beside the SITE's — the two are
+            different things and are shown as such. A house meant to be
+            9 x 11 m can sit on a 30 x 40 ft plot; folding the target into
+            `Plot` would make it mean whichever the document happened to have.
+            Blank is the normal state and keeps the status bar silent.
+          */}
+          <section className="mb-5">
+            <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              Target building size
+            </h3>
+            <LengthField
+              label="Width"
+              metres={target?.width ?? 0}
+              units={units}
+              testId="target-width"
+              onCommit={(width) =>
+                setTargetExtent(
+                  width > 0 ? { width, depth: target?.depth ?? width } : null,
+                )
+              }
+            />
+            <LengthField
+              label="Depth"
+              metres={target?.depth ?? 0}
+              units={units}
+              testId="target-depth"
+              onCommit={(depth) =>
+                setTargetExtent(
+                  depth > 0 ? { width: target?.width ?? depth, depth } : null,
+                )
+              }
+            />
+            <p className="mt-2 text-[11px] leading-relaxed text-slate-400">
+              {target
+                ? 'The status bar shows how far the plan is from this.'
+                : 'Set this and the status bar will say how far off the plan is.'}
+            </p>
+          </section>
+
           <section>
             <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               Plot size

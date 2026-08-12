@@ -377,10 +377,12 @@ describe('★ B29 — the typed value is on screen while typing', () => {
    * no entry, which also happens to be the readout the field replaces.
    */
   it('★ draws a field where the measured readout would otherwise be', () => {
-    // Not typing: the draft shows its MEASURED length, formatted.
+    // Not typing: the draft shows its MEASURED length, formatted — and since
+    // B31 the hint that numeric entry exists at all, when the segment is long
+    // enough to hold it. The measurement leads; the hint follows it.
     const measured = texts(null)
     expect(measured).toHaveLength(1)
-    expect(measured[0].text).toBe('3.00 m')
+    expect(measured[0].text).toBe('3.00 m · type to set')
 
     // Typing: exactly one label still — the field REPLACED the readout rather
     // than being added beside it, which is the placement decision — and it
