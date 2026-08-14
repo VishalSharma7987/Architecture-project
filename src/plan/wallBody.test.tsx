@@ -69,6 +69,7 @@ const wall = (
   end: { x: bx, z: bz },
   height: 3,
   thickness,
+  type: 'shell' as const,
   openings,
   material: 'white-paint',
 })

@@ -49,6 +49,7 @@ const wall = (a: Point, b: Point): Wall => ({
   thickness: 0.2,
   openings: [],
   material: DEFAULT_WALL_MATERIAL,
+  type: 'shell' as const,
 })
 
 const at = (x: number, z: number): Point => ({ x, z })

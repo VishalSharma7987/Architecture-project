@@ -23,6 +23,7 @@ const wall = (a: Point, b: Point): Wall => ({
   thickness: 0.2,
   openings: [],
   material: DEFAULT_WALL_MATERIAL,
+  type: 'shell' as const,
 })
 
 /** A rectangle wider than it is deep, so rotation is observable. */

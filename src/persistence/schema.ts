@@ -26,6 +26,8 @@ import {
   type Unit,
   type ViewMode,
   type Wall,
+  isWallType,
+  wallTypeFromThickness,
 } from '../store/useDesignStore'
 import {
   DEFAULT_FLOOR_MATERIAL,
@@ -396,6 +398,8 @@ function parseWall(
     if (opening) openings.push(opening)
   }
 
+  const thickness = num(value.thickness) ?? WALL_DEFAULTS.thickness
+
   return {
     ok: true,
     wall: withProvenance<Wall>(
@@ -404,7 +408,12 @@ function parseWall(
         start,
         end,
         height: num(value.height) ?? WALL_DEFAULTS.height,
-        thickness: num(value.thickness) ?? WALL_DEFAULTS.thickness,
+        thickness,
+        // A file written before B32 has no type. Reading one from the
+        // thickness is the ONLY option for a document that carries no answer,
+        // and it happens here and nowhere else: a wall that HAS a type keeps
+        // it, whatever its thickness, so a 300 mm shell stays a shell.
+        type: isWallType(value.type) ? value.type : wallTypeFromThickness(thickness),
         openings,
         // An unknown material id (older file, hand-edited, renamed palette
         // entry) falls back rather than failing the import — a wall in the

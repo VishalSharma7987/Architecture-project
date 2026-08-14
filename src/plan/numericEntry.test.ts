@@ -46,6 +46,7 @@ const wall = (id: string, ax: number, az: number, bx: number, bz: number): Wall 
   thickness: 0.23,
   openings: [],
   material: 'white-paint',
+  type: 'shell' as const,
 })
 
 const lengthOf = (a: Point, b: Point) => Math.hypot(b.x - a.x, b.z - a.z)

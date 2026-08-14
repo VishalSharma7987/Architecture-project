@@ -278,7 +278,7 @@ const T = 0.23
 const P = 0.115
 const w = (id: string, ax: number, az: number, bx: number, bz: number, t: number, openings: Wall['openings'] = []): Wall => ({
   id, start: { x: ax, z: az }, end: { x: bx, z: bz },
-  height: 3, thickness: t, openings, material: 'white-paint',
+  height: 3, thickness: t, openings, material: 'white-paint', type: 'shell',
 })
 
 const WALLS: Wall[] = [
@@ -360,7 +360,7 @@ const step = (name: string, world: Point, suppressed = false, commit = true) => 
   if (anchor) {
     drawn.push({
       id: `d${n++}`, start: anchor, end: r.point,
-      height: 3, thickness: 0.23, openings: [], material: 'white-paint',
+      height: 3, thickness: 0.23, openings: [], material: 'white-paint', type: 'shell',
     })
   }
   anchor = r.point
@@ -425,7 +425,7 @@ const tClick = (world: Point) => {
   if (tAnchor) {
     typedWalls.push({
       id: `t${tn++}`, start: tAnchor, end: r.point,
-      height: 3, thickness: 0.23, openings: [], material: 'white-paint',
+      height: 3, thickness: 0.23, openings: [], material: 'white-paint', type: 'shell',
     })
   }
   tAnchor = r.point
@@ -443,7 +443,7 @@ const tKey = (key: string) => {
     if (end && tAnchor) {
       typedWalls.push({
         id: `t${tn++}`, start: tAnchor, end,
-        height: 3, thickness: 0.23, openings: [], material: 'white-paint',
+        height: 3, thickness: 0.23, openings: [], material: 'white-paint', type: 'shell',
       })
       tAnchor = end
       tCursor = end
@@ -558,16 +558,16 @@ for (const f of dragFrames) {
  * draft hint can be LOOKED at rather than asserted.
  */
 const refWall = (id: string, ax: number, az: number, bx: number, bz: number, t: number): Wall =>
-  ({ id, start: { x: ax, z: az }, end: { x: bx, z: bz }, height: 3, thickness: t, openings: [], material: 'white-paint' })
+  ({ id, start: { x: ax, z: az }, end: { x: bx, z: bz }, height: 3, thickness: t, openings: [], material: 'white-paint', type: t > 0.17 ? 'shell' : 'partition' })
 
 function refPlan(k: number): Wall[] {
   const p = (v: number) => v * k
-  const T = 0.23
+  const SHELL_T = 0.23
   return [
-    refWall('n', p(0), p(0), p(9), p(0), T),
-    refWall('e', p(9), p(0), p(9), p(11), T),
-    refWall('s', p(9), p(11), p(0), p(11), T),
-    refWall('w', p(0), p(11), p(0), p(0), T),
+    refWall('n', p(0), p(0), p(9), p(0), SHELL_T),
+    refWall('e', p(9), p(0), p(9), p(11), SHELL_T),
+    refWall('s', p(9), p(11), p(0), p(11), SHELL_T),
+    refWall('w', p(0), p(11), p(0), p(0), SHELL_T),
     refWall('b1', p(0), p(3.5), p(9), p(3.5), 0.115),
     refWall('b2', p(3), p(0), p(3), p(3.5), 0.115),
     refWall('b3', p(6), p(0), p(6), p(3.5), 0.115),
@@ -615,5 +615,5 @@ for (const [name, k, scale] of [['ref-1x', 1, 62], ['ref-3x', 3, 21]] as const) 
   writeFileSync(`${OUT}/b31-${name}.png`, png())
   const actual = extentOf(walls)!
   const dev = deviationFrom(actual, { width: 9, depth: 11 })!
-  console.log(`b31-${name}.png  ${formatExtent(actual, 'm')}  ->  ${describeDeviation(dev)}`)
+  console.log(`b31-${name}.png  ${formatExtent(actual, 'm')}  ->  ${describeDeviation(dev)}  (shell 230 / partition 115)`)
 }

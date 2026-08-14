@@ -37,6 +37,7 @@ export function rectangleWalls(width = 4, depth = 3): Wall[] {
     end: corners[(i + 1) % corners.length],
     height: 3,
     thickness: 0.2,
+    type: 'shell' as const,
     openings: [],
     material: DEFAULT_WALL_MATERIAL,
   }))

@@ -52,6 +52,7 @@ const wall = (
   start: { x: ax, z: az },
   end: { x: bx, z: bz },
   ...WALL_DEFAULTS,
+  type: 'shell' as const,
 })
 
 /**

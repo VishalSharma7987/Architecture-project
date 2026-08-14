@@ -8,6 +8,7 @@ import {
   type Unit,
   type ViewMode,
   type WalkView,
+  type WallType,
 } from '../store/useDesignStore'
 import { ProjectsMenu } from './ProjectsMenu'
 import { ShareButton } from './ShareButton'
@@ -35,6 +36,21 @@ const WALK_VIEWS: SegOption<WalkView>[] = [
 const UNITS: SegOption<Unit>[] = [
   { id: 'ftin', label: 'ft-in', hint: 'Show lengths in feet and inches', testId: 'units-ftin' },
   { id: 'm', label: 'm', hint: 'Show lengths in metres', testId: 'units-m' },
+]
+
+const WALL_TYPES: SegOption<WallType>[] = [
+  {
+    id: 'shell',
+    label: 'Shell',
+    hint: 'External and load-bearing walls — 230 mm',
+    testId: 'wall-type-shell',
+  },
+  {
+    id: 'partition',
+    label: 'Partition',
+    hint: 'Internal dividers — 115 mm',
+    testId: 'wall-type-partition',
+  },
 ]
 
 const TOOLS: (SegOption<Tool> & { planOnly?: boolean })[] = [
@@ -188,6 +204,8 @@ export function Toolbar() {
   const redo = useDesignStore((s) => s.redo)
   const canUndo = useDesignStore((s) => s.past.length > 0)
   const canRedo = useDesignStore((s) => s.future.length > 0)
+  const activeWallType = useDesignStore((s) => s.activeWallType)
+  const setActiveWallType = useDesignStore((s) => s.setActiveWallType)
 
   // Walls are drawn in plan view only, so that tool hides in 3D. Walk mode
   // captures the pointer entirely, so no tool applies there.
@@ -378,6 +396,23 @@ export function Toolbar() {
               value={tool}
               onChange={setTool}
               ariaLabel="Tool"
+            />
+          )}
+
+          {/*
+            Which KIND of wall the pencil draws next. Beside the tool group and
+            only while that tool is live, because it is a setting on the tool
+            rather than a property of the building — the reference's most
+            immediate signal is thick shell against thin partition, and before
+            B32 the only way to get it was to draw sixteen identical walls and
+            retype a number on each.
+          */}
+          {tool === 'wall' && viewMode === '2d' && !walkMode && (
+            <Segmented
+              options={WALL_TYPES}
+              value={activeWallType}
+              onChange={setActiveWallType}
+              ariaLabel="Wall type"
             />
           )}
 

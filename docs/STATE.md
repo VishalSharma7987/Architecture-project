@@ -1269,6 +1269,43 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 51. WALL TYPES `SHIPPED 2026-08-12 by B32`
+
+The reference's most immediate signal is thick shell walls against thin
+partitions. The editor had **one** default thickness, 200 mm, and no concept at
+all — differentiating them meant selecting each of sixteen walls and retyping a
+number.
+
+`WallType = 'shell' | 'partition'`, with `WALL_TYPE_THICKNESS` of **230 mm and
+115 mm** — a full brick and a half brick, the Indian residential standard this
+project is aimed at. **A stated decision, not a reading of the drawing:** the
+reference is metric and does not state its thicknesses.
+
+| Decision | Argument |
+|---|---|
+| **The TYPE is authoritative** | A shell set to 300 mm is still a shell. The user said what the wall IS, then said how thick this one happens to be — two different statements. Deriving type from thickness would mean a 300 mm shell silently became something else, and a 115 mm external wall, which real drawings contain, could never be a shell at all. |
+| Changing the **type** re-standardises the thickness; typing a **thickness** leaves the type alone | That is what picking a type means, and what overriding means. |
+| When they disagree the inspector **says so** | *"Overridden — a shell is normally 230 mm. It is still a shell."* Neither field is quietly corrected. |
+| `activeWallType` is **view state** | A setting on the pencil, not a property of the building — in neither the saved file nor the undo snapshot. |
+| One inference, fenced off | A file written before B32 carries no type, so the parser reads one from the thickness at the midpoint of the two standards. That is a one-time migration of a document with no answer; a wall that HAS a type keeps it. |
+
+**No rendering changed.** `wallBodyQuad` has drawn from `thickness` since B26, so
+the model change produces the visual difference for free — the shell reads
+visibly heavier than the partitions in the rendered frames with not a line
+touched in `draw.ts`.
+
+**B31 still behaves** (scope 11). The extent is decided by the shell's
+CENTRELINE and still reads 9.00 × 11.00 exactly with mixed thicknesses, so the
+deviation still says "on target" and the captions still carry their sizes.
+Areas remain centreline-measured; centreline-versus-finish-face is Stage 3.
+
+> **The amendment's test does not catch the thing it was written for, and the
+> gap is worth recording.** "A shell overridden to 300 mm still reports as shell
+> after save/reload" stays GREEN under a parser that infers type from thickness,
+> because 300 mm infers to `shell` anyway. The case that goes red is a
+> **PARTITION** at 300 mm — inference flips it and the user's statement is lost.
+> Both are in the suite; only the second is load-bearing.
+
 ### 50. THE ROOM CAPTION COLLIDES WITH FURNITURE, AND B31 TRIPLED IT `OPEN`
 
 Found in B31's rendered frames, not by any assertion.

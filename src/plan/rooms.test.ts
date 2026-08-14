@@ -22,6 +22,7 @@ function wallFrom(a: Point, b: Point, thickness = 0.2): Wall {
     end: b,
     height: 3,
     thickness,
+    type: 'shell' as const,
     openings: [],
     material: DEFAULT_WALL_MATERIAL,
   }

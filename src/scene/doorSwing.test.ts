@@ -46,6 +46,7 @@ const EAST_WALL: Wall = {
   end: { x: 4, z: 0 },
   height: 3,
   thickness: 0.2,
+  type: 'shell' as const,
   openings: [],
   material: 'white-paint',
 }

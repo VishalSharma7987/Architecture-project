@@ -31,6 +31,7 @@ const wall = (over: Partial<Wall> = {}): Wall => ({
   thickness: 0.2,
   openings: [],
   material: DEFAULT_WALL_MATERIAL,
+  type: 'shell' as const,
   ...over,
 })
 

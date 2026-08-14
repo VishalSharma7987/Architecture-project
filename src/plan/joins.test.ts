@@ -48,6 +48,7 @@ const wall = (id: string, ax: number, az: number, bx: number, bz: number, t: num
   thickness: t,
   openings: [],
   material: 'white-paint',
+  type: 'shell' as const,
 })
 
 /**

@@ -141,6 +141,7 @@ describe('★ B5b — the auto-build path fails closed, by name', () => {
           thickness: 0.2,
           openings: [],
           material: 'white-paint',
+          type: 'shell' as const,
         },
       ],
     })

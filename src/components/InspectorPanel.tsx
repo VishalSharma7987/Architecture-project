@@ -6,6 +6,7 @@ import {
   OPENING_LABELS,
   STAIR_DEFAULTS,
   useDesignStore,
+  WALL_TYPE_THICKNESS,
 } from '../store/useDesignStore'
 import type {
   Point,
@@ -44,6 +45,7 @@ const ICON_WALL: Wall = {
   end: { x: SWING_ICON.wallEnd, z: SWING_ICON.y },
   height: 3,
   thickness: 0.2,
+  type: 'shell',
   openings: [],
   material: DEFAULT_WALL_MATERIAL,
 }
@@ -446,6 +448,54 @@ export function InspectorPanel() {
                 onCommit={(thickness) => updateWall(wall.id, { thickness })}
               />
               <WallLengthField wallId={wall.id} metres={length} />
+
+              {/*
+                The TYPE is authoritative and the thickness is free, so the two
+                can legitimately disagree — a 300 mm shell is still a shell, and
+                a 115 mm external wall is a real thing on real drawings.
+                Changing the type RE-STANDARDISES the thickness, because that is
+                what picking a type means; typing a thickness leaves the type
+                alone, because that is what overriding means. When they differ
+                the panel says so rather than quietly correcting either.
+              */}
+              <div className="mt-3" data-testid="wall-type">
+                <span className="mb-1 block text-[11px] font-medium text-slate-500">
+                  Wall type
+                </span>
+                <div className="flex gap-1">
+                  {(['shell', 'partition'] as const).map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      data-testid={`wall-type-${type}`}
+                      aria-pressed={wall.type === type}
+                      onClick={() =>
+                        updateWall(wall.id, {
+                          type,
+                          thickness: WALL_TYPE_THICKNESS[type],
+                        })
+                      }
+                      className={`flex-1 rounded-md border px-2 py-1 text-xs font-medium ${
+                        wall.type === type
+                          ? 'border-blue-500 bg-blue-50 text-blue-700'
+                          : 'border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      {type === 'shell' ? 'Shell' : 'Partition'}
+                    </button>
+                  ))}
+                </div>
+                {wall.thickness !== WALL_TYPE_THICKNESS[wall.type] && (
+                  <p
+                    className="mt-1 text-[11px] leading-relaxed text-amber-700"
+                    data-testid="wall-type-override"
+                  >
+                    {`Overridden — a ${wall.type} is normally ${Math.round(
+                      WALL_TYPE_THICKNESS[wall.type] * 1000,
+                    )} mm. It is still a ${wall.type}.`}
+                  </p>
+                )}
+              </div>
             </section>
 
             <section>

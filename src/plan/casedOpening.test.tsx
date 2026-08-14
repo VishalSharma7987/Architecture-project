@@ -66,6 +66,7 @@ function wallWith(type: OpeningType | null): Wall {
     thickness: 0.2,
     openings: opening,
     material: 'white-paint',
+    type: 'shell' as const,
   }
 }
 
@@ -151,6 +152,7 @@ describe('★ B23 — a cased opening survives the file', () => {
           height: 3,
           thickness: 0.2,
           material: 'white-paint',
+          type: 'shell' as const,
           openings: [
             {
               id: OPENING_ID,

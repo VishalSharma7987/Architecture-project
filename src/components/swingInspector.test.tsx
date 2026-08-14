@@ -49,6 +49,7 @@ function doorWall(swing?: Swing): Wall {
     thickness: 0.2,
     openings: [opening],
     material: 'white-paint',
+    type: 'shell' as const,
   }
 }
 
@@ -211,6 +212,7 @@ describe('★ B22 — a user can set a door\'s swing', () => {
           height: 3,
           thickness: 0.2,
           material: 'white-paint',
+          type: 'shell' as const,
           openings: [
             { id: DOOR_ID, type: 'door', position: 2, width: 1, height: 2.1, sill: 0 },
           ],

@@ -46,6 +46,7 @@ function wallOf(...openings: Opening[]): Wall[] {
       thickness: 0.2,
       openings,
       material: 'white-paint',
+      type: 'shell' as const,
     },
   ]
 }
@@ -297,6 +298,7 @@ describe('★ B24 — mark survives the file', () => {
           height: 3,
           thickness: 0.2,
           material: 'white-paint',
+          type: 'shell' as const,
           openings: [
             { id: 'a', type: 'door', position: 2, width: 0.9, height: 2.1, sill: 0, mark: '  D1  ' },
             { id: 'b', type: 'door', position: 6, width: 0.9, height: 2.1, sill: 0, mark: '   ' },

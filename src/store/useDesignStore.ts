@@ -158,6 +158,40 @@ export type Opening = {
   swing?: Swing
 }
 
+/**
+ * What a wall IS, as opposed to how thick it happens to be drawn.
+ *
+ * The reference plan shows thick shell walls and thin partitions, and the
+ * difference is the most immediate signal on the sheet — *this is the outside,
+ * that is a divider*. Before B32 the editor had one default thickness and no
+ * concept at all, so every wall was born 200 mm and differentiating them meant
+ * selecting each one and retyping a number.
+ */
+export type WallType = 'shell' | 'partition'
+
+export const isWallType = (value: unknown): value is WallType =>
+  value === 'shell' || value === 'partition'
+
+/**
+ * Thickness each type starts at, in metres.
+ *
+ * ── A stated decision, not a reading of the drawing ──
+ * The reference is metric and does NOT state its wall thicknesses. 230 mm is a
+ * full brick and 115 mm a half brick in Indian residential work — the standard
+ * this project is aimed at (§7), and what every corpus drawing that states a
+ * thickness uses. They are chosen, and they are chosen here rather than
+ * inferred, so that changing them later is a one-line decision with a reason
+ * attached rather than an archaeology exercise.
+ *
+ * They are DEFAULTS. `thickness` stays a free number and a user may set any
+ * value on any wall — see `Wall.type` for which of the two fields is
+ * authoritative when they disagree.
+ */
+export const WALL_TYPE_THICKNESS: Record<WallType, number> = {
+  shell: 0.23,
+  partition: 0.115,
+}
+
 export type Wall = {
   id: string
   provenance?: Provenance
@@ -167,9 +201,45 @@ export type Wall = {
   height: number
   /** Metres. */
   thickness: number
+  /**
+   * Shell or partition. **Authoritative, and independent of `thickness`.**
+   *
+   * ── Which field carries the meaning ──
+   * The TYPE does. A shell wall set to 300 mm is still a shell: the user has
+   * said what the wall IS and then said how thick this one happens to be, and
+   * those are two different statements. Deriving the type from the thickness
+   * would mean a 300 mm shell silently became something else, and a 115 mm
+   * external wall — which real drawings do contain — could never be a shell at
+   * all.
+   *
+   * So nothing infers one from the other at runtime. The only place they are
+   * connected is `WALL_TYPE_THICKNESS`, which supplies a STARTING thickness
+   * when a wall is created, and the migration below, which has no type to read.
+   *
+   * When they disagree the inspector shows both and says so, rather than
+   * quietly correcting either.
+   */
+  type: WallType
   openings: Opening[]
   material: MaterialId
 }
+
+/**
+ * The type to give a wall in a file written before B32, which has none.
+ *
+ * This is the ONE place a type is read from a thickness, and it is a one-time
+ * migration of documents that carry no answer: the midpoint of the two
+ * standards, so a 200 mm wall — the old universal default — lands on `shell`,
+ * which is what a single-thickness plan's walls mostly were.
+ *
+ * It is not a rule about live walls. A wall that HAS a type keeps it whatever
+ * its thickness, and `wallTypes.test.ts` fails if that ever stops being true.
+ */
+export const MIGRATION_TYPE_SPLIT =
+  (WALL_TYPE_THICKNESS.shell + WALL_TYPE_THICKNESS.partition) / 2
+
+export const wallTypeFromThickness = (thickness: number): WallType =>
+  thickness >= MIGRATION_TYPE_SPLIT ? 'shell' : 'partition'
 
 /**
  * The room types offered when naming a space. Ordered as they are offered.
@@ -717,6 +787,12 @@ type DesignState = {
    * committed to a size and must not be nagged about one.
    */
   targetExtent: { width: number; depth: number } | null
+  /**
+   * Which type the wall tool draws next. VIEW state, not document state —
+   * it is a setting on the pencil, not a property of the building, so it is
+   * in neither the saved file nor the undo snapshot.
+   */
+  activeWallType: WallType
   /** Traced-under reference drawing, or null when none is loaded. */
   blueprint: Blueprint | null
   /**
@@ -871,6 +947,7 @@ type DesignState = {
   setPlotFacing: (facing: Facing) => void
 
   /** Replaces the traced image, revoking the previous one's object URL. */
+  setActiveWallType: (type: WallType) => void
   /** States the building's intended extent, or clears it with null. */
   setTargetExtent: (extent: { width: number; depth: number } | null) => void
   setBlueprint: (blueprint: Blueprint | null) => void
@@ -982,13 +1059,13 @@ type DesignState = {
   addWall: (
     start: Point,
     end: Point,
-    options: Partial<Pick<Wall, 'height' | 'thickness'>> & {
+    options: Partial<Pick<Wall, 'height' | 'thickness' | 'type'>> & {
       provenance: Provenance
     },
   ) => string | null
   updateWall: (
     id: string,
-    patch: Partial<Pick<Wall, 'height' | 'thickness' | 'material'>>,
+    patch: Partial<Pick<Wall, 'height' | 'thickness' | 'material' | 'type'>>,
   ) => void
   /**
    * Resizes a wall to an exact length in metres, pivoting on its start point
@@ -1476,6 +1553,7 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   northOffset: 0,
   plotFacing: DEFAULT_FACING,
   targetExtent: null,
+  activeWallType: 'shell',
   blueprint: null,
   // Session-scoped and deliberately NOT reset by 'new project': how a user's
   // files reach them does not change because they closed a design, and the
@@ -1748,6 +1826,8 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
   // Object URLs live until revoked; dropping the reference alone would leak
   // the whole decoded image for the life of the tab. A null `src` is a
   // remembered placement with no pixels attached and has nothing to revoke.
+  setActiveWallType: (type) => set({ activeWallType: type }),
+
   setTargetExtent: (extent) =>
     set({
       targetExtent:
@@ -2006,7 +2086,13 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       start: { ...start },
       end: { ...end },
       height: options?.height ?? WALL_DEFAULTS.height,
-      thickness: options?.thickness ?? WALL_DEFAULTS.thickness,
+      // The type leads: an explicit thickness wins, otherwise the type's
+      // standard. `WALL_DEFAULTS.thickness` is no longer reachable for a new
+      // wall, and is kept only so older callers still compile.
+      type: options?.type ?? get().activeWallType,
+      thickness:
+        options?.thickness ??
+        WALL_TYPE_THICKNESS[options?.type ?? get().activeWallType],
       openings: [],
       material: DEFAULT_WALL_MATERIAL,
     }

@@ -24,6 +24,7 @@ const wallFrom = (a: Point, b: Point): Wall => ({
   end: b,
   height: 3,
   thickness: 0.2,
+  type: 'shell' as const,
   openings: [],
   material: DEFAULT_WALL_MATERIAL,
 })
