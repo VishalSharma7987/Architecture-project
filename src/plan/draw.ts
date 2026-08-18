@@ -14,6 +14,12 @@ import { getRoomType, roomDisplayName } from '../rooms/catalog'
 import { roomSize, selectedRoomOf, type ResolvedRoom } from '../rooms/resolve'
 import { SELECTION } from '../scene/config'
 import { doorSwing, planBounds, pointAlongWall } from '../scene/wallGeometry'
+import {
+  clearanceExtent,
+  dimensionRuns,
+  strokeRunInk,
+  type RunInk,
+} from './dimensionChains'
 import { glazingLines, sharedEnds, wallBodyQuad } from './wallBody'
 import type { SnapTarget } from './snap'
 import type { LooseJoint } from './repairJoints'
@@ -164,6 +170,34 @@ const DIMENSION = {
  * "outside" is undefined and the side has to be broken another way.
  */
 const OUTWARD_EPSILON_PX = 0.5
+
+/**
+ * Dimension-chain tuning, in screen pixels — annotation, like `DIMENSION`.
+ *
+ * The chain line is set out from the CLEARANCE extent (wall faces, door
+ * sweeps, furniture), not from the plan bounds, so a door swinging off the
+ * south wall pushes the south runs out past its leaf — the sheet's own rule,
+ * now shared. `offsetPx` also clears the per-wall label band, which sits
+ * `DIMENSION.offsetPx` (22) off each wall with an 8.5 px half-chip below it:
+ * both annotations survive this session (decluttering is the next one), so
+ * they must not land on each other.
+ */
+const CHAIN = {
+  /** Clearance edge to the station chain's line. */
+  offsetPx: 46,
+  /** Station chain line to the overall's line, when they share a side. */
+  tierPx: 24,
+  /** Building edge to where a witness line starts. */
+  gapPx: 5,
+  /** How far the witness line runs past the dimension line. */
+  overshootPx: 5,
+  /** Half-length of the 45° station ticks. */
+  tickPx: 5,
+  /** Label to its line. */
+  textGapPx: 3,
+  /** Clear run a bay's label needs either side of itself, or it is dropped. */
+  labelMarginPx: 6,
+}
 
 /**
  * Room caption tuning, in screen pixels. Like the dimensions, a caption is
@@ -393,6 +427,8 @@ export function drawPlan(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   drawDimensions(ctx, scene)
   // Opening widths ride over the walls too, and only when the switch is on.
   drawOpeningDimensions(ctx, scene)
+  // The strung station chains and the overalls, outside everything above.
+  drawDimensionChains(ctx, scene)
   // Also over the walls: the selection band hugs the room's outline, which is
   // the wall centreline, so anything drawn under a wall is drawn invisibly.
   drawRoomCaptions(ctx, scene)
@@ -1701,6 +1737,136 @@ function drawOpeningDimensions(ctx: CanvasRenderingContext2D, scene: PlanScene) 
       label(ctx, text, 0, 0, COLORS.dimensionLabel)
       ctx.restore()
     }
+  }
+
+  ctx.restore()
+}
+
+/**
+ * The strung dimension chains and the overall extents, outside the building.
+ *
+ * This is what the reference drawing carries and the per-wall labels above do
+ * not: one run per side whose stations are the interior partitions reaching
+ * that side (3.00/3.00/3.00 across the top of the reference), plus an overall
+ * per axis. The GEOMETRY comes from `dimensionRuns` and the ink goes through
+ * `strokeRunInk` — the same routine the printable sheet's overalls use — so
+ * the canvas cannot drift from the sheet the way the three renderers once
+ * drifted from each other (B26).
+ *
+ * Setout: the chain sits `CHAIN.offsetPx` beyond the CLEARANCE extent on its
+ * side, and an overall sharing a side with a chain moves out one more tier —
+ * a reader must see 9.00 as the extent and 3.00/3.00/3.00 as its parts, never
+ * one merged run. Witness lines drop from the building edge, through whatever
+ * clearance pushed the line out, and past it by the overshoot; that a witness
+ * crosses a door swing is normal drafting — the LABELS never do, because they
+ * ride on lines set out beyond the swing.
+ *
+ * Labels use `formatLength`, not the compact form: the chain is the drawing's
+ * statement of record and reads `3.00 m` like the reference, while the
+ * per-wall chips keep their compact style — one more cue that the two are
+ * different annotations while both remain on screen.
+ */
+function drawDimensionChains(ctx: CanvasRenderingContext2D, scene: PlanScene) {
+  const { width, height, viewport: vp, walls, units } = scene
+  const runs = dimensionRuns(walls)
+  if (runs.length === 0) return
+  const bounds = planBounds(walls)
+  if (!bounds) return
+  const clear = clearanceExtent(walls, scene.furniture) ?? bounds
+
+  const project = (p: Point) => worldToScreen(p, vp, width, height)
+  const bMin = project(bounds.min)
+  const bMax = project(bounds.max)
+  const cMin = project(clear.min)
+  const cMax = project(clear.max)
+
+  // Which sides carry a chain, so an overall on the same side takes tier two.
+  const chained = new Set(
+    runs.filter((r) => r.kind === 'chain').map((r) => `${r.axis}:${r.side}`),
+  )
+
+  ctx.save()
+  ctx.font = LABEL_FONT
+  ctx.strokeStyle = COLORS.dimension
+  ctx.fillStyle = COLORS.dimensionLabel
+  ctx.lineWidth = 1
+  ctx.lineCap = 'butt'
+  ctx.setLineDash([])
+
+  for (const run of runs) {
+    const tier =
+      run.kind === 'overall' && chained.has(`${run.axis}:${run.side}`) ? 1 : 0
+    const out = CHAIN.offsetPx + tier * CHAIN.tierPx
+    // Outward sign: 'min' sides grow toward smaller screen coordinates.
+    const dir = run.side === 'min' ? -1 : 1
+
+    // Station positions in screen pixels, along the run's own screen axis.
+    const stations = run.stations.map((s) =>
+      run.axis === 'x'
+        ? project({ x: s, z: 0 }).x
+        : project({ x: 0, z: s }).y,
+    )
+    const first = stations[0]
+    const last = stations[stations.length - 1]
+
+    // The line's cross-axis position: set out from the clearance edge. The
+    // witness starts at the BUILDING edge — the run measures the building,
+    // whatever pushed its line further out.
+    const clearEdge =
+      run.axis === 'x'
+        ? run.side === 'min' ? cMin.y : cMax.y
+        : run.side === 'min' ? cMin.x : cMax.x
+    const buildingEdge =
+      run.axis === 'x'
+        ? run.side === 'min' ? bMin.y : bMax.y
+        : run.side === 'min' ? bMin.x : bMax.x
+    const line = clearEdge + dir * out
+
+    const ink: RunInk = { a: { x: 0, y: 0 }, b: { x: 0, y: 0 }, segments: [], labels: [] }
+    const point = (alongPx: number, crossPx: number) =>
+      run.axis === 'x' ? { x: alongPx, y: crossPx } : { x: crossPx, y: alongPx }
+
+    ink.a = point(first, line)
+    ink.b = point(last, line)
+    for (const s of stations) {
+      ink.segments.push({
+        from: point(s, buildingEdge + dir * CHAIN.gapPx),
+        to: point(s, line + dir * CHAIN.overshootPx),
+      })
+      // The surveyor's slash, the same stroke at every station on both axes.
+      const p = point(s, line)
+      ink.segments.push({
+        from: { x: p.x - CHAIN.tickPx, y: p.y + CHAIN.tickPx },
+        to: { x: p.x + CHAIN.tickPx, y: p.y - CHAIN.tickPx },
+      })
+    }
+
+    for (let i = 0; i < run.stations.length - 1; i++) {
+      const text = formatLength(run.stations[i + 1] - run.stations[i], units)
+      const span = Math.abs(stations[i + 1] - stations[i])
+      // A label wider than its bay reads as a collision, not a dimension —
+      // the same bargain the per-wall labels strike.
+      if (ctx.measureText(text).width + CHAIN.labelMarginPx * 2 > span) continue
+
+      const mid = (stations[i] + stations[i + 1]) / 2
+      if (run.axis === 'x') {
+        // Above its line on both sides — the sheet's own convention.
+        ink.labels.push({ text, x: mid, y: line - CHAIN.textGapPx })
+      } else {
+        // Rotated to read bottom-to-top; on the left the glyphs hang toward
+        // -x (baseline 'bottom'), on the right toward +x ('top'), so the text
+        // always sits on the outside of its own line.
+        ink.labels.push({
+          text,
+          x: line + dir * CHAIN.textGapPx,
+          y: mid,
+          angle: -Math.PI / 2,
+          baseline: run.side === 'min' ? 'bottom' : 'top',
+        })
+      }
+    }
+
+    strokeRunInk(ctx, ink)
   }
 
   ctx.restore()

@@ -588,6 +588,32 @@ const refLabels = (k: number): RoomLabel[] => [
   { id: 'l7', type: 'bedroom', anchor: { x: 7.5 * k, z: 9.5 * k }, provenance: pv('manual') },
 ]
 
+/* ── B33: the dimension chains, on the reference plan ── */
+
+/**
+ * The reference at its real size with a door swinging off the south wall, so
+ * the four frames answer the brief's questions: do the chains read, is the
+ * overall distinct from the stations, does the setout clear the swing, and
+ * does 9.00 × 11.00 still read.
+ */
+{
+  const walls = refPlan(1)
+  const south = walls.find((x) => x.id === 's')!
+  south.openings = [
+    { id: 'main', type: 'door', position: 4.5, width: 1.0, height: 2.1, sill: 0, swing: { hand: 'start', side: 'left' } },
+  ]
+  const labels = refLabels(1)
+  const { ctx, png } = planContext(880, 940)
+  drawPlan(ctx, {
+    width: 880, height: 940,
+    viewport: { center: { x: 4.5, z: 5.5 }, scale: 56 },
+    walls, furniture: [], rooms: resolveRoomsUncached(walls, labels),
+    selection: null, units: 'm', anchor: null, cursor: null, showCursor: false,
+  })
+  writeFileSync(`${OUT}/b33-chains.png`, png())
+  console.log('\nwrote b33-chains.png — reference plan, south door, chains + overalls')
+}
+
 console.log('')
 for (const [name, k, scale] of [['ref-1x', 1, 62], ['ref-3x', 3, 21]] as const) {
   const walls = refPlan(k)

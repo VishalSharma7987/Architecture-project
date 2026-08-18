@@ -202,13 +202,20 @@ describe('★ B21 — no renderer decides the swing for itself', () => {
     expect(offenders).toEqual([])
   })
 
-  it('★ the sheet calls it twice — the arc AND the space it reserves', () => {
-    // Finding 20b: `doorSweep` bounds the leaf so `fitExtent` can keep the page
-    // fit and the overall dimension setout clear of it. It was kept in step
-    // with the arc by a COMMENT, across 170 lines. If it drifts, the sheet
-    // reserves space on one side and draws the arc on the other.
-    const calls = read('plan/planSheet.ts').match(/doorSwing\(/g) ?? []
-    expect(calls.length).toBeGreaterThanOrEqual(2)
+  it('★ the space reserved for a leaf asks the model, like the arc it clears', () => {
+    // Finding 20b: `doorSweep` bounds the leaf so the page fit and the
+    // dimension setout stay clear of it. It was kept in step with the arc by
+    // a COMMENT, across 170 lines. If it drifts, the sheet reserves space on
+    // one side and draws the arc on the other.
+    //
+    // B33 moved `doorSweep` into `plan/dimensionChains.ts` so the canvas's
+    // dimension chains share the sheet's clearance rather than growing a
+    // second sweep — the original assertion "the sheet calls doorSwing twice"
+    // now splits across the two files, and the coupling it guards is the same.
+    const sweep = read('plan/dimensionChains.ts').match(/doorSwing\(/g) ?? []
+    expect(sweep.length).toBeGreaterThanOrEqual(1)
+    const arc = read('plan/planSheet.ts').match(/doorSwing\(/g) ?? []
+    expect(arc.length).toBeGreaterThanOrEqual(1)
   })
 
   it('★ the 3D leaf no longer latches its side at runtime', () => {

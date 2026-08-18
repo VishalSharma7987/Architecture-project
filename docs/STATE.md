@@ -1,6 +1,6 @@
 # Project State
 
-Updated: 2026-08-10 · Working tree on `3926d17`
+Updated: 2026-08-18 · Working tree on `e2673ea` + B33
 
 This file records **where we are and what is still undecided**. The ADRs in
 [`docs/adr/`](adr/) record **why decisions were made**. Neither replaces the other:
@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B5c — COMPLETE.** Gate 4 wired into the candidate loop; a degenerate reading no longer wins on length |
-| Before that | **Session 2** — `setWallLength` stopped detaching joins; **B25** — unenclosed spaces; **B24** — marks + schedule |
-| Next task | **Session 3b** — wire CV and AI ingest to the same weld (open question 27), or **B9** (drafting/snapping) |
+| Last completed task | **B33 — COMPLETE.** Dimension chains: strung station runs per side plus overalls, outside the building, sharing the sheet's implementation (finding 52) |
+| Before that | **B32** — shell/partition wall types; **B31** — stated building size; **B30/B29/B28** — endpoint drag, typed length, endpoint snap; **B5c** — Gate 4 wired |
+| Next task | **Declutter the per-wall labels** now the chains exist (finding 52, decision e), or the commit-time warning for a typed length landing near-but-not-on a wall (finding 53) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,12 +91,12 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B5c, at `8d11fdc`+:
+Verified after B33, at `e2673ea`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **586 passing / 586** · 38 files / 38 |
-| `npm run build` | **pass** (exit 0), 833 ms |
+| `npm test` | **705 passing / 705** · 46 files / 46 |
+| `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
 | Pure-module coverage | **85.6% – 100%** across all seven §7 names |
@@ -1107,8 +1107,10 @@ projection, which is what made one implementation possible at all. The sheet's
 output is pinned call-for-call against a golden captured before the extraction:
 205 calls over six walls, an oblique one, two windows and two doors, byte-identical.
 
-**Still open on this finding:** overall dimensions and the room caption on the
-canvas, and every row for `scene/*` (finding 43).
+**Still open on this finding:** every row for `scene/*` (finding 43). The
+canvas's caption row closed with B31, and its overall-dimensions row with B33
+(finding 52) — the canvas now carries overalls AND station chains, through the
+sheet's own implementation.
 
 **What B26 did NOT do, and what looking revealed about it.** T-junctions get no
 pad, because `vertexKey` is exact-coordinate matching and a wall ending mid-span
@@ -1268,6 +1270,74 @@ it is a redirect to manual calibration (rank 1, two picks and a typed length);
 for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
+
+### 53. A PLAN DRAWN WITH SNAP ACTIVE STILL REPORTS UNJOINED ENDS `REPORTED 2026-08-18 by B33` · cause found, deliberately not fixed
+
+The owner drew the reference in the app with endpoint snap on, and the status
+bar said **"3 unjoined ends — connect"**. Investigated by reproduction against
+the real `resolveWallPoint` / `findLooseJoints`; two mechanisms produce
+exactly this, and neither is a classification bug:
+
+| mechanism | measured |
+|---|---|
+| **Zoom over ~104 px/m defeats the centreline target.** `SNAP_RADIUS_PX` is 12 SCREEN px; a 230 mm shell's half-thickness is 115 mm in WORLD units. Above `12 / 0.115 ≈ 104 px/m` the visible FACE the user aims at is outside the radius, so grid snap wins and puts the stem **one cell (152.4 mm) short** of the centreline. | face-aim at 44–104 px/m: snaps, joins, 0 loose. At 110–176 px/m: grid, ends at z = 0.1524, **1 loose (`extend`)** |
+| **Typed length bypasses snap BY DESIGN** (B29: the indicator is hidden while typing, because a typed number outranks an inference). Typing a room's CLEAR span — or a nominal figure — toward a wall lands the end half a wall short. | typed `7'6` toward a centreline 8'-0" away: 152 mm short, **1 loose**. Typed `7'-7.5` (the exact clear span): 114 mm short, **1 loose** |
+
+A stem that DID snap onto a centreline is **not** flagged — pass 2 of
+`findLooseJoints` treats within-`JOIN_TOLERANCE` contact as joined — so the
+scan's classification is right, the targets are offered, and the three
+reported ends are real defects the repair affordance exists for. The user's
+odd partition dimensions (`3'3"`, `6'7"`) are consistent with either
+mechanism.
+
+**Not fixed here.** The honest fixes are different features: a face/wall-face
+snap target (finding 27's "the user aims at the FACE; the model needs its
+centreline"), and a commit-time nudge when a typed length ends near-but-not-on
+a wall — the second must not silently alter a typed number (**L2**). Reported
+for the next drafting session.
+
+### 52. DIMENSION CHAINS `SHIPPED 2026-08-18 by B33`
+
+The reference strings dimensions OUTSIDE the building — `3.00/3.00/3.00`
+across the top, `3.00/1.50/3.00/1.50` across the bottom, plus an overall per
+axis. The canvas had per-wall labels only, offset outward from the PLAN
+CENTRE, so interior partitions threw their labels INSIDE the building, and the
+apparent "overall" on a rectangle was the north wall's own label, correct by
+coincidence.
+
+[`plan/dimensionChains.ts`](../src/plan/dimensionChains.ts): `dimensionRuns`
+(the stations, world metres) · `clearanceExtent` + `doorSweep` (promoted
+verbatim from `planSheet.ts`) · `strokeRunInk` (the ink both renderers now
+use). The five argued decisions:
+
+| Decision | Argument |
+|---|---|
+| **(a) Stations are DERIVED from the walls** — an interior partition reaching a side of the building divides that side's chain; no `Dimension` entity | The smallest model that reproduces the reference. Stored dimensions are §6 v6 (user-placed), and adding them to draw chains the geometry already determines would create a second source of truth for where a wall stands. A side with no interior stations gets no chain — it would restate the overall. |
+| **(b) The line sits `CHAIN.offsetPx` (46 screen px) beyond the CLEARANCE extent** (wall faces ∪ door sweeps ∪ furniture), witness lines dropping from the BUILDING edge past it | The sheet's own rule, now shared: a door swinging off the south wall pushes the south runs out past its leaf. Witnesses may cross a swing — normal drafting — but labels ride the line and never do. 46 px also clears the per-wall chip band (22 px + 8.5 px half-chip), which survives this session. |
+| **(c) Overall and chain are separate RUNS; an overall sharing a side moves out one tier (24 px)** | A reader must see 9.00 m as the extent and 3.00/3.00/3.00 as its parts. Distinctness is positional (outer tier) and textual (one reading spanning the run vs a string of bays); chains also label with full `formatLength` (`3.00 m`) where the per-wall chips stay compact. |
+| **(d) Stations sit on CENTRELINES, not faces** | The chain must SUM: 3.00+3.00+3.00 = 9.00 = the overall = the B31 target the user typed, and every number the editor states (areas, status bar, deviation) is centreline-measured. Face stations cannot sum to any overall without inserting each wall thickness as its own segment — real face dimensioning, which arrives with composite walls and wall-face snap (Stage 3, finding 24). The brief asserted "the reference dimensions to FACES"; the reference's own arithmetic refutes it — its strings total its stated 9.00 only centre-to-centre. Area semantics untouched. |
+| **(e) Per-wall labels REMAIN, switch untouched** | Decluttering is its own session. Recommendation recorded: suppress a per-wall label when its wall's full run appears as a bay on a chain along its side (equal length, same axis), keep it while the wall is SELECTED, and leave opening chips alone — they are inward and orthogonal to the chains. Do not add a visibility mode until that rule proves insufficient. |
+
+**The sheet changed only by sharing** — `fitExtent`/`doorSweep` moved out
+verbatim as `clearanceExtent`/`doorSweep`, and `drawDimensions` now feeds the
+same coordinates through `strokeRunInk`. Asserted exactly as B26 did:
+`wallBody.test.tsx`'s golden still pins the sheet's whole output
+call-for-call, unchanged. The `doorSwing` fitness grep followed the move
+(`doorSwing.test.ts`).
+
+**Touch tolerance:** a stem counts as reaching a side within
+`maxThickness/2 + JOIN_TOLERANCE` of the bounds edge — covers a stem drawn to
+the shell's visible FACE (B26 renders it closed) without inventing stations
+from walls that genuinely stop short. Stations within `JOIN_TOLERANCE` of a
+chain end, or of each other, merge (SD22's "same point" question).
+
+**What the rendered frames showed** (`npm run plan:look`, `b33-chains.png`,
+`b31-ref-1x.png`): chains and overalls read on all four sides; the south runs
+sit clear of the main-door swing; the caption stack, furniture and draft line
+are untouched; 9.00 × 11.00 and 99.0 m² still read. Known residue: at some
+zooms a chain can pass under the DOM overlays (compass panel, status bar) —
+world-anchored annotation cannot know about chrome; not observed at reference
+zoom.
 
 ### 51. WALL TYPES `SHIPPED 2026-08-12 by B32`
 

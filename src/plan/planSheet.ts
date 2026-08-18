@@ -14,6 +14,7 @@ import {
   planBounds,
   pointAlongWall,
 } from '../scene/wallGeometry'
+import { clearanceExtent, strokeRunInk } from './dimensionChains'
 import { GLAZING_INSET_RATIO, sharedEnds, wallBodyQuad } from './wallBody'
 import { formatArea, formatLength, METRES_PER_FOOT } from '../units/length'
 
@@ -137,7 +138,7 @@ export function renderPlanSheet(
   ctx: CanvasRenderingContext2D,
   options: PlanSheetOptions,
 ): void {
-  const fit = fitExtent(options.walls, options.furniture)
+  const fit = clearanceExtent(options.walls, options.furniture)
   const layout = layoutSheet(options, fit)
   const units: Unit = options.units ?? 'm'
   const walls = planBounds(options.walls)
@@ -232,78 +233,10 @@ function toSheet(layout: Layout, p: Point) {
   }
 }
 
-/**
- * Everything that must fit on the page: wall faces (not centrelines) plus
- * furniture footprints, so nothing is clipped by the fit.
- */
-function fitExtent(walls: Wall[], furniture: FurnitureItem[]): Extent | null {
-  let minX = Infinity
-  let maxX = -Infinity
-  let minZ = Infinity
-  let maxZ = -Infinity
-
-  const expand = (p: Point, reach: number) => {
-    minX = Math.min(minX, p.x - reach)
-    maxX = Math.max(maxX, p.x + reach)
-    minZ = Math.min(minZ, p.z - reach)
-    maxZ = Math.max(maxZ, p.z + reach)
-  }
-
-  for (const wall of walls) {
-    for (const p of [wall.start, wall.end]) expand(p, wall.thickness / 2)
-    for (const opening of wall.openings) {
-      if (opening.type !== 'door') continue
-      // A leaf swings a full door-width clear of the wall, so a door on the
-      // outer face of the plan is what actually sets the extent there.
-      for (const p of doorSweep(wall, opening)) expand(p, 0)
-    }
-  }
-
-  for (const item of furniture) {
-    const size = furnitureSize(item)
-    // Half-diagonal covers the footprint at any rotation without trigonometry.
-    expand(item.position, Math.hypot(size.width, size.depth) / 2)
-  }
-
-  if (!Number.isFinite(minX) || !Number.isFinite(minZ)) return null
-
-  return {
-    min: { x: minX, z: minZ },
-    max: { x: maxX, z: maxZ },
-    center: { x: (minX + maxX) / 2, z: (minZ + maxZ) / 2 },
-    width: maxX - minX,
-    depth: maxZ - minZ,
-  }
-}
-
-/**
- * Points the door leaf sweeps through, so `fitExtent` can keep the page fit —
- * and the overall dimension setout — clear of a door swinging off the building.
- *
- * This and the arc in `drawOpeningSymbol` must describe the same quarter turn,
- * 170 lines apart. That used to be asserted by this comment and nothing else,
- * while both hard-coded the hinge and the direction independently. They now
- * share `doorSwing`, so the model is what keeps them in step and
- * `doorSwing.test.ts` fails the build if either stops asking.
- */
-function doorSweep(wall: Wall, opening: Opening): Point[] {
-  const swing = doorSwing(wall, opening)
-  const steps = 6
-  const points: Point[] = []
-
-  for (let i = 0; i <= steps; i++) {
-    const angle = (Math.PI / 2) * (i / steps)
-    const cos = Math.cos(angle)
-    // The sign is what turns the leaf onto the side the model asked for.
-    const sin = Math.sin(angle) * swing.sweep
-    points.push({
-      x: swing.hinge.x + (swing.axis.x * cos + swing.axis.z * sin) * opening.width,
-      z: swing.hinge.z + (swing.axis.z * cos - swing.axis.x * sin) * opening.width,
-    })
-  }
-
-  return points
-}
+// The page-fit extent and the door sweep it needs moved to
+// `plan/dimensionChains.ts` in B33 — the canvas's dimension chains use the
+// same clearance the sheet's overall dimensions always respected, and per
+// B26 one implementation serves both. `clearanceExtent` is that function.
 
 function drawFurniture(
   ctx: CanvasRenderingContext2D,
@@ -523,44 +456,48 @@ function drawDimensions(
   ctx.lineWidth = 1 * u
   ctx.font = `${Math.round(15 * u)}px ${FONT_STACK}`
 
+  // Both runs go through the shared ink (B33). The coordinates below are the
+  // exact expressions this function always used, so the emitted calls — and
+  // the golden that pins them — are unchanged.
+
   // Bottom: overall width.
   const gapY = Math.min(34 * u, (layout.plot.bottom - baseY) * 0.75)
   const y = baseY + gapY
-  ctx.beginPath()
-  ctx.moveTo(min.x, y)
-  ctx.lineTo(max.x, y)
-  for (const x of [min.x, max.x]) {
-    ctx.moveTo(x, max.y + gapY * 0.25)
-    ctx.lineTo(x, y + 5 * u)
-    ctx.moveTo(x - 4 * u, y + 4 * u)
-    ctx.lineTo(x + 4 * u, y - 4 * u)
-  }
-  ctx.stroke()
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'bottom'
-  ctx.fillText(formatLength(bounds.width, units), (min.x + max.x) / 2, y - 6 * u)
+  strokeRunInk(ctx, {
+    a: { x: min.x, y },
+    b: { x: max.x, y },
+    segments: [min.x, max.x].flatMap((x) => [
+      { from: { x, y: max.y + gapY * 0.25 }, to: { x, y: y + 5 * u } },
+      { from: { x: x - 4 * u, y: y + 4 * u }, to: { x: x + 4 * u, y: y - 4 * u } },
+    ]),
+    labels: [
+      {
+        text: formatLength(bounds.width, units),
+        x: (min.x + max.x) / 2,
+        y: y - 6 * u,
+      },
+    ],
+  })
 
   // Left: overall depth, read from the side as drawings are dimensioned.
   const gapX = Math.min(34 * u, (baseX - layout.plot.left) * 0.75)
   const x = baseX - gapX
-  ctx.beginPath()
-  ctx.moveTo(x, min.y)
-  ctx.lineTo(x, max.y)
-  for (const py of [min.y, max.y]) {
-    ctx.moveTo(min.x - gapX * 0.25, py)
-    ctx.lineTo(x - 5 * u, py)
-    ctx.moveTo(x - 4 * u, py + 4 * u)
-    ctx.lineTo(x + 4 * u, py - 4 * u)
-  }
-  ctx.stroke()
-
-  ctx.save()
-  ctx.translate(x - 6 * u, (min.y + max.y) / 2)
-  ctx.rotate(-Math.PI / 2)
-  ctx.textAlign = 'center'
-  ctx.textBaseline = 'bottom'
-  ctx.fillText(formatLength(bounds.depth, units), 0, 0)
-  ctx.restore()
+  strokeRunInk(ctx, {
+    a: { x, y: min.y },
+    b: { x, y: max.y },
+    segments: [min.y, max.y].flatMap((py) => [
+      { from: { x: min.x - gapX * 0.25, y: py }, to: { x: x - 5 * u, y: py } },
+      { from: { x: x - 4 * u, y: py + 4 * u }, to: { x: x + 4 * u, y: py - 4 * u } },
+    ]),
+    labels: [
+      {
+        text: formatLength(bounds.depth, units),
+        x: x - 6 * u,
+        y: (min.y + max.y) / 2,
+        angle: -Math.PI / 2,
+      },
+    ],
+  })
 }
 
 /**
