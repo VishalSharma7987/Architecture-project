@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B35 — COMPLETE.** Dimension declutter: chain-covered walls no longer label themselves, and the survivors pass a screen-space collision test (finding 55) |
-| Before that | **B34** — face snap + typed near-miss (finding 54); **B33** — dimension chains (finding 52); **B32** — wall types; **B31** — stated building size |
-| Next task | The three unwelded **ingest paths** (finding 27's open half), or **sticky chains** for deep zoom (finding 55's observation) |
+| Last completed task | **B36 — COMPLETE.** The ingest weld: CV and AI walls weld to a fixed point before commit; `parseDesign` reports and never welds (finding 56). Finding 27 is closed |
+| Before that | **B35** — dimension declutter (finding 55); **B34** — face snap + typed near-miss (finding 54); **B33** — dimension chains (finding 52) |
+| Next task | **Sticky chains** for deep zoom (finding 55's observation), or **B9**'s remaining drafting snaps (perpendicular/extension), or the corpus email (the sole Stage 1 blocker, human) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B35, at `630cd81`+:
+Verified after B36, at `368397c`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **728 passing / 728** · 47 files / 47 |
+| `npm test` | **736 passing / 736** · 48 files / 48 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1271,6 +1271,37 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 56. THE INGEST WELD `SHIPPED 2026-08-18 by B36` · finding 27 closed
+
+The last way unjoined geometry entered a document. `weldIngestWalls` in
+[`plan/repairJoints.ts`](../src/plan/repairJoints.ts) runs Session 3's
+ratified two-pass design (cluster, then extend along the wall's OWN axis —
+SD25) on the CV paths (`buildWallsFromBlueprint` and the panel's staged
+detect, welded at STAGING so the preview is the commit) and inside
+`replaceWalls`, the AI funnel. `parseDesign` REPORTS and never welds.
+
+| Decision | Argument |
+|---|---|
+| **The reach is the REPAIR's reach**, not Session 3's tighter merge-50/extend-(t/2+50) | Measured on the real CV plan: the tight numbers close 9 of its 12 loose joints; the repair reach converges to 0. SD24's parallel-50/crossing-160 asymmetry already encodes the only real fusion hazard (a duct shaft is two PARALLEL walls) and that hazard does not depend on who authored the geometry. One tolerance vocabulary: the weld closes exactly what the status bar counts and connect would close — a fourth tolerance family would leave "connect" finding work moments after an auto-weld. |
+| **Fixed point, not one round** | One round is NOT idempotent — pass-1 moves create fresh near-misses; the real plan measures 12 → 1 → 0. Iterating until the scan finds nothing makes re-welding return the SAME REFERENCE, so a caller that already welded is a free no-op. A 4-round cap backstops pathological input; anything still loose stays visible in the status bar. |
+| **After the plausibility gates, before commit** | The gates judge the DETECTOR's raw reading; a weld that ran first would let cleanup blur what is being judged. Nothing the weld changes (endpoints) is anything the gates read (thicknesses). |
+| **Provenance records nothing — Session 3's conclusion confirmed post-B7.4** | `source` stays `'cv'`/`'ai'` (still true), `confidence` is wrong in both directions (the weld neither raises nor lowers trust in the detection), and `sourceRef`'s meaning is fixed per source. The weld is normalization of the same source's output, exactly like `normalizeWall`'s clamping, which also does not record itself. |
+| **What the user is told** | `detectOpenings`' model: the CV panel says "Added N walls, closing M near-miss joints"; the auto-build status line says "(closed M near-miss joints)"; the AI path's parse warning ("N wall joints look joined but are not connected") surfaces through the existing repaired count — and is TRUE by the time it is read, because `replaceWalls` then welds them. |
+| **`parseDesign` warns, in the status bar's own terms** | It runs on autosave RESTORE — a weld there rewrites a user's own document on every reopen, invisibly, with no undo step (L4), and a .json's 150 mm gap is a person's decision (L2). §3 holds it to being a validator. The count is over `floors` (every storey ONCE — top-level walls mirror floors[0]; counting both doubled the real sample's 12 to 24, caught by the ★). |
+
+**Measured on `samples/real-plan-cv-untitled.json`** (the detector's committed
+output, saved before any weld existed): 12 loose joints → 0, 13 closed across
+the fixed point's rounds, and **a fourth room recovered** (3 → 4; the file's
+walls are still sub-pixel strokes, so the topology gain is partial — finding
+"downstream repair cannot recover the topology" is now only two-thirds true).
+Exact counts pinned in `ingestWeld.test.ts` (L6). No corpus IMAGE produces
+walls to render — all 13 re-verified refused at the gates this session — so
+the rendered before/after uses that saved real output, not a synthetic.
+
+`WeldableWall` (id + endpoints + thickness, structural) lets the weld run on
+`segmentsToWalls`' partials with index-synthesized ids, so tie-breaks stay
+deterministic before real ids exist.
+
 ### 55. DIMENSION DECLUTTER `SHIPPED 2026-08-18 by B35`
 
 Finding 52 decision (e), switched ON, plus the collision pass it did not
@@ -2012,7 +2043,12 @@ wall — and it is *why* the bogus reading looked plausible enough to win.
 The corpus harness's `not-wired` reason is gone; ink fraction and junction ratio
 are now measured on the accepted reading.
 
-### 27. THREE INGEST PATHS STILL ADMIT UNWELDED COORDINATES `OPEN` · next
+### 27. THREE INGEST PATHS STILL ADMIT UNWELDED COORDINATES `RESOLVED 2026-08-18 by B36` · see finding 56
+
+Both halves closed: the drawing half by B34 (face snap), the ingest half by
+B36 — CV and AI weld to a fixed point before commit; `parseDesign`
+deliberately reports instead of welding. Original text below, kept for the
+record.
 
 Session 2's inventory found `setWallLength` and fixed it. Three paths still
 write wall endpoints that were never snapped or welded to anything:

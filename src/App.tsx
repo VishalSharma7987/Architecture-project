@@ -122,7 +122,11 @@ export default function App() {
                       : structure.scale.kind === 'kept-measured'
                         ? 'Built at the scale you measured. '
                         : 'Sized by best guess — no dimension was legible; calibrate in 2D. '
-                  }Built ${structure.walls} walls and placed ${
+                  }Built ${structure.walls} walls${
+                    structure.welded > 0
+                      ? ` (closed ${structure.welded} near-miss joint${structure.welded === 1 ? '' : 's'})`
+                      : ''
+                  } and placed ${
                     structure.openings
                   } door${structure.openings === 1 ? '' : 's'} and windows${
                     structure.dropped > 0
@@ -138,7 +142,11 @@ export default function App() {
                       : ''
                   }. Fix any misses with the Door and Window tools.`}
                 {structure.kind === 'walls-only' &&
-                  `Built ${structure.walls} walls, but the doors and windows could not be read (${structure.reason}). Add them from the Blueprint panel or by hand.`}
+                  `Built ${structure.walls} walls${
+                    structure.welded > 0
+                      ? ` (closed ${structure.welded} near-miss joint${structure.welded === 1 ? '' : 's'})`
+                      : ''
+                  }, but the doors and windows could not be read (${structure.reason}). Add them from the Blueprint panel or by hand.`}
                 {/* A refusal says WHICH check failed and what it measured, and
                     is deliberately wordier than the rest of this box. Nothing
                     was built, so the whole message has to earn the user's next

@@ -664,6 +664,38 @@ const refLabels = (k: number): RoomLabel[] => [
   console.log('\nwrote b33-chains.png — reference plan, south door, chains + overalls')
 }
 
+/* ── B36: the real CV plan, before and after the ingest weld ── */
+
+/**
+ * Not a synthetic: `samples/real-plan-cv-untitled.json` is a real detector
+ * run's committed output, saved before any weld existed. No corpus IMAGE
+ * currently survives the gates (all 13 refused — see STATE.md's intake
+ * table), so the saved output is the closest thing to the CV source path
+ * that can be rendered.
+ */
+{
+  const { parseDesign } = await import('../src/persistence/schema')
+  const { weldIngestWalls } = await import('../src/plan/repairJoints')
+  const { readFileSync } = await import('node:fs')
+  const parsed = parseDesign(JSON.parse(readFileSync('samples/real-plan-cv-untitled.json', 'utf8')))
+  if (parsed.ok) {
+    const before = parsed.doc.walls
+    const after = weldIngestWalls(before).walls
+    for (const [name, set] of [['b36-cv-before', before], ['b36-cv-after', after]] as const) {
+      const { ctx, png } = planContext(880, 700)
+      drawPlan(ctx, {
+        width: 880, height: 700,
+        viewport: { center: { x: -1.4, z: -1 }, scale: 56 },
+        walls: set, furniture: [], rooms: resolveRoomsUncached(set, []),
+        selection: null, units: 'ftin', anchor: null, cursor: null, showCursor: false,
+        looseJoints: findLooseJoints(set),
+      })
+      writeFileSync(`${OUT}/${name}.png`, png())
+      console.log(`${name}.png  loose ${findLooseJoints(set).length}  rooms ${resolveRoomsUncached(set, []).length}`)
+    }
+  }
+}
+
 /* ── B35: the declutter, at three zooms ── */
 
 /**

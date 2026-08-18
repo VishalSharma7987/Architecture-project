@@ -1,5 +1,6 @@
 import { useDesignStore } from '../store/useDesignStore'
 import { provenance } from '../store/provenance'
+import { weldIngestWalls } from '../plan/repairJoints'
 import { detectWallSegments, segmentsToWalls } from './detectWalls'
 import {
   gateAfterDetection,
@@ -32,7 +33,13 @@ const rasterFromSrc = (src: string): Promise<RasterResult> =>
   })
 
 export type BuildResult =
-  | { ok: true; count: number; warnings: GateResult[] }
+  | {
+      ok: true
+      count: number
+      /** Near-miss joints the ingest weld closed — reported, never silent. */
+      welded: number
+      warnings: GateResult[]
+    }
   | {
       ok: false
       reason:
@@ -115,8 +122,18 @@ export async function buildWallsFromBlueprint(): Promise<BuildResult> {
   const store = useDesignStore.getState()
   if (store.walls.length > 0) return { ok: false, reason: 'has-walls' }
 
+  // The ingest weld (B36), AFTER the gates: the gates judge the DETECTOR's
+  // raw reading, and a weld that ran first would let cleanup blur what is
+  // being judged. Welded here, before commit, so the store never holds the
+  // near-misses the detector's noise produces. Ids are synthesized by index —
+  // deterministic, so the weld's tie-breaks are too (L6) — and discarded by
+  // `addWall`, which mints real ones.
+  const welded = weldIngestWalls(
+    walls.map((wall, i) => ({ ...wall, id: `cv-${i}` })),
+  )
+
   let count = 0
-  for (const wall of walls) {
+  for (const wall of welded.walls) {
     if (
       store.addWall(wall.start, wall.end, {
         thickness: wall.thickness,
@@ -130,6 +147,11 @@ export async function buildWallsFromBlueprint(): Promise<BuildResult> {
   // building and worth saying something about, and swallowing that would be
   // the silent-truncation failure the corpus spec forbids.
   return count > 0
-    ? { ok: true, count, warnings: [...before.warnings, ...after.warnings] }
+    ? {
+        ok: true,
+        count,
+        welded: welded.closed,
+        warnings: [...before.warnings, ...after.warnings],
+      }
     : { ok: false, reason: 'none-found' }
 }

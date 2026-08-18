@@ -19,13 +19,15 @@ export type StructurePhase =
   | {
       kind: 'built'
       walls: number
+      /** Near-miss joints the ingest weld closed on the way in (B36). */
+      welded: number
       openings: number
       dropped: number
       rooms: number
       furniture: number
       scale: ScaleSource
     }
-  | { kind: 'walls-only'; walls: number; reason: string }
+  | { kind: 'walls-only'; walls: number; welded: number; reason: string }
   /**
    * A plausibility gate refused, so NOTHING was built.
    *
@@ -123,7 +125,12 @@ export function useBlueprintStructure(): StructurePhase {
       // 4. Place the openings the read already found. No second call — the
       // list came back with the dimensions.
       if (!analysis.ok) {
-        setPhase({ kind: 'walls-only', walls: walls.count, reason: analysis.error })
+        setPhase({
+          kind: 'walls-only',
+          walls: walls.count,
+          welded: walls.welded,
+          reason: analysis.error,
+        })
         return
       }
       const placed = placeOpenings(analysis.analysis.openings)
@@ -135,6 +142,7 @@ export function useBlueprintStructure(): StructurePhase {
       setPhase({
         kind: 'built',
         walls: walls.count,
+        welded: walls.welded,
         openings: placed.added,
         dropped: placed.dropped,
         rooms: rooms.named,

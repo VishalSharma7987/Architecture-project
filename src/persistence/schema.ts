@@ -36,6 +36,9 @@ import {
   type MaterialId,
 } from '../materials/palette'
 import { isFurnitureType } from '../furniture/catalog'
+// Read-only diagnostic on the parse direction (B36): `findLooseJoints` never
+// moves a coordinate here — finding 17's parse/serialize watch still holds.
+import { findLooseJoints } from '../plan/repairJoints'
 import { withBoundaryHints } from '../rooms/resolve'
 
 /**
@@ -1014,6 +1017,33 @@ export function parseDesign(value: unknown): ParseResult {
   const blueprint = value.blueprint == null ? null : parseBlueprint(value.blueprint)
   if (value.blueprint != null && !blueprint) {
     warnings.push('dropped an unreadable blueprint placement')
+  }
+
+  // ── B36: near-miss joints are REPORTED here, never welded ──
+  // The CV and AI ingest paths weld automatically; this one must not. It runs
+  // on autosave RESTORE, not only on import, so a weld here would rewrite a
+  // user's own document on every reopen — invisibly, with no undo step (L4) —
+  // and a .json is AUTHORED data: the 150 mm gap that is noise from a
+  // detector is a decision from a person (L2). §3 also holds `parseDesign` to
+  // being a validator; moving valid, finite coordinates is a category change.
+  // So the parse says what it sees, in the same terms the status bar counts
+  // and the user-invoked connect can close.
+  {
+    // `floors` carries EVERY storey including the ground, and the top-level
+    // walls mirror floors[0] — counting both would double every ground-floor
+    // joint (verified against the real CV sample: 12, not 24).
+    const storeys = floors.length > 0 ? floors.map((f) => f.walls) : [walls]
+    const loose = storeys.reduce(
+      (sum, storey) => sum + findLooseJoints(storey).length,
+      0,
+    )
+    if (loose > 0) {
+      warnings.push(
+        loose === 1
+          ? '1 wall joint looks joined but is not connected — the status bar’s connect can close it'
+          : `${loose} wall joints look joined but are not connected — the status bar’s connect can close them`,
+      )
+    }
   }
 
   return {

@@ -2,6 +2,19 @@ import type { Point, Wall } from '../store/useDesignStore'
 import { JOIN_TOLERANCE } from '../units/tolerance'
 
 /**
+ * What the weld actually reads: id (deterministic tie-breaks), endpoints and
+ * thickness. Structural rather than `Wall` so the CV path can weld
+ * `segmentsToWalls`' partials before they become store walls — the weld must
+ * run where the coordinates are CREATED, not after they are committed.
+ */
+export type WeldableWall = {
+  id: string
+  start: Point
+  end: Point
+  thickness: number
+}
+
+/**
  * Finding and closing wall joints that look connected and are not.
  *
  * ── Why this exists ──
@@ -61,11 +74,11 @@ export const REPAIR_EXTEND = 0.16
  * fixed floor covers thin partitions, where half-thickness alone would be
  * narrower than a mis-click.
  */
-const extendReach = (target: Wall) =>
+const extendReach = (target: WeldableWall) =>
   Math.max(REPAIR_EXTEND, target.thickness / 2 + REPAIR_MERGE)
 
 /** Sine of the angle between two walls. 0 when they are parallel. */
-function crossSin(a: Wall, b: Wall): number {
+function crossSin(a: WeldableWall, b: WeldableWall): number {
   const ax = a.end.x - a.start.x
   const az = a.end.z - a.start.z
   const bx = b.end.x - b.start.x
@@ -84,7 +97,7 @@ function crossSin(a: Wall, b: Wall): number {
  * corner blown open by a typed length (153 mm) closes while two parallel
  * partitions the same distance apart are left alone.
  */
-const mergeReach = (a: Wall, b: Wall) =>
+const mergeReach = (a: WeldableWall, b: WeldableWall) =>
   crossSin(a, b) >= MIN_CROSS_SIN ? REPAIR_EXTEND : REPAIR_MERGE
 
 /** Below this angle two walls are too near-parallel to intersect meaningfully. */
@@ -104,7 +117,7 @@ export type LooseJoint = {
 
 type Slot = { wallIndex: number; which: 'start' | 'end' }
 
-const at = (wall: Wall, which: 'start' | 'end') =>
+const at = (wall: WeldableWall, which: 'start' | 'end') =>
   which === 'start' ? wall.start : wall.end
 
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z)
@@ -153,7 +166,7 @@ function centre(points: Point[]): Point {
  * status bar counts these, the canvas draws them, and `weldJoints` applies
  * them, so all three must agree exactly.
  */
-export function findLooseJoints(walls: Wall[]): LooseJoint[] {
+export function findLooseJoints(walls: readonly WeldableWall[]): LooseJoint[] {
   const slots: Slot[] = []
   for (let i = 0; i < walls.length; i++) {
     slots.push({ wallIndex: i, which: 'start' }, { wallIndex: i, which: 'end' })
@@ -406,8 +419,10 @@ export function probeTypedMiss(
  * finds nothing cannot hand the store a new identity and record an undo step
  * in which nothing changed (§10 rule 10).
  */
-export function weldJoints(walls: Wall[]): Wall[] {
-  const joints = findLooseJoints(walls)
+export function weldJoints<T extends WeldableWall>(
+  walls: T[],
+  joints: LooseJoint[] = findLooseJoints(walls),
+): T[] {
   if (joints.length === 0) return walls
 
   const byWall = new Map<string, LooseJoint[]>()
@@ -431,4 +446,55 @@ export function weldJoints(walls: Wall[]): Wall[] {
       ...(end ? { end: { ...end.to } } : {}),
     }
   })
+}
+
+/**
+ * The ingest weld (B36, finding 27's open half): the three paths that admit
+ * coordinates the drawing tools can no longer produce — the CV detector (two
+ * call sites) and the AI's `replaceWalls` — run their walls through this
+ * before anything is committed. `parseDesign` deliberately does NOT: it runs
+ * on autosave RESTORE, so welding there would silently rewrite a user's own
+ * document on every reopen with no undo step (L4); it reports instead.
+ *
+ * ── The reach is the REPAIR's reach, not Session 3's tighter numbers ──
+ * Session 3 proposed merge 50 mm flat and extend t/2 + 50 mm. Measured
+ * against the one real CV plan (`samples/real-plan-cv-untitled.json`), those
+ * numbers close 9 of its 12 loose joints; the repair reach closes 11 in the
+ * first round and converges to 0. Three further reasons the repair reach
+ * wins: (1) SD24's parallel-50/crossing-160 asymmetry already encodes the
+ * only real fusion hazard — a duct shaft is two PARALLEL walls, and that
+ * hazard does not depend on who authored the geometry, while the corner
+ * argument ("nobody builds crossing walls with a 150 mm end gap") applies to
+ * detector output exactly as it does to a mis-click; (2) one tolerance
+ * vocabulary — this weld closes precisely the set the status bar counts and
+ * the user-invoked connect would close, where a fourth tolerance family
+ * would leave "connect" finding work moments after an auto-weld ran;
+ * (3) B34's face band reads "inside the drawn body" as connected via the
+ * same t/2 term the extend reach already carries.
+ *
+ * ── Fixed point, not one round ──
+ * One round is NOT idempotent: pass 1 moves endpoints, and a moved endpoint
+ * can land within reach of geometry it was not near before — the real plan
+ * measures 12 → 1 → 0 across two rounds. Iterating until the scan finds
+ * nothing makes re-welding a no-op BY CONSTRUCTION (the loop returns the
+ * same reference), which is what lets `replaceWalls` weld unconditionally
+ * even when a caller welded already. The round cap is a backstop against
+ * pathological input walking an endpoint across the plan one reach per
+ * round; anything still loose when it trips stays visible in the status
+ * bar, which is the honest failure.
+ */
+const INGEST_WELD_ROUNDS = 4
+
+export function weldIngestWalls<T extends WeldableWall>(
+  input: T[],
+): { walls: T[]; closed: number } {
+  let walls = input
+  let closed = 0
+  for (let round = 0; round < INGEST_WELD_ROUNDS; round++) {
+    const joints = findLooseJoints(walls)
+    if (joints.length === 0) break
+    walls = weldJoints(walls, joints)
+    closed += joints.length
+  }
+  return { walls, closed }
 }

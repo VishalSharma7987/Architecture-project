@@ -9,6 +9,7 @@ import {
   subscribeCalibration,
 } from '../blueprint/calibration'
 import { detectWallSegments, segmentsToWalls } from '../blueprint/detectWalls'
+import { weldIngestWalls } from '../plan/repairJoints'
 import {
   gateAfterDetection,
   gateBeforeDetection,
@@ -115,6 +116,8 @@ export function BlueprintPanel() {
 
   const [status, setStatus] = useState<Status>({ kind: 'idle' })
   const [detected, setDetected] = useState<DetectedWall[] | null>(null)
+  /** Near-miss joints the ingest weld closed in the staged set (B36). */
+  const [weldedCount, setWeldedCount] = useState(0)
   const [knownLength, setKnownLength] = useState('')
 
   const calibrated = isMeasured(blueprint?.calibration)
@@ -278,7 +281,15 @@ export function BlueprintPanel() {
       return
     }
 
-    setDetected(walls)
+    // The ingest weld (B36) runs at STAGING, not at commit, so the preview the
+    // user checks against the image is the geometry that will actually be
+    // added. After the gates — they judge the detector's raw reading. Ids by
+    // index keep the weld's tie-breaks deterministic; `addWall` mints real ones.
+    const welded = weldIngestWalls(
+      walls.map((wall, i) => ({ ...wall, id: `cv-${i}` })),
+    )
+    setDetected(welded.walls)
+    setWeldedCount(welded.closed)
     setStatus(
       after.warnings.length > 0
         ? { kind: 'error', message: after.warnings[0].message }
@@ -305,9 +316,15 @@ export function BlueprintPanel() {
     setDetected(null)
     setStatus({
       kind: 'note',
+      // The closed-joint count rides along like `detectOpenings`' dropped
+      // count: what an automatic pass did to the data is said, not buried.
       message:
-        `Added ${added} wall${added === 1 ? '' : 's'}. They are ordinary ` +
-        'walls now — select them to add doors, or delete the wrong ones.',
+        `Added ${added} wall${added === 1 ? '' : 's'}` +
+        (weldedCount > 0
+          ? `, closing ${weldedCount} near-miss joint${weldedCount === 1 ? '' : 's'}`
+          : '') +
+        '. They are ordinary walls now — select them to add doors, or ' +
+        'delete the wrong ones.',
     })
   }
 

@@ -8,7 +8,7 @@ import {
 import type { FurnitureType } from '../furniture/catalog'
 import { provenance } from './provenance'
 import { samePlacePoint } from '../units/tolerance'
-import { findLooseJoints, weldJoints } from '../plan/repairJoints'
+import { findLooseJoints, weldIngestWalls, weldJoints } from '../plan/repairJoints'
 import { rememberImage, type ImageObservation } from '../blueprint/transport'
 
 /**
@@ -2065,7 +2065,17 @@ export const useDesignStore = create<DesignState>()((set, get) => ({
       // Normalised on the way in for the same reason `loadDesign` does it:
       // these walls came from outside the editor and have not been through
       // `updateWall`, so nothing has yet clamped them or their openings.
-      walls: walls.map(normalizeWall),
+      //
+      // Then WELDED (B36): this action exists for walls authored outside the
+      // editor — the AI paths (SD1) — and a model's coordinates carry no
+      // authored intent in a 100 mm gap the way a person's .json does, so
+      // near-miss joints are closed here rather than committed. Welding in
+      // the funnel rather than at the call site means no future caller can
+      // forget, and the weld's fixed point makes a caller that already
+      // welded a free no-op. `parseDesign` deliberately does NOT weld — it
+      // runs on autosave restore, where this would rewrite a user's own
+      // document invisibly (L4); it warns instead.
+      walls: weldIngestWalls(walls.map(normalizeWall)).walls,
       // Ids in the old walls are gone; a selection pointing at one would leave
       // the inspector describing a wall that no longer exists.
       selection: null,
