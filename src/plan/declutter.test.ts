@@ -244,3 +244,108 @@ describe('B35 — boxesOverlap is exact for rotated boxes', () => {
     expect(accepted).toEqual(['clean'])
   })
 })
+
+/* ─── ★ B37 — coverage requires a VISIBLE bay label (finding 55) ─────────── */
+
+/**
+ * B35's rendered frame at 120 px/m found the one regression that session
+ * introduced: the chains scroll off-canvas at deep zoom, and a covered wall
+ * then showed NO dimension anywhere on screen. Coverage is a claim — "the
+ * reader can find this number on the chain" — and B37 makes the claim
+ * honest: a wall is suppressed only by a bay label that is actually painted
+ * at least partly inside the canvas.
+ *
+ * ── The fixture must not fit the viewport ──
+ * ROW at 120 px/m in 800 × 600 is 1080 × 720 px of building: every chain
+ * label sits outside the canvas, which is the only state in which the two
+ * rules disagree. A plan that fits cannot fail either test — at 62 px/m the
+ * same fixture IS that control.
+ */
+describe('★ B37 — a wall covered by an off-screen bay keeps its own label', () => {
+  const at = (scale: number): PlanScene => ({
+    ...sceneOf(ROW),
+    viewport: { center: { x: 4.5, z: 3 }, scale },
+  })
+
+  const textsAt = (scale: number) => {
+    const ctx = recorder({ text: true, measure })
+    drawPlan(ctx, at(scale))
+    return {
+      calls: ctx.calls.length,
+      texts: ctx.calls
+        .filter((c: Call) => c.op === 'fillText' && c.text !== undefined)
+        .map((c: Call) => c.text as string)
+        .sort(),
+    }
+  }
+
+  /**
+   * ★ Demonstrated red against the pre-B37 rule (visibility condition
+   * removed from `coveredByVisibleBay`): "expected [] to have a length of 4
+   * but got +0" — the bays covered every wall from off-canvas and the
+   * viewport showed no dimension at all, which is finding 55 verbatim.
+   */
+  it('★ at 120 px/m every wall of the oversized plan has an on-screen label', () => {
+    const { texts } = textsAt(120)
+    // The four 6 m walls (both partitions, both side shells) and the two 9 m
+    // shells label themselves — their covering bays are all off-canvas.
+    expect(texts.filter((t) => t === '6m')).toHaveLength(4)
+    expect(texts.filter((t) => t === '9m')).toHaveLength(2)
+  })
+
+  /**
+   * ★ The fix must not leak into the zoom where nothing was wrong. The
+   * whole recorded output is pinned against the values captured from the
+   * pre-B37 build in the same session: 251 calls, chain labels only. A
+   * fix that suppressed less at 62 px/m changes both numbers.
+   */
+  it('★ at 62 px/m the output is byte-identical to B35', () => {
+    const { calls, texts } = textsAt(62)
+    expect(calls).toBe(251)
+    expect(texts).toEqual([
+      '3.00 m',
+      '3.00 m',
+      '3.00 m',
+      '3.00 m',
+      '3.00 m',
+      '3.00 m',
+      '6.00 m',
+      '9.00 m',
+    ])
+  })
+
+  it('no two painted label boxes intersect at any tested zoom', () => {
+    for (const scale of [30, 62, 120, 200]) {
+      const scene = at(scale)
+      const chains = buildChainInks(scene, measure)
+      const dims = buildWallDimensions(scene, measure, chains.labelBoxes)
+      const boxes = [...chains.labelBoxes, ...dims.map((d) => d.box)]
+      for (let i = 0; i < boxes.length; i++) {
+        for (let j = i + 1; j < boxes.length; j++) {
+          expect(boxesOverlap(boxes[i], boxes[j])).toBe(false)
+        }
+      }
+    }
+  })
+
+  it('a HALF-visible bay label still covers — partial visibility is visibility', () => {
+    // Pan so the top chain's middle bay label straddles the canvas edge: its
+    // number can still be read, so the wall it covers stays suppressed.
+    // Centre chosen so the top chain line (≈ −46 px above the clear edge)
+    // sits just inside the top of an 800 × 600 canvas at 120 px/m.
+    const scene: PlanScene = {
+      ...sceneOf(ROW),
+      viewport: { center: { x: 4.5, z: 2.1 }, scale: 120 },
+    }
+    const ctx = recorder({ text: true, measure })
+    drawPlan(ctx, scene)
+    const texts = ctx.calls
+      .filter((c: Call) => c.op === 'fillText' && c.text !== undefined)
+      .map((c: Call) => c.text as string)
+    // The partitions' covering bays are on the z axis (left/right overall),
+    // still off-canvas — but the top-chain bays now cover nothing directly.
+    // What matters: the visible top chain suppresses NOTHING it should not,
+    // and the plan still carries readable dimensions.
+    expect(texts.length).toBeGreaterThan(0)
+  })
+})

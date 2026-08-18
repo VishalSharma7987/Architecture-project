@@ -705,7 +705,12 @@ const refLabels = (k: number): RoomLabel[] => [
  * drawing at each zoom?
  */
 console.log('')
-for (const [name, scale] of [['b35-z30', 30], ['b35-z62', 62], ['b35-z120', 120]] as const) {
+for (const [name, scale] of [
+  ['b35-z30', 30], ['b35-z62', 62], ['b35-z120', 120],
+  // B37: at deep zoom the chains are off-canvas; covered walls must now
+  // carry their own labels instead of nothing.
+  ['b37-z200', 200],
+] as const) {
   const walls = refPlan(1)
   const labels = refLabels(1)
   const { ctx, png } = planContext(880, 940)

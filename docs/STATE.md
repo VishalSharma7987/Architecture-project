@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B36 — COMPLETE.** The ingest weld: CV and AI walls weld to a fixed point before commit; `parseDesign` reports and never welds (finding 56). Finding 27 is closed |
-| Before that | **B35** — dimension declutter (finding 55); **B34** — face snap + typed near-miss (finding 54); **B33** — dimension chains (finding 52) |
-| Next task | **Sticky chains** for deep zoom (finding 55's observation), or **B9**'s remaining drafting snaps (perpendicular/extension), or the corpus email (the sole Stage 1 blocker, human) |
+| Last completed task | **B37 — COMPLETE.** Finding 55's deep-zoom regression closed: coverage now requires the covering bay label to be VISIBLE, so a wall whose chain scrolled off-canvas labels itself (finding 57) |
+| Before that | **B36** — the ingest weld (finding 56); **B35** — dimension declutter (finding 55); **B34** — face snap + typed near-miss (finding 54) |
+| Next task | **B9**'s remaining drafting snaps (perpendicular/extension), or the corpus email (the sole Stage 1 blocker, human) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B36, at `368397c`+:
+Verified after B37, at `4160335`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **736 passing / 736** · 48 files / 48 |
+| `npm test` | **740 passing / 740** · 48 files / 48 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1271,6 +1271,32 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 57. COVERAGE REQUIRES A VISIBLE BAY LABEL `SHIPPED 2026-08-18 by B37` · finding 55's residue closed
+
+B35's deep-zoom regression, closed by the smaller of the two candidate fixes.
+`coveredByVisibleBay` in [`plan/draw.ts`](../src/plan/draw.ts): a wall is
+suppressed only by a bay label the chain pass ACTUALLY PAINTED, at least
+partly inside the canvas. `ChainLabelBox` carries each bay's axis and world
+stations for the match; the chain labels double as the collision obstacles
+they already were.
+
+| Decision | Argument |
+|---|---|
+| **(ii) coverage-requires-visibility over (i) viewport-pinned chains** | Suppression is a CLAIM — "the reader can find this number on the chain" — and a claim about a label nobody can see is false; making the claim honest closes the whole failure. A pinned chain floating at the canvas edge is chrome, not annotation: a dimension line that moves as you pan is not part of the drawing (§5.3's precedent is about annotation OF the drawing), the reference carries no such element (REFERENCE_TARGET: do not invent tools other CAD has), and it would need its own look-and-fix session. The failure that matters — NO dimension anywhere — is fully served by the per-wall label the editor already has. |
+| **Partial visibility is visibility** | A half-on-screen label still states its whole number — which also dissolves (i)'s partial-bay question: bays are never elided, so there is no partial reading to invent. |
+| **The overall behaves identically** | Overall bays are `ChainLabelBox`es like any other; a shell whose overall label scrolls off labels itself the same way. No special case. |
+| **The narrow-bay edge closes free** | B35 accepted that a bay label dropped by its own fit rule still suppressed its wall (both vanish in a sub-50-px window). Coverage now reads the PAINTED labels, so a dropped bay label no longer suppresses anything — the wall's label returns instead of both vanishing. |
+
+Byte-identical at 62 px/m — pinned in `declutter.test.ts` against the exact
+pre-B37 capture (251 calls, chain labels only). The sheet untouched: it has
+no viewport and learned nothing about one; the B26 golden still pins it.
+
+**Known parity, not a new gap:** an UNCOVERED wall's label sits at its
+dimension-line midpoint, which can itself be off-canvas when only the wall's
+END is in view — exactly the pre-B35 behaviour for every wall. Zooming or
+panning along the wall reveals it. Recorded so nobody rediscovers it as a
+B37 regression.
+
 ### 56. THE INGEST WELD `SHIPPED 2026-08-18 by B36` · finding 27 closed
 
 The last way unjoined geometry entered a document. `weldIngestWalls` in
@@ -1321,12 +1347,11 @@ computed boxes), with the geometry in
 **The sheet is untouched** — `planSheet.ts` not edited; the B26 golden still
 pins it call-for-call (acceptance 4, by the strongest possible means).
 
-**Known residue, from the rendered frames:** at deep zoom (120 px/m) the
+**Known residue, from the rendered frames:** ~~at deep zoom (120 px/m) the
 chains scroll off-canvas and a covered wall then carries no dimension
-anywhere on screen. The CAD answer is sticky/viewport-pinned dimension
-lines; alternatively coverage could demand the covering bay label be
-on-screen. Neither built — recorded as the next dimensioning decision.
-Selection and the inspector still answer for any wall meanwhile.
+anywhere on screen.~~ **Closed by B37 (finding 57)** — coverage now demands
+the covering bay label be on-screen, the second of the two options recorded
+here; the pinned-chain alternative was argued and rejected there.
 
 Accepted edge: at a sub-50-px window the chain bay's label can be dropped by
 its own fit rule while coverage still suppresses the wall label — both forms

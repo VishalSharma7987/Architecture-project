@@ -18,10 +18,9 @@ import {
   clearanceExtent,
   dimensionRuns,
   strokeRunInk,
-  type DimensionRun,
   type RunInk,
 } from './dimensionChains'
-import { placeBoxes, type LabelBox } from './labelLayout'
+import { boxesOverlap, placeBoxes, type LabelBox } from './labelLayout'
 import { JOIN_TOLERANCE } from '../units/tolerance'
 import { glazingLines, sharedEnds, wallBodyQuad } from './wallBody'
 import type { SnapTarget } from './snap'
@@ -1613,6 +1612,18 @@ function drawOpening(
   }
 }
 
+/**
+ * A chain or overall bay's label box, carrying the world interval it states —
+ * so the per-wall suppression can ask not just "is this span a bay?" but "is
+ * the bay's label actually on screen?" (B37, finding 55).
+ */
+export type ChainLabelBox = LabelBox & {
+  axis: 'x' | 'z'
+  /** The bay's stations along `axis`, world metres, lo < hi. */
+  lo: number
+  hi: number
+}
+
 /** One per-wall dimension, fully placed and ready to paint. */
 export type WallDimension = {
   /** Witnesses, line, ticks — one stroked path, in this order. */
@@ -1623,21 +1634,37 @@ export type WallDimension = {
 
 /**
  * Whether a wall's full run is already stated by a chain bay or an overall of
- * the same axis (finding 52 decision e, switched ON by B35).
+ * the same axis WHOSE LABEL IS ON SCREEN (finding 52 decision e, switched ON
+ * by B35; the visibility condition added by B37).
  *
  * Same SPAN, not merely equal length: the bay between two adjacent stations
  * must sit on the wall's own endpoints, so an unrelated wall of coincidental
  * length elsewhere keeps its label. Matching is within `JOIN_TOLERANCE` —
  * SD22's "is this the same point?" question, asked of stations.
  *
- * The bay's LABEL can still be dropped by its own fit rule at extreme zoom
- * while this suppression holds — accepted: the per-wall label's stricter
- * margin drops at nearly the same width, the dimension apparatus at that size
- * is noise either way, and zooming in restores both. Coupling this test to
- * which bay labels actually fit would tie the two builders together for a
- * sub-50-px window.
+ * ── Why the label must be VISIBLE, not merely exist ──
+ * B35's own rendered frame found the regression: at deep zoom the chains
+ * scroll off-canvas, and a covered wall then showed no dimension anywhere on
+ * screen. Suppression is a claim — "the reader can find this number on the
+ * chain" — and a claim about a label nobody can see is false. So coverage is
+ * now judged against the chain labels the chain pass ACTUALLY PAINTED, and
+ * only those at least partly inside the canvas. This also closes B35's
+ * accepted narrow-bay edge for free: a bay label dropped by its own fit rule
+ * is not in the list, so the wall's label returns rather than both vanishing.
+ *
+ * The viewport-pinned alternative — floating the chain at the canvas edge —
+ * was argued and rejected: a dimension line that moves as you pan is chrome,
+ * not annotation (§5.3's scale-aware-annotation rule is about keeping
+ * annotation OF the drawing), the reference carries no such element, and the
+ * per-wall label is vocabulary the editor already has. The chain stays the
+ * statement of record exactly as far as it can be read.
  */
-function coveredByRun(wall: Wall, runs: DimensionRun[]): boolean {
+function coveredByVisibleBay(
+  wall: Wall,
+  chainLabels: readonly ChainLabelBox[],
+  width: number,
+  height: number,
+): boolean {
   const dx = Math.abs(wall.end.x - wall.start.x)
   const dz = Math.abs(wall.end.z - wall.start.z)
   // The same millimetre the chain's own station collection uses; an oblique
@@ -1650,18 +1677,23 @@ function coveredByRun(wall: Wall, runs: DimensionRun[]): boolean {
   const lo = Math.min(s, e)
   const hi = Math.max(s, e)
 
-  for (const run of runs) {
-    if (run.axis !== axis) continue
-    for (let i = 0; i < run.stations.length - 1; i++) {
-      if (
-        Math.abs(run.stations[i] - lo) <= JOIN_TOLERANCE &&
-        Math.abs(run.stations[i + 1] - hi) <= JOIN_TOLERANCE
-      ) {
-        return true
-      }
-    }
+  // Partly visible counts as visible: a half-on-screen label still states its
+  // whole number, which is also why a "partial bay" needs no special reading.
+  const canvas: LabelBox = {
+    cx: width / 2,
+    cy: height / 2,
+    w: width,
+    h: height,
+    angle: 0,
   }
-  return false
+
+  return chainLabels.some(
+    (bay) =>
+      bay.axis === axis &&
+      Math.abs(bay.lo - lo) <= JOIN_TOLERANCE &&
+      Math.abs(bay.hi - hi) <= JOIN_TOLERANCE &&
+      boxesOverlap(bay, canvas),
+  )
 }
 
 /**
@@ -1691,14 +1723,18 @@ function coveredByRun(wall: Wall, runs: DimensionRun[]): boolean {
 export function buildWallDimensions(
   scene: PlanScene,
   measure: (text: string) => number,
-  obstacles: readonly LabelBox[],
+  /**
+   * The bay labels the chain pass painted, doubling as collision obstacles
+   * and as the coverage evidence — a wall is only suppressed by a bay whose
+   * label these carry AND which is on screen (B37).
+   */
+  chainLabels: readonly ChainLabelBox[],
 ): WallDimension[] {
   const { width, height, viewport: vp, walls, units } = scene
   const bounds = planBounds(walls)
   if (!bounds) return []
 
   const middle = worldToScreen(bounds.center, vp, width, height)
-  const runs = dimensionRuns(walls)
   const selectedId =
     scene.selection?.kind === 'wall' ? scene.selection.wallId : null
 
@@ -1719,7 +1755,9 @@ export function buildWallDimensions(
     if (textWidth + DIMENSION.labelMarginPx * 2 > span) continue
 
     const isSelected = wall.id === selectedId
-    if (!isSelected && coveredByRun(wall, runs)) continue
+    if (!isSelected && coveredByVisibleBay(wall, chainLabels, width, height)) {
+      continue
+    }
 
     const ux = (b.x - a.x) / span
     const uy = (b.y - a.y) / span
@@ -1782,7 +1820,7 @@ export function buildWallDimensions(
   )
 
   const placed = placeBoxes(
-    [...obstacles, ...selected.map((d) => d.box)],
+    [...chainLabels, ...selected.map((d) => d.box)],
     candidates.map((c) => ({ box: c.dim.box, item: c.dim })),
   )
   return [...selected, ...placed]
@@ -1798,7 +1836,7 @@ export function buildWallDimensions(
 function drawDimensions(
   ctx: CanvasRenderingContext2D,
   scene: PlanScene,
-  obstacles: readonly LabelBox[],
+  chainLabels: readonly ChainLabelBox[],
 ) {
   ctx.save()
   ctx.font = LABEL_FONT
@@ -1808,7 +1846,7 @@ function drawDimensions(
   const dims = buildWallDimensions(
     scene,
     (text) => ctx.measureText(text).width,
-    obstacles,
+    chainLabels,
   )
 
   for (const dim of dims) {
@@ -1933,10 +1971,10 @@ function drawOpeningDimensions(ctx: CanvasRenderingContext2D, scene: PlanScene) 
 export function buildChainInks(
   scene: PlanScene,
   measure: (text: string) => number,
-): { inks: RunInk[]; labelBoxes: LabelBox[] } {
+): { inks: RunInk[]; labelBoxes: ChainLabelBox[] } {
   const { width, height, viewport: vp, walls, units } = scene
   const inks: RunInk[] = []
-  const labelBoxes: LabelBox[] = []
+  const labelBoxes: ChainLabelBox[] = []
   const runs = dimensionRuns(walls)
   if (runs.length === 0) return { inks, labelBoxes }
   const bounds = planBounds(walls)
@@ -2021,6 +2059,9 @@ export function buildChainInks(
           w: textWidth,
           h: CHAIN_LABEL_H,
           angle: 0,
+          axis: run.axis,
+          lo: run.stations[i],
+          hi: run.stations[i + 1],
         })
       } else {
         // Rotated to read bottom-to-top; on the left the glyphs hang toward
@@ -2042,6 +2083,9 @@ export function buildChainInks(
           w: textWidth,
           h: CHAIN_LABEL_H,
           angle: -Math.PI / 2,
+          axis: run.axis,
+          lo: run.stations[i],
+          hi: run.stations[i + 1],
         })
       }
     }
@@ -2060,7 +2104,7 @@ export function buildChainInks(
 function drawDimensionChains(
   ctx: CanvasRenderingContext2D,
   scene: PlanScene,
-): LabelBox[] {
+): ChainLabelBox[] {
   ctx.save()
   ctx.font = LABEL_FONT
   ctx.strokeStyle = COLORS.dimension
