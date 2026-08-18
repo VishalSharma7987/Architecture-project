@@ -29,7 +29,7 @@
 import type { Point, Wall } from '../store/useDesignStore'
 import { projectOntoWall, wallAxis } from '../scene/wallGeometry'
 
-export type SnapKind = 'endpoint' | 'midpoint' | 'centreline'
+export type SnapKind = 'endpoint' | 'midpoint' | 'centreline' | 'face'
 
 export type SnapTarget = {
   kind: SnapKind
@@ -72,6 +72,18 @@ export const SNAP_RADIUS_PX = 12
 /** Millimetre identity, matching `wallBody.ts`'s `vertexKey`. */
 const coordKey = (p: Point) => `${Math.round(p.x * 1000)}:${Math.round(p.z * 1000)}`
 
+/**
+ * Perpendicular distance from a point to the wall's INFINITE centreline —
+ * unlike `projectOntoWall().distance`, which measures to the clamped segment
+ * and so mixes the lateral and past-the-end components the face band needs
+ * kept apart.
+ */
+const projectionLateral = (wall: Wall, p: Point, length: number) =>
+  Math.abs(
+    (p.x - wall.start.x) * (wall.end.z - wall.start.z) -
+      (p.z - wall.start.z) * (wall.end.x - wall.start.x),
+  ) / length
+
 const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z)
 
 /**
@@ -87,8 +99,14 @@ const dist = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z)
  *     distinguished point, and it is what a partition drawn to the middle of a
  *     wall wants.
  *   - a **centreline** is a whole LINE. It says "somewhere on this wall",
- *     which is the weakest claim of the three, and it is a 1-dimensional
- *     target where the other two are 0-dimensional.
+ *     which is the weakest claim of the three point-and-line targets, and it
+ *     is a 1-dimensional target where the other two are 0-dimensional.
+ *   - a **face** (B34) is not even where the endpoint will land — it is an
+ *     AIMING band over the wall's drawn body whose committed point is the
+ *     centreline behind it. It makes the weakest claim of all, and when the
+ *     centreline is also in range the two propose the SAME point, so the
+ *     higher-information indicator wins and the face only ever fires where it
+ *     adds reach the others lack.
  *
  * Distance cannot be the primary key. A centreline is by construction never
  * further than an endpoint on the same wall — the endpoint lies ON the
@@ -99,6 +117,7 @@ const PRIORITY: Record<SnapKind, number> = {
   endpoint: 0,
   midpoint: 1,
   centreline: 2,
+  face: 3,
 }
 
 /**
@@ -139,17 +158,52 @@ export function findSnap(
     // since `Opening.position` is metres from the start. Treating it as a
     // fraction put the centreline point 8x down a 8 m wall on the first run.
     const projection = projectOntoWall(wall, world)
+    const along = projection.t / length
+    const foot = {
+      x: wall.start.x + (wall.end.x - wall.start.x) * along,
+      z: wall.start.z + (wall.end.z - wall.start.z) * along,
+    }
     if (projection.distance <= radius) {
-      const along = projection.t / length
-      candidates.push({
-        kind: 'centreline',
-        point: {
-          x: wall.start.x + (wall.end.x - wall.start.x) * along,
-          z: wall.start.z + (wall.end.z - wall.start.z) * along,
-        },
-        wallId: wall.id,
-        d: projection.distance,
-      })
+      candidates.push({ kind: 'centreline', point: foot, wallId: wall.id, d: projection.distance })
+    }
+
+    /*
+     * The FACE band (B34, finding 53). The user aims at the face because the
+     * face is what is DRAWN — and B32's 230 mm shells put it 115 mm from the
+     * centreline, outside the 12 px radius above ~104 px/m, where aiming at
+     * what you can see fell through to grid and landed the stem one cell
+     * short. Anywhere within `radius` of the drawn body counts, interior
+     * included: an endpoint inside the wall's own ink is one the user sees as
+     * connected (`repairJoints.extendReach` makes the same argument).
+     *
+     * The committed point is the CENTRELINE FOOT behind the aim, never a
+     * point on the face itself: an endpoint left on the face would not join —
+     * the room graph and `sharedEnds` both match centreline coordinates — and
+     * the chain arithmetic (B33) sums centrelines. The face is an aiming
+     * target; the centreline is the landing. The indicator is drawn at the
+     * committed point, so the user sees the landing before the click.
+     *
+     * The alternative — growing the radius with zoom or thickness — is
+     * rejected: it would make EVERY target grabbier and break the two bounds
+     * the 12 px radius was derived from. Only the face extends coverage, and
+     * only over the wall's own drawn body.
+     */
+    // The band is the drawn BODY dilated by the radius — measured against the
+    // rectangle, not against the segment plus a lateral allowance. Measuring
+    // from the clamped segment would reach `thickness / 2` past a free end in
+    // every direction, where there is no ink at all, and B28's "does not snap
+    // just outside the radius" pin caught the first draft doing exactly that.
+    // Axially the band ends `radius` past the endpoint, which is ground the
+    // endpoint target already covers and outranks.
+    const alongRaw =
+      ((world.x - wall.start.x) * (wall.end.x - wall.start.x) +
+        (world.z - wall.start.z) * (wall.end.z - wall.start.z)) /
+      length
+    const overrun = Math.max(0, -alongRaw, alongRaw - length)
+    const lateralGap = Math.max(0, projectionLateral(wall, world, length) - wall.thickness / 2)
+    const bodyDist = Math.hypot(overrun, lateralGap)
+    if (bodyDist <= radius) {
+      candidates.push({ kind: 'face', point: foot, wallId: wall.id, d: bodyDist })
     }
   }
 

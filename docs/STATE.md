@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B33 — COMPLETE.** Dimension chains: strung station runs per side plus overalls, outside the building, sharing the sheet's implementation (finding 52) |
-| Before that | **B32** — shell/partition wall types; **B31** — stated building size; **B30/B29/B28** — endpoint drag, typed length, endpoint snap; **B5c** — Gate 4 wired |
-| Next task | **Declutter the per-wall labels** now the chains exist (finding 52, decision e), or the commit-time warning for a typed length landing near-but-not-on a wall (finding 53) |
+| Last completed task | **B34 — COMPLETE.** Both of finding 53's snap gaps closed: the wall FACE is an aiming target committing to the centreline behind it, and a typed near-miss is shown before Enter, commit untouched (finding 54) |
+| Before that | **B33** — dimension chains (finding 52); **B32** — wall types; **B31** — stated building size; **B30/B29/B28** — endpoint drag, typed length, endpoint snap |
+| Next task | **Declutter the per-wall labels** now the chains exist (finding 52, decision e) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B33, at `e2673ea`+:
+Verified after B34, at `3ae7dec`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **705 passing / 705** · 46 files / 46 |
+| `npm test` | **718 passing / 718** · 46 files / 46 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1271,7 +1271,37 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
-### 53. A PLAN DRAWN WITH SNAP ACTIVE STILL REPORTS UNJOINED ENDS `REPORTED 2026-08-18 by B33` · cause found, deliberately not fixed
+### 54. THE FACE TARGET AND THE TYPED NEAR-MISS HINT `SHIPPED 2026-08-18 by B34`
+
+Both of finding 53's mechanisms, closed separately.
+
+**A — the wall FACE is a snap target** (`'face'` in [`plan/snap.ts`](../src/plan/snap.ts)),
+because the face is what is drawn and therefore what the user aims at.
+
+| Decision | Argument |
+|---|---|
+| **The committed point is the CENTRELINE FOOT behind the aim, never a point on the face** | An endpoint left on the face would not join — the room graph and `sharedEnds` match centreline coordinates — and the chain arithmetic (finding 52) sums centrelines. The face is an aiming target; the centreline is the landing. The indicator (a DIAMOND, distinct per B28's rule) is drawn at the committed point, so the user sees the landing before the click — the gap between cursor and marker IS the communication. |
+| **Face ranks LAST: endpoint → midpoint → centreline → face** | It makes the weakest claim — it is not even where the endpoint lands. When the centreline is also in range the two propose the SAME point, so the higher-information indicator wins and the face only fires where it adds reach. Behaviour at ≤104 px/m is byte-identical to B28. |
+| **The band is the drawn BODY dilated by the radius — the rectangle, not the segment plus a lateral allowance** | Measuring from the clamped segment reaches `t/2` past a FREE end in every direction, where there is no ink; B28's "does not snap just outside the radius" pin caught the first draft doing exactly that. Axially the band ends `radius` past an endpoint — ground the endpoint target already covers and outranks. Interior counts: an endpoint inside the wall's own ink is one the user sees as connected (`extendReach`'s own argument). |
+| **A zoom- or thickness-scaled radius was REJECTED** | It would make every target grabbier, not just this one, and break both bounds the 12 px radius was derived from (beat the grid; stay under the narrowest door). Pinned by test: outside the body band, nothing fires that B28 did not. |
+
+**B — a typed near-miss is shown BEFORE Enter** (`probeTypedMiss` in
+[`plan/repairJoints.ts`](../src/plan/repairJoints.ts)). ⚠ **L2: the commit is
+never altered** — `typedEndpoint` takes no walls and cannot be bent by one.
+What ships is a prediction: while the entry is live, the editor probes the
+would-be endpoint through the loose-end scan's OWN machinery (a hypothetical
+wall through `findLooseJoints` — one tolerance, nothing to drift), and
+`drawDraft` shows the same amber ring the scan would draw after the commit,
+plus one line under the field: **`ends 6" short — 8' reaches`**. The user
+retypes or commits anyway; either way the number is theirs. Silent when the
+entry lands clean, within the join guard, or nowhere near a wall — a warning
+that nags is a warning that gets ignored (SD17's unmarked-row lesson).
+
+Endpoint DRAGGING (B30) gets the face target for free — `findSnap` is the
+shared path. Furniture face-snapping (finding 44's list) remains open; it
+wants the FACE as the landing, which is a different contract.
+
+### 53. A PLAN DRAWN WITH SNAP ACTIVE STILL REPORTS UNJOINED ENDS `RESOLVED 2026-08-18 by B34` · was: cause found, deliberately not fixed
 
 The owner drew the reference in the app with endpoint snap on, and the status
 bar said **"3 unjoined ends — connect"**. Investigated by reproduction against
@@ -1290,11 +1320,10 @@ reported ends are real defects the repair affordance exists for. The user's
 odd partition dimensions (`3'3"`, `6'7"`) are consistent with either
 mechanism.
 
-**Not fixed here.** The honest fixes are different features: a face/wall-face
-snap target (finding 27's "the user aims at the FACE; the model needs its
-centreline"), and a commit-time nudge when a typed length ends near-but-not-on
-a wall — the second must not silently alter a typed number (**L2**). Reported
-for the next drafting session.
+**Resolved by B34 — see finding 54.** Both named fixes shipped: the wall-face
+snap target (mechanism 1 joins at every zoom now), and the typed near-miss
+shown while the number can still be retyped, with the commit untouched
+(**L2**). The reproduction table above remains the record of why.
 
 ### 52. DIMENSION CHAINS `SHIPPED 2026-08-18 by B33`
 
@@ -1592,9 +1621,10 @@ cleared the wall. Fixed with a paper-coloured halo stroked under the marker.
 **This was invisible to the tests and visible in the first frame**, which is the
 argument for B26's rule that looking is part of done.
 
-**Still open:** perpendicular, tangent and extension snaps; snapping while
-MOVING an existing endpoint (that tool does not exist yet); and face-snapping
-for furniture.
+**Still open:** perpendicular, tangent and extension snaps; and face-snapping
+for furniture (which wants the FACE as the LANDING — a different contract from
+B34's aiming target). Snapping while moving an endpoint closed with B30, and
+the wall-face target with B34 (finding 54).
 
 ### 43. COULD `scene/*` CONSUME `wallBody.ts` TOO? `OPEN` · argued, not built
 
@@ -1969,8 +1999,10 @@ plan in the diagnostic screenshot most likely came from: its dimensions
 were not produced by grid-snapped clicks.
 
 Related and larger: **object snap while drawing** (B9), which stops H2 at
-source. The user aims at the wall's visible FACE; the model needs its
-centreline, 100 mm away.
+source. ~~The user aims at the wall's visible FACE; the model needs its
+centreline, 100 mm away.~~ **That half closed with B34** (finding 54): the
+face is now an aiming target committing to the centreline. The three ingest
+paths above remain the open half of this finding.
 
 ### 25. VASTU DOES NOT READ OPEN SPACES `OPEN` · needs a human answer
 

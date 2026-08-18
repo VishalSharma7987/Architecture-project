@@ -30,7 +30,7 @@ import type { Point, RoomLabel, Wall } from '../src/store/useDesignStore'
 import { moveWallEndpointIn } from '../src/store/useDesignStore'
 import { SNAP_RADIUS_PX, findSnap, resolveWallPoint } from '../src/plan/snap'
 import { snapToGrid } from '../src/plan/viewport'
-import { findLooseJoints } from '../src/plan/repairJoints'
+import { findLooseJoints, probeTypedMiss } from '../src/plan/repairJoints'
 import {
   deviationFrom,
   describeDeviation,
@@ -587,6 +587,56 @@ const refLabels = (k: number): RoomLabel[] => [
   { id: 'l6', type: 'toilet', anchor: { x: 4.5 * k, z: 9.5 * k }, provenance: pv('manual') },
   { id: 'l7', type: 'bedroom', anchor: { x: 7.5 * k, z: 9.5 * k }, provenance: pv('manual') },
 ]
+
+/* ── B34: the face target and the typed near-miss, at the failing zoom ── */
+
+/**
+ * Finding 53's two mechanisms, drawn. Frame 1: aiming at a 230 mm shell's
+ * FACE at 130 px/m — pre-B34 this fell to grid one cell short; the diamond
+ * indicator now sits on the centreline the click will land on, and the
+ * committed stem joins. Frame 2: a live `7'6` entry whose commit would strand
+ * the end 152 mm short — the ring and the "reaches" hint, with the commit
+ * untouched (L2).
+ */
+{
+  const b34shell = w('shell', 0, 0, 9.144, 0, 0.23)
+  const scale = 130
+  const aim = { x: 3.048, z: 0.115 } // exactly on the visible face
+  const r = resolveWallPoint({
+    walls: [b34shell], world: aim, grid: snapToGrid(aim, CELL),
+    radius: SNAP_RADIUS_PX / scale, suppressed: false,
+  })
+  {
+    const { ctx, png } = planContext(760, 560)
+    drawPlan(ctx, {
+      width: 760, height: 560,
+      viewport: { center: { x: 3.2, z: 0.9 }, scale },
+      walls: [b34shell], furniture: [], rooms: [],
+      selection: null, units: 'ftin',
+      anchor: { x: 3.048, z: 2.4384 }, cursor: r.point,
+      showCursor: true, snap: r.target,
+    })
+    writeFileSync(`${OUT}/b34-face-snap.png`, png())
+    console.log(`\nb34-face-snap.png  kind ${r.target?.kind}  lands z=${r.point.z}`)
+  }
+  {
+    const missAnchor = { x: 3.048, z: 2.4384 }
+    const metres = entryLength("7'6", 'ftin')!
+    const end = typedEndpoint(missAnchor, { x: 3.048, z: 0 }, metres)!
+    const miss = probeTypedMiss([b34shell], missAnchor, end)
+    const { ctx, png } = planContext(760, 560)
+    drawPlan(ctx, {
+      width: 760, height: 560,
+      viewport: { center: { x: 3.2, z: 1.2 }, scale: 90 },
+      walls: [b34shell], furniture: [], rooms: [],
+      selection: null, units: 'ftin',
+      anchor: missAnchor, cursor: { x: 3.048, z: 0 },
+      showCursor: true, typed: "7'6", typedMiss: miss,
+    })
+    writeFileSync(`${OUT}/b34-typed-miss.png`, png())
+    console.log(`b34-typed-miss.png  gap ${miss ? (miss.gap * 1000).toFixed(0) : '—'}mm  reaches ${miss?.reaches.toFixed(4)}m`)
+  }
+}
 
 /* ── B33: the dimension chains, on the reference plan ── */
 

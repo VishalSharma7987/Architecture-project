@@ -43,7 +43,12 @@ import {
 } from './numericEntry'
 import { vastuZones, type ZoneCell } from '../vastu/zones'
 import { drawPlan, pickStair } from './draw'
-import { findLooseJoints, type LooseJoint } from './repairJoints'
+import {
+  findLooseJoints,
+  probeTypedMiss,
+  type LooseJoint,
+  type TypedMiss,
+} from './repairJoints'
 import {
   createViewport,
   fitToBounds,
@@ -204,6 +209,13 @@ export function FloorPlanEditor() {
       // Handles show on the selected wall whenever the Select tool is live.
       handles: handlesFor(),
       typed: entryRef.current?.text ?? null,
+      // Predicted per paint while an entry is live: the buffer and the
+      // pointer both move it, and a paint happens on each of those events
+      // anyway. It reuses the loose-end scan through `probeTypedMiss`, so the
+      // warning shown before Enter is exactly the ring shown after — L2, the
+      // commit itself is never altered. Bounded: it runs only while the user
+      // is mid-keystroke in a wall chain, never while panning or dragging.
+      typedMiss: typedMissFor(),
       spaceCorner: spaceDragRef.current,
       looseJoints: looseRef.current,
       cursor: cursorRef.current,
@@ -891,6 +903,27 @@ export function FloorPlanEditor() {
    * corner is one snap target because the thing worth aiming at is the
    * COORDINATE rather than the wall.
    */
+  /**
+   * What the live typed buffer would strand, or null (B34, finding 53).
+   *
+   * Recomputed per paint, but only while an entry is ACTIVE — a keystroke or
+   * a pointer move during typing, never a pan or a drag. The predicted end is
+   * exactly the one the commit path builds (`entryLength` + `typedEndpoint`),
+   * so the warning can never disagree with what Enter would do.
+   */
+  const typedMissFor = (): TypedMiss | null => {
+    const entry = entryRef.current
+    const anchor = anchorRef.current
+    const cursor = cursorRef.current
+    if (!entry || !anchor || !cursor) return null
+    const state = useDesignStore.getState()
+    const metres = entryLength(entry.text, state.units)
+    if (metres === null) return null
+    const end = typedEndpoint(anchor, cursor, metres)
+    if (!end) return null
+    return probeTypedMiss(state.walls, anchor, end)
+  }
+
   /** The selected wall's handles, and the refusal state of the grabbed one. */
   const handlesFor = (): {
     wallId: string

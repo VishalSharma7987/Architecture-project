@@ -333,6 +333,73 @@ function lineCross(from: Point, through: Point, a: Point, b: Point): Point | nul
 }
 
 /**
+ * What a typed length is about to do wrong, before Enter does it.
+ *
+ * ── The finding this closes (53, mechanism 2) ──
+ * A typed length bypasses snap BY DESIGN — B29 hides the indicator while
+ * typing, because a typed number is a statement of intent that outranks an
+ * inference. So typing a room's CLEAR span, or a nominal figure, toward a
+ * wall strands the endpoint 114–152 mm short: near enough to read as joined
+ * on screen, far enough that the room graph never connects.
+ *
+ * ── L2: the commit is NEVER altered ──
+ * The typed number is the highest-authority input in the app. This function
+ * only PREDICTS: it answers "if this commits, what will the loose-end scan
+ * say?" so the editor can show the miss WHILE the number can still be
+ * retyped. It answers with the scan's own machinery — a hypothetical wall
+ * through `findLooseJoints` — so the warning and the after-commit ring cannot
+ * disagree about what counts as a near-miss, and there is no second tolerance
+ * to drift.
+ */
+export type TypedMiss = {
+  /** Where the typed commit will put the endpoint. */
+  at: Point
+  /** Where the repair would move it — on the wall or corner it nearly meets. */
+  to: Point
+  /** The shortfall, `at` to `to`, in metres. */
+  gap: number
+  /** The length that WOULD land on `to`, anchor to `to`, in metres. */
+  reaches: number
+}
+
+/** An id no user wall can collide with — the probe never reaches the store. */
+const TYPED_PROBE_ID = ' typed-probe'
+
+export function probeTypedMiss(
+  walls: Wall[],
+  anchor: Point,
+  end: Point,
+): TypedMiss | null {
+  if (dist(anchor, end) === 0) return null
+
+  const probe: Wall = {
+    id: TYPED_PROBE_ID,
+    start: anchor,
+    end,
+    height: 3,
+    // The probe's own thickness decides nothing: `extendReach` scales with
+    // the TARGET wall and `mergeReach` with the crossing angle. Any legal
+    // value serves.
+    thickness: 0.115,
+    type: 'partition',
+    openings: [],
+    material: 'white-paint',
+  }
+
+  const joint = findLooseJoints([...walls, probe]).find(
+    (j) => j.wallId === TYPED_PROBE_ID && j.which === 'end',
+  )
+  if (!joint) return null
+
+  return {
+    at: end,
+    to: joint.to,
+    gap: dist(end, joint.to),
+    reaches: dist(anchor, joint.to),
+  }
+}
+
+/**
  * The walls with every loose joint closed.
  *
  * Returns the ORIGINAL array when there is nothing to do, so a repair that

@@ -22,7 +22,7 @@ import {
 } from './dimensionChains'
 import { glazingLines, sharedEnds, wallBodyQuad } from './wallBody'
 import type { SnapTarget } from './snap'
-import type { LooseJoint } from './repairJoints'
+import type { LooseJoint, TypedMiss } from './repairJoints'
 import {
   buildableRect,
   frontEdge,
@@ -374,6 +374,15 @@ export type PlanScene = {
    * quietly change what the user typed.
    */
   typed?: string | null
+  /**
+   * What the typed buffer is about to do wrong: the entry's predicted
+   * endpoint lands near a wall but not on it (B34, finding 53 mechanism 2).
+   * Computed by the editor from the buffer and the pointer with
+   * `probeTypedMiss`, so the warning uses the loose-end scan's own
+   * tolerances. Null when no entry is live or the entry lands clean —
+   * absent reads as null, like `snap`.
+   */
+  typedMiss?: TypedMiss | null
   /**
    * The selected wall's draggable endpoint handles, and whether the endpoint
    * under the pointer refused to move. `blocked` is the number of walls
@@ -1980,11 +1989,18 @@ function drawEndpointHandles(
 /**
  * The snap indicator: a distinct shape per target kind, at the target.
  *
- * Distinct shapes rather than one marker in three colours, because the three
+ * Distinct shapes rather than one marker in four colours, because the four
  * targets mean different things and the user has to be able to AVOID the one
  * they did not want — a snap you cannot tell apart is a snap you cannot
  * refuse. The shapes are the drafting conventions: a square for a vertex, a
- * triangle for a midpoint, a circle for a point on a line.
+ * triangle for a midpoint, a circle for a point on a line, and a diamond for
+ * a face-caught aim (B34).
+ *
+ * The diamond sits at the COMMITTED point — the centreline behind the face —
+ * not under the cursor. That gap IS the communication: the user aims at the
+ * drawn edge and the marker shows, before the click, that the endpoint lands
+ * on the centreline where the join actually closes. A marker at the cursor
+ * would promise a landing the commit would then not honour.
  *
  * Drawn last, over the walls and over the draft rubber-band, because it is the
  * thing being aimed at.
@@ -2006,6 +2022,8 @@ function drawSnapIndicator(
   // triangle was legible only where its tip cleared the wall. The halo is a
   // wide paper-coloured stroke laid down first, so the marker reads against
   // the wall it is necessarily sitting on.
+  // Every kind named, none left to a bare `else` — SD16: a fifth kind must be
+  // a compile error here (the `Record` in snap.ts), never a silent circle.
   const trace = () => {
     ctx.beginPath()
     if (snap.kind === 'endpoint') {
@@ -2015,8 +2033,14 @@ function drawSnapIndicator(
       ctx.lineTo(p.x + r, p.y + r * 0.7)
       ctx.lineTo(p.x - r, p.y + r * 0.7)
       ctx.closePath()
-    } else {
+    } else if (snap.kind === 'centreline') {
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2)
+    } else if (snap.kind === 'face') {
+      ctx.moveTo(p.x, p.y - r * 1.2)
+      ctx.lineTo(p.x + r * 1.2, p.y)
+      ctx.lineTo(p.x, p.y + r * 1.2)
+      ctx.lineTo(p.x - r * 1.2, p.y)
+      ctx.closePath()
     }
   }
 
@@ -2082,6 +2106,50 @@ function drawDraft(ctx: CanvasRenderingContext2D, scene: PlanScene) {
         LABEL_FONT,
         COLORS.entryBg,
       )
+
+      /*
+       * B34 — the typed length is about to strand its end (finding 53).
+       *
+       * The commit is NEVER altered — L2, the typed number is the
+       * highest-authority input in the app — so the honest move is to show
+       * the miss WHILE the number can still be retyped: the same amber ring
+       * the loose-end scan will draw after the commit, at the predicted
+       * endpoint, plus one line under the entry naming the shortfall and the
+       * length that would land on the wall. The warning is computed with the
+       * scan's own machinery (`probeTypedMiss`), so what it predicts is
+       * exactly what the status bar will report if Enter is pressed anyway.
+       */
+      const miss = scene.typedMiss
+      if (miss) {
+        const at = worldToScreen(miss.at, vp, width, height)
+        const to = worldToScreen(miss.to, vp, width, height)
+
+        ctx.save()
+        ctx.beginPath()
+        ctx.strokeStyle = COLORS.looseJoint
+        ctx.lineWidth = 1.25
+        ctx.setLineDash([3, 3])
+        ctx.moveTo(at.x, at.y)
+        ctx.lineTo(to.x, to.y)
+        ctx.stroke()
+        ctx.setLineDash([])
+
+        ctx.beginPath()
+        ctx.lineWidth = 2
+        ctx.arc(at.x, at.y, LOOSE_JOINT_RADIUS_PX, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.restore()
+
+        label(
+          ctx,
+          `ends ${formatLengthCompact(miss.gap, scene.units)} short — ${formatLengthCompact(miss.reaches, scene.units)} reaches`,
+          (a.x + b.x) / 2,
+          (a.y + b.y) / 2 + 10,
+          '#ffffff',
+          LABEL_FONT,
+          COLORS.looseJoint,
+        )
+      }
     } else if (length > 0) {
       // The full form, not the compact one: this is the number the user is
       // aiming with, and it has the whole canvas to sit in.

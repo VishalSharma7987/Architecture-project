@@ -9,6 +9,7 @@ import {
   type NumericEntry,
 } from './numericEntry'
 import { resolveWallPoint } from './snap'
+import { probeTypedMiss } from './repairJoints'
 import { snapToGrid } from './viewport'
 import { drawPlan } from './draw'
 import { createViewport } from './viewport'
@@ -437,5 +438,115 @@ describe('B29 — the snap indicator is hidden while a length is being typed', (
   it('draws the endpoint marker when idle and not while typing', () => {
     expect(rects(null)).toBeGreaterThan(0)
     expect(rects('12')).toBe(0)
+  })
+})
+
+/* ─── ★ B34 — a typed near-miss is shown before Enter commits it ─────────── */
+
+/**
+ * Finding 53, mechanism 2: typed length bypasses snap BY DESIGN, so a typed
+ * clear span or nominal figure strands the endpoint 114–152 mm short — near
+ * enough to read as joined, far enough that the room never closes.
+ *
+ * ── L2 is the constraint the design answers ──
+ * The typed number is the highest-authority input in the app, so the commit
+ * is NEVER altered: `typedEndpoint` takes no walls and cannot be bent by one
+ * (the existing exactness tests above pin that). What ships instead is a
+ * PREDICTION drawn while the number can still be retyped, computed with the
+ * loose-end scan's own machinery (`probeTypedMiss`) so the warning before
+ * Enter and the amber ring after it can never disagree.
+ *
+ * ── The fixture is finding 53's own measurement ──
+ * A 230 mm shell on z = 0, drawing from 8'-0" away. Typing `7'6` lands at
+ * z = 0.1524 — the measured 152 mm loose `extend`. What makes it able to go
+ * red: the shortfall is real (outside `JOIN_TOLERANCE`, inside reach), so a
+ * probe that used the wrong tolerance band, or a draw that never rendered the
+ * hint, each change an asserted value.
+ */
+describe('★ B34 — the typed near-miss hint', () => {
+  const shell = wall('shell', 0, 0, 9.144, 0)
+  const anchor = { x: 3.048, z: 2.4384 } // 8'-0" from the shell centreline
+
+  it('★ predicts the 152 mm strand a typed 7\'6 commits, and the length that reaches', () => {
+    const end = commit(anchor, { x: 3.048, z: 0 }, "7'6", 'ftin')!
+    expect(end.z).toBeCloseTo(0.1524, 9) // the strand finding 53 measured
+
+    const miss = probeTypedMiss([shell], anchor, end)!
+    expect(miss).not.toBeNull()
+    expect(miss.gap).toBeCloseTo(0.1524, 9)
+    // The number that would land on the wall: 8'-0" exactly.
+    expect(miss.reaches).toBeCloseTo(2.4384, 9)
+    expect(miss.to.z).toBeCloseTo(0, 9)
+  })
+
+  it('stays silent when the typed length lands ON the wall, or nowhere near one', () => {
+    const lands = commit(anchor, { x: 3.048, z: 0 }, "8'", 'ftin')!
+    expect(probeTypedMiss([shell], anchor, lands)).toBeNull()
+
+    // Within the join guard is joined — the weld absorbs float noise.
+    expect(probeTypedMiss([shell], anchor, { x: 3.048, z: 0.01 })).toBeNull()
+
+    // A metre short is a short wall, not a near-miss; warning would nag.
+    expect(probeTypedMiss([shell], anchor, { x: 3.048, z: 1 })).toBeNull()
+  })
+
+  it('catches a corner near-miss too, through the same clustering pass', () => {
+    // Ending 100 mm short of the shell's START — walls crossing at 90°, so
+    // the wide merge reach applies and the repair answer is the cluster.
+    const miss = probeTypedMiss([shell], { x: 0, z: 2 }, { x: 0, z: 0.1 })!
+    expect(miss).not.toBeNull()
+    expect(miss.gap).toBeGreaterThan(0)
+    expect(miss.to.z).toBeLessThan(0.1)
+  })
+
+  /**
+   * ★ The hint reaches the canvas — asserted on the STRING, because B29's
+   * field-visibility test was green with the field switched off until the
+   * recorder could see text. Demonstrated red with the hint render
+   * disconnected in `drawDraft`: "expected [ '30'', '30'', '7'6▏', … ] to
+   * include 'ends 6" short — 8' reaches'" — the entry chip drew and the
+   * warning appeared nowhere.
+   */
+  it('★ draws the ring at the predicted end and names the miss under the field', () => {
+    const scene = (typedMiss: ReturnType<typeof probeTypedMiss>) => {
+      const ctx = recorder({ text: true })
+      drawPlan(ctx, {
+        width: 800,
+        height: 600,
+        viewport: createViewport(),
+        walls: [shell],
+        furniture: [],
+        rooms: [],
+        selection: null,
+        units: 'ftin',
+        anchor,
+        cursor: { x: 3.048, z: 0 },
+        showCursor: true,
+        typed: "7'6",
+        typedMiss,
+      })
+      return ctx.calls
+    }
+
+    const end = commit(anchor, { x: 3.048, z: 0 }, "7'6", 'ftin')!
+    const miss = probeTypedMiss([shell], anchor, end)
+
+    const withHint = scene(miss)
+    const texts = withHint
+      .filter((c) => c.op === 'fillText' && c.text)
+      .map((c) => c.text)
+    expect(texts).toContain(`ends 6" short — 8' reaches`)
+    // One more arc than the plain-entry render: the amber ring at the end.
+    expect(withHint.filter((c) => c.op === 'arc').length).toBe(
+      scene(null).filter((c) => c.op === 'arc').length + 1,
+    )
+
+    // Without a miss, no warning text — the hint never nags a clean entry.
+    expect(
+      scene(null)
+        .filter((c) => c.op === 'fillText' && c.text)
+        .map((c) => c.text)
+        .some((t) => t?.includes('short')),
+    ).toBe(false)
   })
 })

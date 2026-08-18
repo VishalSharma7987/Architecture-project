@@ -360,3 +360,157 @@ describe('★ B28 — the indicator is drawn, and is distinct per kind', () => {
     expect(ops('centreline')).not.toContain('rect')
   })
 })
+
+/**
+ * B34 — the wall FACE is a snap target, closing finding 53's first mechanism.
+ *
+ * ── The measured gap ──
+ * `SNAP_RADIUS_PX` is 12 SCREEN px; a 230 mm shell's half-thickness is 115 mm
+ * in WORLD units. Above 12 / 0.115 ≈ 104 px/m the visible face — the thing
+ * the user aims at, because the face is what is drawn — falls outside every
+ * target's radius, grid snap wins, and the stem lands one cell (152.4 mm)
+ * short. Finding 53 measured it: joins at 44–104 px/m, one loose `extend` at
+ * 110–176.
+ *
+ * ── The fixture is finding 53's own row ──
+ * Shell on z = 0, aim exactly at the face (z = 0.115), radius from 130 px/m.
+ * At that zoom the radius is 92 mm < 115 mm, so pre-B34 every target misses —
+ * which is what makes the red run red for the reason the finding names.
+ */
+describe('★ B34 — the wall face is an aiming target', () => {
+  const shell = wall('shell', 0, 0, 9.144, 0) // 230 mm thick, face at z = ±0.115
+  const HIGH_ZOOM_RADIUS = SNAP_RADIUS_PX / 130 // 92 mm — the failing zoom
+
+  /**
+   * ★ Demonstrated red against pre-B34 `findSnap`: returned null, so
+   * `resolveWallPoint` fell to grid and the stem committed at z = 0.1524 —
+   * one cell short, exactly the loose `extend` finding 53 measured.
+   */
+  it('★ catches an aim at the face when the centreline is out of radius', () => {
+    const aim = { x: 3.048, z: 0.115 }
+    const target = findSnap([shell], aim, HIGH_ZOOM_RADIUS)
+
+    expect(target?.kind).toBe('face')
+    // ★ The COMMITTED point is the CENTRELINE behind the face — an endpoint
+    // on the face itself would not join (rooms and `sharedEnds` match
+    // centreline coordinates) and the chain arithmetic (B33) sums centrelines.
+    // The cross-axis coordinate is EXACT — that is the axis the join lives on;
+    // along the wall only float noise from the projection is tolerated.
+    expect(target?.point.z).toBe(0)
+    expect(target?.point.x).toBeCloseTo(3.048, 9)
+  })
+
+  it('★ the stem drawn from that aim joins — zero loose ends', () => {
+    const aim = { x: 3.048, z: 0.115 }
+    const r = resolveWallPoint({
+      walls: [shell],
+      world: aim,
+      grid: grid(aim),
+      radius: HIGH_ZOOM_RADIUS,
+      suppressed: false,
+    })
+    const stem: Wall = {
+      ...wall('stem', 3.048, 2.4384, r.point.x, r.point.z),
+      thickness: 0.115,
+    }
+    expect(findLooseJoints([shell, stem])).toHaveLength(0)
+  })
+
+  it('an aim inside the drawn body counts — ink means the wall', () => {
+    // 60 mm into the body: past the centreline radius (92 mm covers it here —
+    // so shrink the radius to force the gap) and short of the face band.
+    const aim = { x: 3.048, z: 0.08 }
+    const target = findSnap([shell], aim, SNAP_RADIUS_PX / 300)
+    expect(target?.kind).toBe('face')
+    expect(target?.point.z).toBe(0)
+    expect(target?.point.x).toBeCloseTo(3.048, 9)
+  })
+
+  it('face NEVER outranks the existing three — it is the weakest claim', () => {
+    // Aim near the shell's start, inside the body: endpoint, centreline and
+    // face are all in range at the editor's default zoom. Endpoint must win.
+    const nearStart = { x: 0.05, z: 0.05 }
+    expect(findSnap([shell], nearStart, RADIUS)?.kind).toBe('endpoint')
+
+    // Mid-span at low zoom the centreline is in range too; the face adds
+    // nothing there and must not relabel the indicator.
+    const midSpan = { x: 3.048, z: 0.115 }
+    expect(findSnap([shell], midSpan, RADIUS)?.kind).toBe('centreline')
+  })
+
+  it('clamps to the segment, like the centreline target', () => {
+    // Past the wall's end, level with the face: the foot clamps to the end.
+    const past = { x: 9.2, z: 0.115 }
+    const target = findSnap([shell], past, HIGH_ZOOM_RADIUS)
+    if (target) expect(target.point.x).toBeLessThanOrEqual(9.144)
+  })
+
+  it('respects the exclusion set', () => {
+    const aim = { x: 3.048, z: 0.115 }
+    expect(findSnap([shell], aim, HIGH_ZOOM_RADIUS, new Set(['shell']))).toBeNull()
+  })
+
+  /**
+   * The alternative fix — a radius that scales with zoom or thickness — is
+   * REJECTED, and this pins the decision: the radius stays 12 screen px, so
+   * every other target keeps exactly the reach B28 derived (beat the grid,
+   * stay under the narrowest door). Only the face target extends coverage,
+   * and only over the wall's own drawn body.
+   */
+  it('the radius itself is unchanged — endpoints are no grabbier than B28 made them', () => {
+    // 200 mm off the start point, outside the 92 mm radius and off the body:
+    // nothing fires, exactly as before B34.
+    expect(findSnap([shell], { x: -0.2, z: 0.2 }, HIGH_ZOOM_RADIUS)).toBeNull()
+  })
+
+  it('the band ends at the drawn ink — no reach past a free end', () => {
+    // On the centreline but 200 mm beyond the end: no ink there, no target.
+    // Measuring the band from the clamped segment instead of the body
+    // rectangle passes everything above and fails exactly this.
+    expect(findSnap([shell], { x: 9.35, z: 0 }, HIGH_ZOOM_RADIUS)).toBeNull()
+  })
+
+  it('draws a distinct DIAMOND at the committed point, over the centreline', () => {
+    const ctx = recorder()
+    drawPlan(ctx, {
+      width: 800,
+      height: 600,
+      viewport: createViewport(),
+      walls: [shell],
+      furniture: [],
+      rooms: [],
+      selection: null,
+      units: 'm',
+      anchor: { x: 3.048, z: 2.4384 },
+      cursor: { x: 3.048, z: 0 },
+      showCursor: true,
+      snap: { kind: 'face', point: { x: 3.048, z: 0 }, wallIds: ['shell'] },
+    })
+    const base = (() => {
+      const c = recorder()
+      drawPlan(c, {
+        width: 800,
+        height: 600,
+        viewport: createViewport(),
+        walls: [shell],
+        furniture: [],
+        rooms: [],
+        selection: null,
+        units: 'm',
+        anchor: { x: 3.048, z: 2.4384 },
+        cursor: { x: 3.048, z: 0 },
+        showCursor: true,
+        snap: null,
+      })
+      return c.calls.length
+    })()
+
+    const marker = ctx.calls.slice(base).map((c) => c.op)
+    // A diamond is moveTo + three lineTo + closePath, twice (halo and fill) —
+    // and neither the endpoint's rect nor the centreline's arc.
+    expect(marker.filter((op) => op === 'lineTo').length).toBeGreaterThanOrEqual(6)
+    expect(marker).toContain('closePath')
+    expect(marker).not.toContain('rect')
+    expect(marker).not.toContain('arc')
+  })
+})
