@@ -25,8 +25,14 @@ export type Call = { op: string; args: number[]; text?: string }
  * switched OFF, since the typed field and the measured readout it replaces are
  * one `fillText` at the same coordinates and differ only in their text.
  */
+/**
+ * `measure` replaces the fixed 8 px `measureText` stub. B35's collision pass
+ * suppresses labels by their MEASURED width, and at a constant 8 px almost
+ * nothing collides — a suite that could not make labels wide could not make
+ * the pass act, which is the B29 text-blindness lesson one axis over.
+ */
 export function recorder(
-  options: { text?: boolean } = {},
+  options: { text?: boolean; measure?: (text: string) => number } = {},
 ): CanvasRenderingContext2D & { calls: Call[] } {
   const calls: Call[] = []
   const record =
@@ -68,7 +74,9 @@ export function recorder(
     drawImage: record('drawImage'),
     fillText: record('fillText'),
     strokeText: record('strokeText'),
-    measureText: () => ({ width: 8 }),
+    measureText: (text: string) => ({
+      width: options.measure ? options.measure(text) : 8,
+    }),
   }
   return ctx as unknown as CanvasRenderingContext2D & { calls: Call[] }
 }

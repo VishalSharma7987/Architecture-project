@@ -664,6 +664,29 @@ const refLabels = (k: number): RoomLabel[] => [
   console.log('\nwrote b33-chains.png — reference plan, south door, chains + overalls')
 }
 
+/* ── B35: the declutter, at three zooms ── */
+
+/**
+ * The reference with suppression ON. What to look for: are the chains the
+ * only dimensions (every wall is a bay or an overall here)? does anything
+ * that SHOULD be labelled go missing? does the drawing still read as a
+ * drawing at each zoom?
+ */
+console.log('')
+for (const [name, scale] of [['b35-z30', 30], ['b35-z62', 62], ['b35-z120', 120]] as const) {
+  const walls = refPlan(1)
+  const labels = refLabels(1)
+  const { ctx, png } = planContext(880, 940)
+  drawPlan(ctx, {
+    width: 880, height: 940,
+    viewport: { center: { x: 4.5, z: 5.5 }, scale },
+    walls, furniture: [], rooms: resolveRoomsUncached(walls, labels),
+    selection: null, units: 'm', anchor: null, cursor: null, showCursor: false,
+  })
+  writeFileSync(`${OUT}/${name}.png`, png())
+  console.log(`wrote ${name}.png at ${scale} px/m`)
+}
+
 console.log('')
 for (const [name, k, scale] of [['ref-1x', 1, 62], ['ref-3x', 3, 21]] as const) {
   const walls = refPlan(k)

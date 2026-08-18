@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B34 — COMPLETE.** Both of finding 53's snap gaps closed: the wall FACE is an aiming target committing to the centreline behind it, and a typed near-miss is shown before Enter, commit untouched (finding 54) |
-| Before that | **B33** — dimension chains (finding 52); **B32** — wall types; **B31** — stated building size; **B30/B29/B28** — endpoint drag, typed length, endpoint snap |
-| Next task | **Declutter the per-wall labels** now the chains exist (finding 52, decision e) |
+| Last completed task | **B35 — COMPLETE.** Dimension declutter: chain-covered walls no longer label themselves, and the survivors pass a screen-space collision test (finding 55) |
+| Before that | **B34** — face snap + typed near-miss (finding 54); **B33** — dimension chains (finding 52); **B32** — wall types; **B31** — stated building size |
+| Next task | The three unwelded **ingest paths** (finding 27's open half), or **sticky chains** for deep zoom (finding 55's observation) |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B34, at `3ae7dec`+:
+Verified after B35, at `630cd81`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **718 passing / 718** · 46 files / 46 |
+| `npm test` | **728 passing / 728** · 47 files / 47 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1271,6 +1271,37 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 55. DIMENSION DECLUTTER `SHIPPED 2026-08-18 by B35`
+
+Finding 52 decision (e), switched ON, plus the collision pass it did not
+cover. Two suppressions in [`plan/draw.ts`](../src/plan/draw.ts)'s
+`buildWallDimensions` (pure, exported so the acceptance is asserted on
+computed boxes), with the geometry in
+[`plan/labelLayout.ts`](../src/plan/labelLayout.ts):
+
+| Decision | Argument |
+|---|---|
+| **Chain coverage suppresses the WHOLE per-wall dimension** — line, witnesses, ticks, label — when the wall's full run is a bay (same SPAN within `JOIN_TOLERANCE`, not merely equal length) on a run of the same axis | Same-span, so an unrelated wall of coincidental length keeps its label. Apparatus without a reading is clutter — the fits-its-own-run rule's own reasoning. On the reference every wall is a bay or an overall, so the chains alone dimension the plan, which is exactly what the reference drawing does. |
+| **Collision drops, never displaces** | A displaced dimension points at something it does not measure, on a product for people who cannot survive a wrong dimension (§0). Honest displacement needs a leader — §6 v6 machinery, not a collision pass. What the user can still do: SELECT the wall (its dimension always draws), read the inspector, or zoom in — the pass runs in screen space, so the label returns by itself when room exists. |
+| **Priority: selected → shell → longer → id** | Selection is the user asking and bypasses BOTH suppressions (acceptance 3). The shell outranks any partition because the reference dimensions the envelope, not every subdivision; among equals the longer run wins — the shorter span is the one most often inferable from its neighbours; id last so two identical plans drop the same label (L6). Chains and overalls are pre-accepted obstacles nothing outranks. |
+| **Reappearance is on SELECTION only, not hover** | No hover state exists for walls (picking is click-based); adding one means per-move repaints and a reveal nobody can discover, and touch devices have none. Selection is already tracked, already repaints, and is the deliberate gesture. |
+| **Boxes are exact rotated rectangles (SAT), one `measureText` per wall per frame** | An AABB approximation over-suppresses every diagonal label — pinned by a parallel-45°-bars fixture. The measurement that feeds the box is the same single call the fit rule always made (§9.2's flagged cost is not doubled). The chip's geometry lives in one `LABEL_CHIP` constant so box and paint cannot drift. |
+
+**The sheet is untouched** — `planSheet.ts` not edited; the B26 golden still
+pins it call-for-call (acceptance 4, by the strongest possible means).
+
+**Known residue, from the rendered frames:** at deep zoom (120 px/m) the
+chains scroll off-canvas and a covered wall then carries no dimension
+anywhere on screen. The CAD answer is sticky/viewport-pinned dimension
+lines; alternatively coverage could demand the covering bay label be
+on-screen. Neither built — recorded as the next dimensioning decision.
+Selection and the inspector still answer for any wall meanwhile.
+
+Accepted edge: at a sub-50-px window the chain bay's label can be dropped by
+its own fit rule while coverage still suppresses the wall label — both forms
+are near their legibility floor there and zoom restores both; coupling the
+two builders for that window was declined.
+
 ### 54. THE FACE TARGET AND THE TYPED NEAR-MISS HINT `SHIPPED 2026-08-18 by B34`
 
 Both of finding 53's mechanisms, closed separately.
@@ -1345,7 +1376,7 @@ use). The five argued decisions:
 | **(b) The line sits `CHAIN.offsetPx` (46 screen px) beyond the CLEARANCE extent** (wall faces ∪ door sweeps ∪ furniture), witness lines dropping from the BUILDING edge past it | The sheet's own rule, now shared: a door swinging off the south wall pushes the south runs out past its leaf. Witnesses may cross a swing — normal drafting — but labels ride the line and never do. 46 px also clears the per-wall chip band (22 px + 8.5 px half-chip), which survives this session. |
 | **(c) Overall and chain are separate RUNS; an overall sharing a side moves out one tier (24 px)** | A reader must see 9.00 m as the extent and 3.00/3.00/3.00 as its parts. Distinctness is positional (outer tier) and textual (one reading spanning the run vs a string of bays); chains also label with full `formatLength` (`3.00 m`) where the per-wall chips stay compact. |
 | **(d) Stations sit on CENTRELINES, not faces** | The chain must SUM: 3.00+3.00+3.00 = 9.00 = the overall = the B31 target the user typed, and every number the editor states (areas, status bar, deviation) is centreline-measured. Face stations cannot sum to any overall without inserting each wall thickness as its own segment — real face dimensioning, which arrives with composite walls and wall-face snap (Stage 3, finding 24). The brief asserted "the reference dimensions to FACES"; the reference's own arithmetic refutes it — its strings total its stated 9.00 only centre-to-centre. Area semantics untouched. |
-| **(e) Per-wall labels REMAIN, switch untouched** | Decluttering is its own session. Recommendation recorded: suppress a per-wall label when its wall's full run appears as a bay on a chain along its side (equal length, same axis), keep it while the wall is SELECTED, and leave opening chips alone — they are inward and orthogonal to the chains. Do not add a visibility mode until that rule proves insufficient. |
+| **(e) Per-wall labels REMAIN, switch untouched** | Decluttering is its own session. Recommendation recorded: suppress a per-wall label when its wall's full run appears as a bay on a chain along its side (equal length, same axis), keep it while the wall is SELECTED, and leave opening chips alone — they are inward and orthogonal to the chains. Do not add a visibility mode until that rule proves insufficient. **Switched ON by B35 (finding 55)**, with same-SPAN matching rather than equal-length, plus the collision pass decision (e) did not cover. |
 
 **The sheet changed only by sharing** — `fitExtent`/`doorSweep` moved out
 verbatim as `clearanceExtent`/`doorSweep`, and `drawDimensions` now feeds the

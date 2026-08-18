@@ -18,8 +18,11 @@ import {
   clearanceExtent,
   dimensionRuns,
   strokeRunInk,
+  type DimensionRun,
   type RunInk,
 } from './dimensionChains'
+import { placeBoxes, type LabelBox } from './labelLayout'
+import { JOIN_TOLERANCE } from '../units/tolerance'
 import { glazingLines, sharedEnds, wallBodyQuad } from './wallBody'
 import type { SnapTarget } from './snap'
 import type { LooseJoint, TypedMiss } from './repairJoints'
@@ -283,6 +286,15 @@ const TREAD_COUNT = Math.max(
 const LABEL_FONT =
   '11px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
 
+/**
+ * The chip `label()` paints, and therefore the collision box a chip label
+ * occupies (B35). One set of numbers so the box and the paint cannot drift.
+ */
+const LABEL_CHIP = { padding: 5, height: 17 }
+
+/** Height of a plain (chip-less) chain label at `LABEL_FONT`'s 11 px. */
+const CHAIN_LABEL_H = 12
+
 /** Lighter and smaller than `LABEL_FONT`: a zone label is the quietest text. */
 const VASTU_FONT =
   '10px ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'
@@ -432,12 +444,13 @@ export function drawPlan(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   // Over the walls, and deliberately: the warning recolours the very walls that
   // are over the line, so it cannot be drawn under them and be seen.
   if (site) drawPlotViolations(ctx, scene, site)
+  // Chains first: they are the statement of record, and their label boxes are
+  // the obstacles every surviving per-wall label must yield to (B35).
+  const chainBoxes = drawDimensionChains(ctx, scene)
   // Over the walls, so a dimension crossing one keeps its label readable.
-  drawDimensions(ctx, scene)
+  drawDimensions(ctx, scene, chainBoxes)
   // Opening widths ride over the walls too, and only when the switch is on.
   drawOpeningDimensions(ctx, scene)
-  // The strung station chains and the overalls, outside everything above.
-  drawDimensionChains(ctx, scene)
   // Also over the walls: the selection band hugs the room's outline, which is
   // the wall centreline, so anything drawn under a wall is drawn invisibly.
   drawRoomCaptions(ctx, scene)
@@ -1600,24 +1613,97 @@ function drawOpening(
   }
 }
 
+/** One per-wall dimension, fully placed and ready to paint. */
+export type WallDimension = {
+  /** Witnesses, line, ticks — one stroked path, in this order. */
+  segments: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }>
+  label: { text: string; x: number; y: number; angle: number }
+  box: LabelBox
+}
+
 /**
- * An architectural dimension per wall: a line held off the wall, a witness line
- * dropped at each end, 45° ticks, and the length riding on the line itself.
+ * Whether a wall's full run is already stated by a chain bay or an overall of
+ * the same axis (finding 52 decision e, switched ON by B35).
  *
- * Everything here is measured in screen pixels off the wall's screen endpoints,
- * so the annotation keeps a constant weight while the building zooms.
+ * Same SPAN, not merely equal length: the bay between two adjacent stations
+ * must sit on the wall's own endpoints, so an unrelated wall of coincidental
+ * length elsewhere keeps its label. Matching is within `JOIN_TOLERANCE` —
+ * SD22's "is this the same point?" question, asked of stations.
+ *
+ * The bay's LABEL can still be dropped by its own fit rule at extreme zoom
+ * while this suppression holds — accepted: the per-wall label's stricter
+ * margin drops at nearly the same width, the dimension apparatus at that size
+ * is noise either way, and zooming in restores both. Coupling this test to
+ * which bay labels actually fit would tie the two builders together for a
+ * sub-50-px window.
  */
-function drawDimensions(ctx: CanvasRenderingContext2D, scene: PlanScene) {
+function coveredByRun(wall: Wall, runs: DimensionRun[]): boolean {
+  const dx = Math.abs(wall.end.x - wall.start.x)
+  const dz = Math.abs(wall.end.z - wall.start.z)
+  // The same millimetre the chain's own station collection uses; an oblique
+  // wall is never chain-covered and always keeps its label.
+  const axis = dz <= 0.001 && dx > 0.001 ? 'x' : dx <= 0.001 && dz > 0.001 ? 'z' : null
+  if (!axis) return false
+
+  const s = axis === 'x' ? wall.start.x : wall.start.z
+  const e = axis === 'x' ? wall.end.x : wall.end.z
+  const lo = Math.min(s, e)
+  const hi = Math.max(s, e)
+
+  for (const run of runs) {
+    if (run.axis !== axis) continue
+    for (let i = 0; i < run.stations.length - 1; i++) {
+      if (
+        Math.abs(run.stations[i] - lo) <= JOIN_TOLERANCE &&
+        Math.abs(run.stations[i + 1] - hi) <= JOIN_TOLERANCE
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * Every per-wall dimension that will actually be painted, after the two B35
+ * suppressions. Pure and exported so the acceptance can be asserted on the
+ * COMPUTED boxes rather than by eye.
+ *
+ * ── Suppression 1: chain coverage ──
+ * A wall whose full run is a chain bay says nothing the chain does not; its
+ * whole dimension (line, witnesses, ticks, label) is dropped, not the text
+ * alone — apparatus without a reading is clutter, the same reasoning as the
+ * long-standing fits-its-own-run rule.
+ *
+ * ── Suppression 2: label collision ──
+ * Survivors yield to the chains (the statement of record) and then to each
+ * other, in priority order: the SELECTED wall first and unconditionally —
+ * selection is the user asking, and it bypasses both suppressions — then
+ * shell before partition (the reference dimensions the envelope, not every
+ * subdivision), then the longer run (the shorter span is the one most often
+ * inferable from its neighbours), then id, so two identical plans always
+ * drop the same label (L6).
+ *
+ * `measure` is the ONE text measurement per wall per frame — the same call
+ * the fit rule has always made, now also feeding the collision box. §9.2
+ * already flags measureText per wall as a cost; this adds no second one.
+ */
+export function buildWallDimensions(
+  scene: PlanScene,
+  measure: (text: string) => number,
+  obstacles: readonly LabelBox[],
+): WallDimension[] {
   const { width, height, viewport: vp, walls, units } = scene
   const bounds = planBounds(walls)
-  if (!bounds) return
+  if (!bounds) return []
 
   const middle = worldToScreen(bounds.center, vp, width, height)
+  const runs = dimensionRuns(walls)
+  const selectedId =
+    scene.selection?.kind === 'wall' ? scene.selection.wallId : null
 
-  ctx.save()
-  ctx.font = LABEL_FONT
-  ctx.lineCap = 'butt'
-  ctx.setLineDash([])
+  const selected: WallDimension[] = []
+  const candidates: Array<{ dim: WallDimension; wall: Wall; lengthM: number }> = []
 
   for (const wall of walls) {
     const a = worldToScreen(wall.start, vp, width, height)
@@ -1625,12 +1711,15 @@ function drawDimensions(ctx: CanvasRenderingContext2D, scene: PlanScene) {
     const span = Math.hypot(b.x - a.x, b.y - a.y)
     if (span < DIMENSION.minWallPx) continue
 
-    const text = formatLengthCompact(distance(wall.start, wall.end), units)
+    const lengthM = distance(wall.start, wall.end)
+    const text = formatLengthCompact(lengthM, units)
+    const textWidth = measure(text)
     // A label wider than the run it measures reads as a collision, not a
     // dimension — better to say nothing than to stack text across the plan.
-    if (ctx.measureText(text).width + DIMENSION.labelMarginPx * 2 > span) {
-      continue
-    }
+    if (textWidth + DIMENSION.labelMarginPx * 2 > span) continue
+
+    const isSelected = wall.id === selectedId
+    if (!isSelected && coveredByRun(wall, runs)) continue
 
     const ux = (b.x - a.x) / span
     const uy = (b.y - a.y) / span
@@ -1646,35 +1735,96 @@ function drawDimensions(ctx: CanvasRenderingContext2D, scene: PlanScene) {
     const from = at(a, DIMENSION.offsetPx)
     const to = at(b, DIMENSION.offsetPx)
 
-    ctx.beginPath()
-    ctx.strokeStyle = COLORS.dimension
-    ctx.lineWidth = 1
-
+    const segments: WallDimension['segments'] = []
     for (const end of [a, b]) {
-      const near = at(end, DIMENSION.gapPx)
-      const far = at(end, DIMENSION.offsetPx + DIMENSION.overshootPx)
-      ctx.moveTo(near.x, near.y)
-      ctx.lineTo(far.x, far.y)
+      segments.push({
+        from: at(end, DIMENSION.gapPx),
+        to: at(end, DIMENSION.offsetPx + DIMENSION.overshootPx),
+      })
     }
-
-    ctx.moveTo(from.x, from.y)
-    ctx.lineTo(to.x, to.y)
-
+    segments.push({ from, to })
     // Ticks bisect the wall direction and the offset direction, which is the
     // surveyor's slash rather than an arrowhead — it survives short runs.
     const tx = ((ux + n.x) / Math.SQRT2) * DIMENSION.tickPx
     const ty = ((uy + n.y) / Math.SQRT2) * DIMENSION.tickPx
     for (const end of [from, to]) {
-      ctx.moveTo(end.x - tx, end.y - ty)
-      ctx.lineTo(end.x + tx, end.y + ty)
+      segments.push({
+        from: { x: end.x - tx, y: end.y - ty },
+        to: { x: end.x + tx, y: end.y + ty },
+      })
     }
 
+    const cx = (from.x + to.x) / 2
+    const cy = (from.y + to.y) / 2
+    const angle = readingAngle(ux, uy)
+    const dim: WallDimension = {
+      segments,
+      label: { text, x: cx, y: cy, angle },
+      // The chip `label()` paints: measured text plus its padding each side.
+      box: {
+        cx,
+        cy,
+        w: textWidth + LABEL_CHIP.padding * 2,
+        h: LABEL_CHIP.height,
+        angle,
+      },
+    }
+
+    if (isSelected) selected.push(dim)
+    else candidates.push({ dim, wall, lengthM })
+  }
+
+  candidates.sort(
+    (p, q) =>
+      (p.wall.type === q.wall.type ? 0 : p.wall.type === 'shell' ? -1 : 1) ||
+      q.lengthM - p.lengthM ||
+      (p.wall.id < q.wall.id ? -1 : p.wall.id > q.wall.id ? 1 : 0),
+  )
+
+  const placed = placeBoxes(
+    [...obstacles, ...selected.map((d) => d.box)],
+    candidates.map((c) => ({ box: c.dim.box, item: c.dim })),
+  )
+  return [...selected, ...placed]
+}
+
+/**
+ * An architectural dimension per wall: a line held off the wall, a witness
+ * line dropped at each end, 45° ticks, and the length riding on the line —
+ * for the walls B35's two suppressions leave standing (see
+ * `buildWallDimensions`). Screen pixels throughout, so the annotation keeps a
+ * constant weight while the building zooms.
+ */
+function drawDimensions(
+  ctx: CanvasRenderingContext2D,
+  scene: PlanScene,
+  obstacles: readonly LabelBox[],
+) {
+  ctx.save()
+  ctx.font = LABEL_FONT
+  ctx.lineCap = 'butt'
+  ctx.setLineDash([])
+
+  const dims = buildWallDimensions(
+    scene,
+    (text) => ctx.measureText(text).width,
+    obstacles,
+  )
+
+  for (const dim of dims) {
+    ctx.beginPath()
+    ctx.strokeStyle = COLORS.dimension
+    ctx.lineWidth = 1
+    for (const seg of dim.segments) {
+      ctx.moveTo(seg.from.x, seg.from.y)
+      ctx.lineTo(seg.to.x, seg.to.y)
+    }
     ctx.stroke()
 
     ctx.save()
-    ctx.translate((from.x + to.x) / 2, (from.y + to.y) / 2)
-    ctx.rotate(readingAngle(ux, uy))
-    label(ctx, text, 0, 0, COLORS.dimensionLabel)
+    ctx.translate(dim.label.x, dim.label.y)
+    ctx.rotate(dim.label.angle)
+    label(ctx, dim.label.text, 0, 0, COLORS.dimensionLabel)
     ctx.restore()
   }
 
@@ -1775,12 +1925,22 @@ function drawOpeningDimensions(ctx: CanvasRenderingContext2D, scene: PlanScene) 
  * per-wall chips keep their compact style — one more cue that the two are
  * different annotations while both remain on screen.
  */
-function drawDimensionChains(ctx: CanvasRenderingContext2D, scene: PlanScene) {
+/**
+ * The chains' ink and the screen boxes their labels occupy, built pure so the
+ * boxes can serve as collision obstacles (B35) and be asserted on in tests.
+ * `measure` is the caller's text measurement — one call per bay, as before.
+ */
+export function buildChainInks(
+  scene: PlanScene,
+  measure: (text: string) => number,
+): { inks: RunInk[]; labelBoxes: LabelBox[] } {
   const { width, height, viewport: vp, walls, units } = scene
+  const inks: RunInk[] = []
+  const labelBoxes: LabelBox[] = []
   const runs = dimensionRuns(walls)
-  if (runs.length === 0) return
+  if (runs.length === 0) return { inks, labelBoxes }
   const bounds = planBounds(walls)
-  if (!bounds) return
+  if (!bounds) return { inks, labelBoxes }
   const clear = clearanceExtent(walls, scene.furniture) ?? bounds
 
   const project = (p: Point) => worldToScreen(p, vp, width, height)
@@ -1793,14 +1953,6 @@ function drawDimensionChains(ctx: CanvasRenderingContext2D, scene: PlanScene) {
   const chained = new Set(
     runs.filter((r) => r.kind === 'chain').map((r) => `${r.axis}:${r.side}`),
   )
-
-  ctx.save()
-  ctx.font = LABEL_FONT
-  ctx.strokeStyle = COLORS.dimension
-  ctx.fillStyle = COLORS.dimensionLabel
-  ctx.lineWidth = 1
-  ctx.lineCap = 'butt'
-  ctx.setLineDash([])
 
   for (const run of runs) {
     const tier =
@@ -1852,33 +2004,79 @@ function drawDimensionChains(ctx: CanvasRenderingContext2D, scene: PlanScene) {
 
     for (let i = 0; i < run.stations.length - 1; i++) {
       const text = formatLength(run.stations[i + 1] - run.stations[i], units)
+      const textWidth = measure(text)
       const span = Math.abs(stations[i + 1] - stations[i])
       // A label wider than its bay reads as a collision, not a dimension —
       // the same bargain the per-wall labels strike.
-      if (ctx.measureText(text).width + CHAIN.labelMarginPx * 2 > span) continue
+      if (textWidth + CHAIN.labelMarginPx * 2 > span) continue
 
       const mid = (stations[i] + stations[i + 1]) / 2
       if (run.axis === 'x') {
         // Above its line on both sides — the sheet's own convention.
         ink.labels.push({ text, x: mid, y: line - CHAIN.textGapPx })
+        labelBoxes.push({
+          cx: mid,
+          // Baseline 'bottom': the glyphs sit wholly above the anchor.
+          cy: line - CHAIN.textGapPx - CHAIN_LABEL_H / 2,
+          w: textWidth,
+          h: CHAIN_LABEL_H,
+          angle: 0,
+        })
       } else {
         // Rotated to read bottom-to-top; on the left the glyphs hang toward
         // -x (baseline 'bottom'), on the right toward +x ('top'), so the text
         // always sits on the outside of its own line.
+        const lx = line + dir * CHAIN.textGapPx
         ink.labels.push({
           text,
-          x: line + dir * CHAIN.textGapPx,
+          x: lx,
           y: mid,
           angle: -Math.PI / 2,
           baseline: run.side === 'min' ? 'bottom' : 'top',
         })
+        labelBoxes.push({
+          // The glyphs extend from the baseline toward the outside of the
+          // line — the same side `dir` points.
+          cx: lx + (dir * CHAIN_LABEL_H) / 2,
+          cy: mid,
+          w: textWidth,
+          h: CHAIN_LABEL_H,
+          angle: -Math.PI / 2,
+        })
       }
     }
 
-    strokeRunInk(ctx, ink)
+    inks.push(ink)
   }
 
+  return { inks, labelBoxes }
+}
+
+/**
+ * Paints the chains and hands back their label boxes — the obstacles every
+ * per-wall label must yield to. The chains are painted regardless: they are
+ * the statement of record (finding 52), and nothing outranks them.
+ */
+function drawDimensionChains(
+  ctx: CanvasRenderingContext2D,
+  scene: PlanScene,
+): LabelBox[] {
+  ctx.save()
+  ctx.font = LABEL_FONT
+  ctx.strokeStyle = COLORS.dimension
+  ctx.fillStyle = COLORS.dimensionLabel
+  ctx.lineWidth = 1
+  ctx.lineCap = 'butt'
+  ctx.setLineDash([])
+
+  const { inks, labelBoxes } = buildChainInks(
+    scene,
+    (text) => ctx.measureText(text).width,
+  )
+  for (const ink of inks) strokeRunInk(ctx, ink)
+
   ctx.restore()
+  return labelBoxes
 }
 
 /**
@@ -2293,9 +2491,9 @@ function label(
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
 
-  const padding = 5
+  const padding = LABEL_CHIP.padding
   const w = ctx.measureText(text).width + padding * 2
-  const h = 17
+  const h = LABEL_CHIP.height
 
   ctx.fillStyle = background
   ctx.fillRect(cx - w / 2, cy - h / 2, w, h)
