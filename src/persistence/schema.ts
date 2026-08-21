@@ -563,6 +563,7 @@ const CALIBRATION_SOURCES: CalibrationSource[] = [
   'dxf-units',
   'vector',
   'ocr',
+  'stated',
   'heuristic',
   'ai',
   'none',

@@ -3,11 +3,17 @@ import { AI_UNAVAILABLE_MESSAGE, isAiConfigured } from '../ai/endpoint'
 import {
   clearCalibrationPicks,
   describeCalibration,
+  getCalibrationNotice,
   getCalibrationPicks,
   isMeasured,
   proposeCalibration,
   subscribeCalibration,
 } from '../blueprint/calibration'
+import {
+  getLoadedDensity,
+  metresPerPixelFromScale,
+  parseScaleNotation,
+} from '../blueprint/statedScale'
 import { detectWallSegments, segmentsToWalls } from '../blueprint/detectWalls'
 import { weldIngestWalls } from '../plan/repairJoints'
 import {
@@ -109,6 +115,10 @@ export function BlueprintPanel() {
   const updateBlueprint = useDesignStore((s) => s.updateBlueprint)
   const units = useDesignStore((s) => s.units)
   const picks = useSyncExternalStore(subscribeCalibration, getCalibrationPicks)
+  const pickNotice = useSyncExternalStore(
+    subscribeCalibration,
+    getCalibrationNotice,
+  )
 
   const fileRef = useRef<HTMLInputElement>(null)
   /** Kept from the upload so detection never re-decodes the file. */
@@ -119,7 +129,10 @@ export function BlueprintPanel() {
   /** Near-miss joints the ingest weld closed in the staged set (B36). */
   const [weldedCount, setWeldedCount] = useState(0)
   const [knownLength, setKnownLength] = useState('')
+  /** B38 scope A: the scale notation printed on the drawing, typed verbatim. */
+  const [statedScale, setStatedScale] = useState('')
 
+  const density = getLoadedDensity()
   const calibrated = isMeasured(blueprint?.calibration)
   const aiAvailable = isAiConfigured()
   const busy =
@@ -210,6 +223,66 @@ export function BlueprintPanel() {
           }
         : { kind: 'idle' },
     )
+  }
+
+  /**
+   * B38 scope A — size the underlay from the scale the drawing states.
+   *
+   * Two clicks become one typed string, but ONLY when the image file claims
+   * a print density: a scale notation is a paper-to-world ratio and says
+   * nothing about pixels on its own. When the file claims nothing, this says
+   * so and points at the measurement, which is the honest answer rather than
+   * a number invented from an assumed 96 dpi.
+   */
+  const applyStatedScale = () => {
+    if (!blueprint) return
+
+    const ratio = parseScaleNotation(statedScale)
+    if (ratio === null) {
+      setStatus({
+        kind: 'error',
+        message: `That is not a scale. Type it as the drawing prints it — 1:100, 1:50, or 1/4"=1'.`,
+      })
+      return
+    }
+    if (!density) {
+      setStatus({
+        kind: 'error',
+        message:
+          'This image file does not record a print size, so a scale ratio ' +
+          'alone cannot size it — 1:100 of what paper? Measure a known ' +
+          'length instead, or re-export the drawing as a PDF or an image ' +
+          'that carries its DPI.',
+      })
+      return
+    }
+
+    const result = proposeCalibration({
+      source: 'stated',
+      metresPerPixel: metresPerPixelFromScale(ratio, density),
+      evidence: {
+        statedScale: statedScale.trim(),
+        note: `${Math.round(density.pixelsPerMetre * 0.0254)} dpi from ${density.kind}`,
+      },
+    })
+
+    if (!result.applied) {
+      setStatus({ kind: 'error', message: result.reason })
+      return
+    }
+
+    setStatedScale('')
+    setDetected(null)
+    setStatus({
+      kind: 'note',
+      // Says what it did AND what it did not do. The underlay is now at true
+      // scale to trace over; detection still refuses (Gate 2), and finding
+      // that out at the Detect button instead of here would read as a bug.
+      message:
+        `Underlay sized at 1:${Math.round(ratio)}. Tracing over it is now at ` +
+        'true scale. Detection still needs a measured length — the print ' +
+        'size came from the file, and nothing here can check it.',
+    })
   }
 
   const detect = async () => {
@@ -513,6 +586,62 @@ export function BlueprintPanel() {
                 .
               </p>
 
+              {/* B38 scope A. Offered BEFORE the two-click measurement,
+                  because reading a number off the sheet is less work than
+                  aiming twice — and because the prompt is what tells the
+                  user the drawing probably carries one. The prompt is shown
+                  from the fact that architectural drawings usually state a
+                  scale, NOT from having read this one: it asks rather than
+                  claims, so it cannot be wrong about the drawing. */}
+              {picks.length < 2 && !calibrating && (
+                <div className="space-y-1.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-2">
+                  <label
+                    htmlFor="blueprint-stated-scale"
+                    className="block text-[11px] leading-relaxed text-slate-600"
+                  >
+                    Does the drawing print its scale — <em>1:100</em>,{' '}
+                    <em>1/4&quot;=1&apos;</em>? Type it and skip the measuring.
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="blueprint-stated-scale"
+                      type="text"
+                      inputMode="text"
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder="1:100"
+                      value={statedScale}
+                      onChange={(e) => setStatedScale(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') applyStatedScale()
+                      }}
+                      data-testid="blueprint-stated-scale"
+                      className="w-24 rounded-md border border-slate-300 bg-white px-2 py-1 text-xs outline-none focus:border-slate-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={applyStatedScale}
+                      disabled={statedScale.trim().length === 0}
+                      data-testid="blueprint-apply-stated"
+                      className="ml-auto rounded-md bg-slate-600 px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                    >
+                      Use it
+                    </button>
+                  </div>
+                  {/* Said up front, not after the button fails. The user can
+                      see whether this route is open to them before they try
+                      it, and go straight to measuring if it is not. */}
+                  <p
+                    className="text-[10px] leading-relaxed text-slate-400"
+                    data-testid="blueprint-density"
+                  >
+                    {density
+                      ? `This file records ${Math.round(density.pixelsPerMetre * 0.0254)} dpi, so a stated scale can size it.`
+                      : 'This file records no print size, so a stated scale cannot size it on its own — measure a length below.'}
+                  </p>
+                </div>
+              )}
+
               {picks.length < 2 && !calibrating && (
                 <button
                   type="button"
@@ -531,6 +660,17 @@ export function BlueprintPanel() {
                     you know the length of — a dimension line, a door, a wall.
                     {picks.length === 1 && ' One end picked; click the other.'}
                   </p>
+                  {/* B38 scope C: the second pick landed on the first. Said
+                      here, where the instructions are, rather than accepting
+                      it and asking about a zero-length span afterwards. */}
+                  {pickNotice && (
+                    <p
+                      className="text-[11px] font-medium leading-relaxed text-amber-700"
+                      data-testid="blueprint-pick-refused"
+                    >
+                      {pickNotice}
+                    </p>
+                  )}
                   <button
                     type="button"
                     onClick={cancelCalibration}

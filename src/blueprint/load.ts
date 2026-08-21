@@ -1,6 +1,7 @@
 import { BLUEPRINT_DEFAULTS, useDesignStore } from '../store/useDesignStore'
 import { uncalibrated } from './calibration'
 import { rasterFromFile, type Raster } from './raster'
+import { readImageDensity, setLoadedDensity } from './statedScale'
 
 export type BlueprintLoad =
   | { ok: true; raster: Raster }
@@ -19,6 +20,14 @@ export async function loadBlueprintFromFile(file: File): Promise<BlueprintLoad> 
   if (!result.ok) return result
 
   const { raster } = result
+
+  // The print density the file claims, for B38's typed-scale path. Read here
+  // because this is the one place an image file's BYTES arrive, so both the
+  // Blueprint panel and the Import menu get it. Session-scoped and never
+  // persisted: it describes the file, and a reopened project has the
+  // placement but not the pixels. Cleared to null when the file claims
+  // nothing believable, so the panel says so rather than implying a size.
+  setLoadedDensity(readImageDensity(new Uint8Array(await file.arrayBuffer())))
 
   // A reopened project remembers the placement and scale of the image it was
   // traced from, but not its pixels. Re-picking that same file should hand the

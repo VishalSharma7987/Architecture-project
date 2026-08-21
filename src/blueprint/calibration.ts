@@ -48,6 +48,24 @@ export const CALIBRATION_RANK: Record<CalibrationSource, number> = {
   vector: 3,
   /** Three or more OCR'd dimension strings agreeing within 2%. */
   ocr: 4,
+  /**
+   * The drawing's stated scale notation, typed by the user, times the print
+   * density the file claims (B38).
+   *
+   * **4.5 is deliberate, and the fraction is the point.** The ratio half is a
+   * USER STATEMENT read off the sheet, which belongs above every automatic
+   * guess — above `heuristic`'s assumed door and far above `ai`. The density
+   * half is machine metadata the user did not state and nothing cross-checks,
+   * where `ocr` validates itself against the drawing's own pixel geometry
+   * three times over. So it sits between them.
+   *
+   * Renumbering 5–7 to make room was rejected: §8's rank NUMBERS are cited by
+   * value elsewhere ("Gate 2 refuses rank 6"), and shifting documented ranks
+   * is the same citation rot §10's renumbering already cost this project once.
+   * Every comparison here is `>` on the value, so a fraction orders correctly
+   * and moves nobody.
+   */
+  stated: 4.5,
   /** Inferred from a known object — an assumed 900 mm door leaf. */
   heuristic: 5,
   /** A model reading an image. Always the weakest thing that is still a claim. */
@@ -94,6 +112,7 @@ const SOURCE_LABEL: Record<CalibrationSource, string> = {
   'dxf-units': 'read from the DXF units',
   vector: 'read from the PDF page',
   ocr: 'read from the dimension text',
+  stated: "taken from the scale you typed and the image's own print size",
   heuristic: 'inferred from a standard door width',
   ai: 'estimated by a vision model',
   none: 'not measured — this is the default guess',
@@ -245,7 +264,12 @@ export function unlockCalibration(): void {
 const EMPTY: Point[] = []
 
 let picks: Point[] = EMPTY
+let notice: string | null = null
 const listeners = new Set<() => void>()
+
+const wake = () => {
+  for (const listener of listeners) listener()
+}
 
 /** Points picked so far — none, the first, or both. */
 export const getCalibrationPicks = (): Point[] => picks
@@ -253,11 +277,74 @@ export const getCalibrationPicks = (): Point[] => picks
 /** Replaces the picks and wakes every subscriber. */
 export function setCalibrationPicks(next: Point[]) {
   picks = next
-  for (const listener of listeners) listener()
+  wake()
 }
 
-/** Abandons an in-progress or finished measurement. */
-export const clearCalibrationPicks = () => setCalibrationPicks(EMPTY)
+/**
+ * Why the last pick was refused, or null (B38 scope C).
+ *
+ * Transient like the picks and carried on the same subscription: the canvas
+ * writes it at the click, the panel reads it, and it never reaches
+ * persistence or undo. It rides here rather than in the panel's own state
+ * because the refusal happens in the CANVAS — the panel is not where the
+ * click landed.
+ */
+export const getCalibrationNotice = (): string | null => notice
+
+export function setCalibrationNotice(next: string | null) {
+  if (notice === next) return
+  notice = next
+  wake()
+}
+
+/** Abandons an in-progress or finished measurement, and any refusal with it. */
+export const clearCalibrationPicks = () => {
+  notice = null
+  setCalibrationPicks(EMPTY)
+}
+
+/**
+ * How close a second pick may land to the first before it is refused, in
+ * SCREEN pixels (B38, scope C).
+ *
+ * Screen, not world: on an uncalibrated image world distance means nothing —
+ * a "1 metre" gap at the 0.01 default is one pixel, and at a corrected scale
+ * the same click is metres. What decides whether the user aimed at two
+ * different things is how far apart the two clicks were ON THE SCREEN THEY
+ * AIMED AT, which is the same argument `SNAP_RADIUS_PX` and
+ * `HIT_TOLERANCE_PX` already make.
+ *
+ * 6 px is derived: above `HIT_TOLERANCE_PX` (7) a click is a deliberate
+ * second target, and a double-click or a small hand tremor lands within a
+ * few pixels. Chosen below the pick radius so a user aiming at an adjacent
+ * feature is never refused — the refusal must be rarer than the mistake it
+ * catches.
+ */
+export const MIN_PICK_SEPARATION_PX = 6
+
+/**
+ * Whether a second calibration pick is far enough from the first to be a
+ * measurement.
+ *
+ * Real use found this: two picks landing on the same point produced a panel
+ * reading *"That span currently reads 0″. How long is it really?"* — a
+ * question with no answer and a field that could not be acted on, because
+ * every scale derived from a zero span is a division by zero. The honest
+ * moment to refuse is the CLICK, where the user still has their hand on the
+ * thing they mis-aimed at, not the form afterwards.
+ *
+ * Pure so the rule is testable without a DOM, and so the editor stays an
+ * adapter that knows about pixels.
+ */
+export function pickIsSeparated(
+  first: Point,
+  second: Point,
+  /** Screen pixels per world metre — the viewport's scale. */
+  pixelsPerMetre: number,
+): boolean {
+  const worldGap = Math.hypot(second.x - first.x, second.z - first.z)
+  return worldGap * pixelsPerMetre >= MIN_PICK_SEPARATION_PX
+}
 
 /** Subscribes to pick changes. Returns the unsubscribe function. */
 export function subscribeCalibration(listener: () => void) {

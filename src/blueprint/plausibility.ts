@@ -245,6 +245,14 @@ export function gateRasterSize(
  * `'manual'`, `'dxf-units'` and `'vector'` are measurements. `'ocr'` reads the
  * drawing's own dimension strings and is accepted on the same footing — it is
  * rank 4 and it is evidence from the document rather than from a model.
+ *
+ * **`'stated'` is deliberately NOT admitted** (B38). A typed scale notation
+ * is a good user statement resting on a print density the file happened to
+ * claim and nothing cross-checked — and this gate's whole subject is what
+ * gets baked into permanent wall geometry that nothing rescales. It is good
+ * enough to size the UNDERLAY, so tracing over it is at true scale; it is
+ * not good enough to build from unchecked. The panel says so in as many
+ * words rather than leaving the user to discover the refusal.
  */
 export function gateScaleProvenance(
   source: CalibrationSource,
@@ -270,7 +278,12 @@ export function gateScaleProvenance(
     gate: 'scale-provenance',
     status: 'fail',
     message:
-      source === 'none'
+      source === 'stated'
+        ? 'The underlay is sized from the scale you typed, which is enough to ' +
+          "trace over — but it rests on the image file's own print size, which " +
+          'nothing here can check. Measure a known length before building walls ' +
+          'from it: they would keep that size permanently.'
+        : source === 'none'
         ? 'This drawing has no scale yet. Measure a known length on it first — ' +
           'walls built now would be the wrong size permanently.'
         : `The scale is an estimate (${source}), not a measurement. Walls built ` +

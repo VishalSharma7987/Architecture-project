@@ -10,7 +10,9 @@ import { provenance } from '../store/provenance'
 import {
   clearCalibrationPicks,
   getCalibrationPicks,
+  setCalibrationNotice,
   setCalibrationPicks,
+  pickIsSeparated,
   subscribeCalibration,
 } from '../blueprint/calibration'
 import { FURNITURE_DRAG_TYPE } from '../components/FurniturePanel'
@@ -766,6 +768,27 @@ export function FloorPlanEditor() {
       return
     }
 
+    // B38 scope C: a second pick on top of the first is not a measurement.
+    // Refused HERE, at the click, while the user's hand is still on the thing
+    // they mis-aimed at — the old behaviour accepted it and asked "that span
+    // currently reads 0″, how long is it really?", which has no answer and a
+    // field that cannot be acted on. The first pick is KEPT: they aimed at
+    // that one on purpose, and discarding it would cost them a click for the
+    // app's benefit.
+    if (
+      picks.length === 1 &&
+      !pickIsSeparated(picks[0], point, viewportRef.current.scale)
+    ) {
+      setCalibrationNotice(
+        'Those two points are the same spot. Click the OTHER end of the ' +
+          'length you are measuring — the two ends of a dimension line, a ' +
+          'door, or a wall.',
+      )
+      requestDraw()
+      return
+    }
+
+    setCalibrationNotice(null)
     const next = [...picks, point]
     setCalibrationPicks(next)
     if (next.length === 2) {

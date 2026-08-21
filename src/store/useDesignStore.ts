@@ -424,6 +424,14 @@ export type CalibrationSource =
   | 'dxf-units'
   | 'vector'
   | 'ocr'
+  /**
+   * The drawing's own stated scale notation, typed by the user, combined
+   * with a print density the image file claims (B38). A user statement about
+   * the document — so above every automatic guess — resting on one machine
+   * value nobody cross-checked, so below `'ocr'`, which validates itself
+   * against the drawing's pixel geometry. See `blueprint/statedScale.ts`.
+   */
+  | 'stated'
   | 'heuristic'
   | 'ai'
   | 'none'
@@ -436,6 +444,8 @@ export type CalibrationEvidence = {
   typedMetres?: number
   /** The dimension the model read, in feet, for `ai`. */
   readFeet?: number
+  /** What the user typed, verbatim, for `stated` — e.g. `1:100`. */
+  statedScale?: string
   /** Free text for anything else — a DXF unit code, an OCR string. */
   note?: string
 }

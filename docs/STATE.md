@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B37 — COMPLETE.** Finding 55's deep-zoom regression closed: coverage now requires the covering bay label to be VISIBLE, so a wall whose chain scrolled off-canvas labels itself (finding 57) |
-| Before that | **B36** — the ingest weld (finding 56); **B35** — dimension declutter (finding 55); **B34** — face snap + typed near-miss (finding 54) |
-| Next task | **B9**'s remaining drafting snaps (perpendicular/extension), or the corpus email (the sole Stage 1 blocker, human) |
+| Last completed task | **B38 — COMPLETE.** Assisted scale: a typed scale notation is §8's new rank 4.5 `'stated'`, the zero-span pick bug is refused at the click, and OCR is designed but unbuilt (finding 58) |
+| Before that | **B37** — visible-bay coverage (finding 57); **B36** — the ingest weld (finding 56); **B35** — dimension declutter (finding 55) |
+| Next task | **The corpus email** (the sole Stage 1 blocker, human — and now also what OCR needs), or **B9**'s remaining drafting snaps |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B37, at `4160335`+:
+Verified after B38, at `e15047a`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **740 passing / 740** · 48 files / 48 |
+| `npm test` | **755 passing / 755** · 49 files / 49 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1270,6 +1270,89 @@ it is a redirect to manual calibration (rank 1, two picks and a typed length);
 for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
+
+### 58. ASSISTED SCALE `SHIPPED 2026-08-18 by B38` · A and C built, B designed
+
+Real use found the burden: a clean CAD export STATING "SCALE 1:100" and
+carrying six dimension strings still required two precise clicks — twice,
+because the first pair landed on the same spot.
+
+**A — the typed scale notation.** [`blueprint/statedScale.ts`](../src/blueprint/statedScale.ts),
+pure: `parseScaleNotation` (1:100 · 1/100 · `1:100 MTS.` · `1/4"=1'` ·
+`1/8"=1'-0"` · `1cm=1m`), `readImageDensity` (PNG pHYs, JPEG JFIF), and
+`metresPerPixelFromScale`.
+
+| Decision | Argument |
+|---|---|
+| **The honest limit, stated up front: a scale notation ALONE cannot size a raster.** It is a PAPER-to-world ratio and reaches pixels only through print density | This is the finding the brief asked for, not a failure. **Measured on the real corpus: 1 of 13 files carries a usable density.** Twelve carry none, and for those the typed route is CLOSED and the panel says so *before* the user tries it. A stated scale is a real win on files that record their DPI and honestly nothing on files that do not. |
+| **Encoder boilerplate is REFUSED** — 72 and 96 dpi, unit-0 "aspect ratio only", mismatched X/Y | Those are what libraries write when nobody chose anything. Believing one would size a building off a default. A mismatched X/Y density is finding 35's stretched drawing, which no single number describes. |
+| **Rank 4.5 — `'stated'`, between `ocr` and `heuristic`** | The ratio half is a USER STATEMENT read off the sheet, so above every automatic guess — above `heuristic`'s assumed door, far above `ai`. The density half is machine metadata nobody stated and nothing cross-checks, where `ocr` validates itself against the drawing's own pixel geometry three times. **The fraction is deliberate:** §8's rank NUMBERS are cited by value elsewhere ("Gate 2 refuses rank 6"), and renumbering documented ranks is the citation rot §10's renumbering already cost this project once. Comparisons are `>` on the value, so 4.5 orders correctly and moves nobody. |
+| **Gate 2 does NOT admit it** (acceptance 3) | An unverifiable density baked into permanent wall geometry is exactly what the gate exists to prevent. It sizes the UNDERLAY — tracing over it is at true scale — and both the gate message and the success note say detection still needs a measurement, so the refusal is never a surprise at the Detect button. |
+| **It does not lock** | Only `manual` locks (`isMeasured` is unchanged). A measurement must always be able to correct it. |
+| **No schema bump.** Density is session state in `statedScale.ts`, written by `load.ts` | It is a fact about the FILE, and a reopened project has the placement but not the pixels — there would be nothing for a persisted copy to describe. `load.ts` is the one place bytes arrive, so the Blueprint panel and the Import menu both populate it. |
+| **The prompt asks, never claims** | The panel offers the field from the general fact that architectural drawings usually print a scale — NOT from having read this one. Asking cannot be wrong about the drawing; claiming could. |
+
+**Does A remove the two-click burden, or reduce it?** On a file with a
+believable density: removes it — **1 action (type `1:100`) against 3** (two
+precise clicks plus a typed length), measured on `first-floor-557px.png`,
+which goes from the 5.57 m default guess to **11.79 × 10.86 m at 47.2 px/m**
+in one string. On the other twelve: reduces nothing, and says so immediately
+instead of wasting the attempt. Across the corpus as it stands that is a 1-in-13
+win — which is an argument for OCR, not against A.
+
+**⚠ A hazard B38 cannot detect, and Gate 2's refusal is the mitigation.** The
+one file with a density is a transport-resized copy (finding 37): its pHYs
+may describe the ORIGINAL sheet while the pixels were downsampled, making
+the density confidently wrong. Nothing in the file distinguishes those cases.
+This is precisely why `stated` sizes the underlay and not the walls.
+
+**C — the zero-span pick.** `pickIsSeparated` refuses a second pick within
+`MIN_PICK_SEPARATION_PX` (6) of the first, at the CLICK, with the reason
+shown where the instructions are. In SCREEN pixels, not world: on an
+uncalibrated image world distance means nothing — a "1 m" gap at the 0.01
+default is one pixel — and what decides whether the user aimed at two things
+is how far apart the clicks were on the screen they aimed at (`SNAP_RADIUS_PX`
+makes the same argument). The first pick is KEPT: they aimed at it on
+purpose. 6 px is below `HIT_TOLERANCE_PX` (7) so a user aiming at an adjacent
+feature is never refused — the refusal must be rarer than the mistake.
+
+#### B — OCR of dimension strings: the design, NOT built
+
+§8 rank 4 specifies the rule (≥3 strings agreeing within 2%); nothing
+produces it. What it would take:
+
+| Question | Answer |
+|---|---|
+| **Which OCR** | Tesseract.js (WASM, Apache-2.0), bundled and run locally. **Not** a cloud OCR: drawings are client-confidential (§9.4) and §L3 requires the app to work with every AI service off. ~2–4 MB of WASM + traineddata, so it must be dynamically imported on demand, never in the main bundle. Digits-plus-`.,'"-` character allowlist; a plan's dimension text is numeric, and a full alphabet is where OCR invents `l`/`1` and `O`/`0`. |
+| **Where it runs** | A Web Worker, like the CV move §9.2 already prescribes — a 4 MP page is seconds of work and the main thread cannot block. Cancellable via `AbortController` (§9.3), because the user will switch panels. |
+| **Pairing a string with the span it measures — THE HARD PART** | A number near a dimension line is not knowledge of WHICH line. The tractable route reuses what already exists: the detector finds axis-aligned segments; a dimension line is a thin segment OUTSIDE `planBounds` with tick marks, which is exactly the geometry `dimensionChains.ts` now emits from the other direction. Pair a string to the nearest such segment when (a) it lies within ~1.5 text-heights of the segment, (b) its reading orientation matches the segment's axis (`readingAngle`'s rule), and (c) the segment's own pixel length is the LONGEST candidate consistent with it. Then the scale is `parseLength(string) / segmentPixelLength`. **Unpaired strings are dropped silently — room areas, door widths and title-block text all look like dimensions and none of them measure a span on the page.** |
+| **What ≥3-agreeing does when they disagree** | Cluster the candidate px/m values and take the LARGEST cluster agreeing within 2%; require ≥3 members. Fewer than 3, or no cluster: **produce nothing and stay at rank 7** — a 2-of-2 agreement is one mispaired string away from confident nonsense. When two clusters of ≥3 disagree, that is finding 35's stretched drawing (`Media (9)`: 131.4 px/m across vs 113.0 down, 85.9% agreement) and the honest output is a REFUSAL naming both numbers, not an average. Per-axis clustering would catch it outright and is the better design. |
+| **What blocks it** | The corpus. Every threshold above — the 1.5 text-heights, the 2% band, the ≥3 floor — would otherwise be tuned against `samples/` (§10 rule 6, already violated once) or against thumbnails no OCR can read: at 24–36 px/m a dimension string is 4–6 px tall. **OCR is not merely unbuilt; it is unbuildable against the corpus as it stands**, which makes it another argument for the intake email rather than a task that can be scheduled now. |
+
+#### The honest position on automatic reconstruction · asked and answered 2026-08-18
+
+**Restated for the record: fixing scale does not change the 7–15 of 71
+number, and nobody should plan a detection session expecting it to.**
+
+Scale and recall are independent. Scale decides whether a wall that IS found
+comes out the right SIZE; recall decides how many are found at all. The
+measurement the brief cites ran *with the scale already correct and every
+gate bypassed* — so scale was not the limiter in it, and improving scale
+cannot move a number measured with scale held right. What limits recall is
+resolution and rendering: at 24–36 source px/m a 115 mm partition is 2.8–4.1
+px and the line drawing it is 1–2 (batch-3 measurement), and finding 40's
+img3 has no true black anywhere, so its faces threshold inconsistently and
+never pair into walls.
+
+**A caveat on the number itself, which is a record-keeping finding.** The
+"7–15 of 71" measurement is **not recorded anywhere in this repository** — not
+in STATE.md, the ADRs, or `docs/testing/`. It reaches B38 only through the
+brief. Finding 14 warns about exactly this: a figure carried between briefs
+as verified, with the mechanism unavailable for checking. It is quoted here
+as the brief stated it, and **whoever ran it should commit the harness and
+the row before it is cited again** — its order of magnitude matches
+everything else measured here, but its provenance does not meet this
+project's own bar.
 
 ### 57. COVERAGE REQUIRES A VISIBLE BAY LABEL `SHIPPED 2026-08-18 by B37` · finding 55's residue closed
 
