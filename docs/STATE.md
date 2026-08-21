@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B38 — COMPLETE.** Assisted scale: a typed scale notation is §8's new rank 4.5 `'stated'`, the zero-span pick bug is refused at the click, and OCR is designed but unbuilt (finding 58) |
-| Before that | **B37** — visible-bay coverage (finding 57); **B36** — the ingest weld (finding 56); **B35** — dimension declutter (finding 55) |
-| Next task | **The corpus email** (the sole Stage 1 blocker, human — and now also what OCR needs), or **B9**'s remaining drafting snaps |
+| Last completed task | **B39 — COMPLETE as a DESIGN + PROTOTYPE session.** Image→wall is NOT solved. A fixture, a graph-scoring harness and a measured baseline exist; the one prototype filter measured NET NEGATIVE and is not wired in (finding 59) |
+| Before that | **B38** — assisted scale (finding 58); **B37** — visible-bay coverage (finding 57); **B36** — the ingest weld (finding 56) |
+| Next task | **The corpus email.** B39 established that the synthetic fixture cannot reproduce the real failure, so detection work has nothing to aim at until real drawings arrive. It is now the blocker for Stage 1 exit, OCR (B38) AND detection |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B38, at `e15047a`+:
+Verified after B39, at `dffff90`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **755 passing / 755** · 49 files / 49 |
+| `npm test` | **765 passing / 765** · 50 files / 50 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1270,6 +1270,103 @@ it is a redirect to manual calibration (rank 1, two picks and a typed length);
 for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
+
+### 59. IMAGE → WALL NETWORK `MEASURED BASELINE + RECOMMENDED PATH 2026-08-18 by B39` · NOT SOLVED
+
+**The honest outcome: a measured baseline and a recommended path, not
+working image import.** The one filter prototyped measured NET NEGATIVE in
+the condition that matters and is deliberately not wired into the app.
+
+#### Architecture — recommend **B (TypeScript + client-side), no new dependency yet**
+
+| | |
+|---|---|
+| **A / C (a Python CV service)** | **Rejected, and the cost is the reason.** There is NO production backend: `server/` is a Vite dev plugin and every `/api/ai/*` endpoint 404s in a built app (§7 Stage 0.2). A service means a deployment target, host, container, API contract, CORS, cold starts and a permanent running cost, none of which exists. **L3 fails outright** — "fully usable with every AI service disabled" cannot be satisfied by a detector that lives on a server; it does not degrade, it 404s. **§9.4 fails too**: drawings are client-confidential, and a service means uploading a client's plan to a host we operate, which needs a DPA, a retention policy and a deletion path. Neither is worth paying before there is evidence a better detector exists. |
+| **B (client-side)** | Keeps the app a static build, keeps L3 intact by construction, keeps drawings on the user's machine. |
+| **…but NOT OpenCV.js yet** | ~8–10 MB WASM against a 1.56 MB bundle, and **B39's measurement gives no evidence it would help**: the existing hand-written detector already scores 7/7 on every synthetic fixture it was given, crisp and degraded. Adding a dependency to fix a failure that has not been reproduced is exactly the "do not add a package to keep options open" trap. Revisit when a real drawing demonstrates a failure a library would fix. |
+
+#### What was measured — ⚠ SYNTHETIC, and that is the finding
+
+New: [`src/test/planFixture.ts`](../src/test/planFixture.ts) (a 9 × 7 m plan —
+shell, 3 partitions at a different thickness, door, window, dimension chains
+outside, room text, furniture — rendered at 104 / 52 / 26 px/m, the last
+putting a 115 mm partition at 3 px with 1 px annotation, plus a `degraded`
+mode applying findings 39/40's measured resample-and-no-true-black),
+[`wallGraphScore.ts`](../src/blueprint/wallGraphScore.ts) (matched, spurious,
+on-annotation, doubled, thickness), and `scripts/wallBench.ts`.
+
+**The existing detector scores 7/7 walls, 0 spurious, 0 doubled, thickness
+correct — at ALL THREE resolutions, crisp AND degraded.**
+
+| | generous 104 px/m | middle 52 px/m | critical 26 px/m |
+|---|---|---|---|
+| A0 baseline, crisp | 7/7, 0 spurious | 7/7, 0 | 7/7, 0 |
+| A0 baseline, degraded | 7/7, 0 | 7/7, 0 | 7/7, 0 |
+| A2 + annotation strip, crisp | 7/7, 0 | 7/7, 0 | 7/7, 0 |
+| **A2 + annotation strip, degraded** | 7/7, 0 | 7/7, 0 | **4/7 — all three partitions lost** |
+
+**So the fixture does not reproduce the real failure, and that is the most
+useful thing this session established.** The detector reads a clean
+synthetic plan perfectly at every resolution including the one real drawings
+fail at — so resolution alone is NOT the cause, and neither is the
+annotation load this fixture models. What the corpus files have that the
+fixture does not: **outlined walls** (two thin parallel faces rather than
+solid poché — finding 23 says half the references use it), hatching, text
+touching walls, multi-panel sheets (finding 36), and skew. The next
+detection session must model those, or it will keep validating against a
+fixture nothing fails.
+
+#### The negative result, and why nothing is wired in
+
+[`annotationInk.ts`](../src/blueprint/annotationInk.ts) separates annotation
+from structure by stroke width, splitting at the widest RATIO gap between
+width families — derived from the image, never a picked pixel value (§10
+rule 6). It recovers the fixture's families exactly at every scale
+(`[2,12,24]`, `[2,6,12]`, `[1,3,6]`) and puts its floor precisely on the
+partition width.
+
+**And on a degraded 26 px/m drawing it destroys the plan.** Blur widens the
+1 px annotation until it merges with the 3 px partition family — `[1,3,6]`
+becomes `[3,6]` — so the widest gap is now 6/3, the floor lands on the SHELL
+thickness, and every partition is stripped as annotation. 7/7 → 4/7, leaving
+the outer rectangle alone: the brief's own "BAD" case, produced by the fix.
+
+**The mechanism names its own remedy:** a width-based split needs the
+annotation family to be resolvable, and at 3 px partitions it is not — but
+**B38's scale does know that 115 mm is 3 px**. Deriving the floor from
+`metresPerPixel` instead of from the distribution is the recommended path,
+and it is the concrete reason scale work and detection work are coupled after
+all. Both modules are exported and tested but **called only by the benchmark
+and the tests**, never by the app.
+
+[`wallStructure.ts`](../src/blueprint/wallStructure.ts) adds the two signals
+the detector lacks — the building ENVELOPE (taken from the thick walls, so
+hairline annotation can never enlarge the box meant to exclude it) and global
+CONNECTIVITY (union-find, largest component by wall LENGTH, since text can
+out-count four shell walls and can never out-measure them). It correctly
+drops an out-of-envelope dimension chain and a free-standing furniture box,
+and keeps a T-junction partition. On the fixture it changes nothing, because
+the baseline already emits nothing for it to remove.
+
+#### A methodology near-miss worth more than the code
+
+The first fixture drew a 12 px wall as **13 px** — its fill was inclusive at
+both ends while the ground truth recorded the nominal value. Against it the
+detector appeared to collapse 7 walls into 1 at high resolution while
+scoring 7/7 at low, and **that "resolution inversion" was three paragraphs
+from being written up as a major finding**, mechanism and all. It was an
+off-by-one in the FIXTURE. Correcting it moved the baseline from 0/7 to 7/7.
+Finding 14's warning, one layer down: a fixture whose pixels disagree with
+its own ground truth manufactures findings, and a confident mechanism story
+is not evidence that the measurement was real.
+
+#### The 7–15 of 71 figure
+
+Quoted in the brief; **still not committed as a repository harness**, exactly
+as B38 recorded. B39 did not reproduce it and cannot: it was measured on a
+corpus drawing, and this session's fixture is synthetic. It remains an order
+of magnitude, not a benchmark. `scripts/wallBench.ts` is now the harness that
+should produce the real number the moment a usable drawing exists.
 
 ### 58. ASSISTED SCALE `SHIPPED 2026-08-18 by B38` · A and C built, B designed
 
