@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B40 — COMPLETE. THE REAL FAILURE IS REPRODUCED SYNTHETICALLY.** An OUTLINED drawing at 26 px/m detects as **completely empty**, where the same plan drawn solid reads 7/7. A convention failure, not a resolution failure (finding 60) |
-| Before that | **B39** — wall-graph benchmark + negative result (finding 59); **B38** — assisted scale (finding 58); **B37** — visible-bay coverage (finding 57) |
-| Next task | **B41 — make the detector read outlined walls.** It now has a failing fixture to aim at, which it did not before. The corpus email stays the Stage 1 / OCR blocker but is no longer the detection blocker |
+| Last completed task | **B41 — PARTIAL SUCCESS, measured.** Outlined walls at 26 px/m go from **0/7 to 4/7 with zero spurious** — the whole shell, on centrelines. Solid unchanged in every cell. The three partitions still fail, on a located one-pixel defect (finding 61, ADR 0004) |
+| Before that | **B40** — outlined walls reproduce the real failure (finding 60); **B39** — wall-graph benchmark (finding 59); **B38** — assisted scale (finding 58) |
+| Next task | **B42 — the fused-thickness under-measure in `mergeWallFaces`.** Precisely located: a minimal ink/gap/ink pair reports 2 px where the drawing is 3 px, and `thicknessFloorRatio` then drops it. Recovering it recovers the outlined partitions |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B40, at `a441a40`+:
+Verified after B41, at `4ac4655`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **773 passing / 773** · 51 files / 51 |
+| `npm test` | **778 passing / 778** · 52 files / 52 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1270,6 +1270,76 @@ it is a redirect to manual calibration (rank 1, two picks and a typed length);
 for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
+
+### 61. OUTLINED WALL FACES REACH THE PAIRING STEP `SHIPPED 2026-08-18 by B41` · partial, measured · ADR 0004
+
+Finding 60's failure, read. **Outlined at 26 px/m: 0/7 → 4/7 with ZERO
+spurious**, the whole shell, landing on centrelines. Solid does not move in
+any cell. The three partitions still fail, on a defect now located to one
+pixel.
+
+**The mechanism was an ordering error in code we already own.**
+`minThicknessPx` floors at 2 px however small the drawing; an outlined wall
+at 26 px/m has 1 px faces; and that floor was applied **twice — both times
+before `mergeWallFaces`**, the function whose whole purpose is to pair those
+two faces. The case it exists for could never reach it.
+
+**The fix:** thin bands are admitted as pairing candidates only, paired
+among themselves by `mergeWallFaces` unchanged, and the deferred floor is
+applied to the fused footprint. A pair clears the floor on the same number a
+solid wall would; an unpaired face still reports its 1 px and is dropped
+exactly as before. That is what makes it different from "lower the
+threshold", which B40 measured and rejected.
+
+**The scale is load-bearing and optional.** A 1 px dimension chain and a
+1 px wall face are indistinguishable by width, and pairing alone cannot
+separate them: measured, with `maxThicknessPx` as the ceiling the chain
+paired with the shell's outer face 19 px away and reported a **19 px wall on
+a drawing whose shell is 6 px**. Only a plausible SEPARATION rejects that,
+so the ceiling is `MAX_WALL_METRES` (0.5 m) through `metresPerPixel` — the
+path B39 named when its own width-based filter failed. **Absent a scale the
+whole path is OFF and detection is byte-identical to before**, because
+guessing is worse than declining; B38 supplies the scale and Gate 2
+independently refuses to build from an unmeasured one.
+
+#### The matrix · ⚠ SYNTHETIC (§10 rule 6) — matched of 7, spurious in brackets
+
+| | 104 px/m | 52 px/m | 26 px/m |
+|---|---|---|---|
+| solid crisp / degraded | 7 (0) / 7 (0) | 7 (0) / 7 (0) | 7 (0) / 7 (0) |
+| outlined crisp **before** | 5 (1) | 6 (1) | **0 (0)** |
+| outlined crisp **after** | 5 (1) | 6 (1) | **4 (0)**, thickness-ok 4 |
+
+- **104 and 52 px/m are unchanged, and that is correct**: their 2 px faces
+  sit *at* the floor, not below it, so they never enter the new path. The
+  change helps exactly where B40 measured the failure and nowhere else.
+- **Centrelines: fixed.** Offset 0.0 px on every matched wall at both
+  resolutions, closing B40's face-riding observation — a fused pair spans
+  both faces, so its centre is the wall's centre by construction.
+- **`shell-n` whole vs fragment:** whole at 26 px/m (span 234/234); still a
+  fragment at 104 px/m (229/936), where it goes down the unchanged solid
+  path and the window opening splits it.
+
+#### What still fails, located to one pixel — this is B42
+
+The three outlined partitions at 26 px/m. Their faces **do** pair, but the
+fused band reports **2 px** where the drawn footprint is **3 px**, and
+`thicknessFloorRatio` then drops them (0.4 × the 6 px shell is 2.4, and
+2 < 2.4). At the true 3 they survive — 3/6 = 0.5 > 0.4 — so **the floor is
+behaving correctly and the one-pixel under-measure inside `mergeWallFaces`
+is the entire remaining defect.** Fixing it changes that function's
+internals, which wants its own argued session. Pinned by test.
+
+#### An SD5 correction worth recording
+
+One ★ comment claimed a red-run symptom that **did not reproduce**. The
+claim was that pairing thin candidates together with the solid bands would
+break solid detection (`expected 9 to be 7`). Probed: all five tests stayed
+green. The comment was corrected rather than kept — the separate-pass design
+is a **safety** choice that makes the solid path provably untouched by
+construction, **not** a measured necessity, and no fixture yet exposes the
+difference. SD5's rule is that a recorded symptom must be checkable; an
+invented one is worse than none.
 
 ### 60. OUTLINED WALLS — THE REAL FAILURE, REPRODUCED `MEASURED 2026-08-18 by B40`
 

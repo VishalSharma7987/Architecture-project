@@ -219,8 +219,13 @@ describe('B40 — convention × resolution, measured', () => {
   /**
    * The headline of the matrix, pinned so a change cannot move it silently.
    * ⚠ SYNTHETIC. See `docs/STATE.md` finding 60 for the full table.
+   *
+   * **B41 UPDATE:** `detect` here supplies NO `metresPerPixel`, so these are
+   * the scale-blind numbers and they are deliberately unchanged — that is
+   * B41's safety property, asserted in `outlinedWalls.test.ts`. With the
+   * scale supplied, outlined at 26 px/m reads 4 of 7 instead of 0.
    */
-  it('solid reads at every resolution; outlined degrades to nothing', () => {
+  it('solid reads at every resolution; outlined degrades to nothing WITHOUT a scale', () => {
     const matched = (rendering: WallRendering, scale: FixtureScale) => {
       const fixture = buildPlanFixture(scale, { rendering })
       return scoreWallGraph(detect(fixture.image), fixture.truth, fixture.annotation)

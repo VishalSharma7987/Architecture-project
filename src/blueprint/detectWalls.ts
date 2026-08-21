@@ -49,7 +49,32 @@ export type DetectOptions = {
    * — see `sizedDefaults`.
    */
   rasterScale?: number
+  /**
+   * Metres per RASTER pixel, when the drawing's scale is known (B41).
+   *
+   * The detector is otherwise scale-blind on purpose, and stays so: this is
+   * used for exactly one thing, and only when it is supplied — deciding
+   * whether two thin parallel strokes are far enough apart to be the two
+   * faces of a wall, or too far apart to be anything but annotation. Nothing
+   * else reads it, and every existing threshold is untouched.
+   *
+   * **Absent, the outlined-wall path is OFF and detection is byte-identical
+   * to what it was before B41.** That is the honest default: without a scale
+   * there is no way to tell a 19 px gap between two hairlines from a wall,
+   * and B40 measured what guessing costs.
+   */
+  metresPerPixel?: number
 }
+
+/**
+ * The thickest thing that can still be a wall, in metres.
+ *
+ * A 450 mm wall is a heavy masonry external in Indian residential practice
+ * and 500 mm clears it with room to spare. It is used ONLY as a ceiling on
+ * the separation between two thin strokes being read as one outlined wall,
+ * so the cost of it being generous is a rejected pair, never a wrong number.
+ */
+const MAX_WALL_METRES = 0.5
 
 /**
  * Defaults tuned against `samples/blueprint-*.png` (100 px per metre).
@@ -777,12 +802,31 @@ function typicalThickness(bands: Band[]): number {
   return votes.length > 0 ? median(votes) : 0
 }
 
-function keep(band: Band, options: Required<DetectOptions>) {
+function keep(band: Band, options: typeof DEFAULT_DETECT_OPTIONS) {
   const length = band.uMax - band.uMin + 1
   if (length < options.minLengthPx) return false
   if (band.thickness < options.minThicknessPx) return false
   if (band.thickness > options.maxThicknessPx) return false
   if (length / band.thickness < options.minAspect) return false
+  return band.fill >= options.minFillRatio
+}
+
+/**
+ * `keep`, for a band too thin to be a wall on its own but which may be one
+ * FACE of an outlined wall (B41).
+ *
+ * Every test `keep` makes is applied except the thickness floor, which is
+ * the whole point — the floor is deferred until `mergeWallFaces` has had a
+ * chance to pair the band with its opposite face, and then applied to the
+ * fused footprint. `minAspect` is measured against the floor rather than
+ * against the band's own 1 px width: a hairline's true aspect ratio is
+ * enormous and the test would wave through anything, where a wall face has
+ * to be long relative to the WALL it is a face of.
+ */
+function keepAsFaceCandidate(band: Band, options: typeof DEFAULT_DETECT_OPTIONS) {
+  const length = band.uMax - band.uMin + 1
+  if (length < options.minLengthPx) return false
+  if (length / options.minThicknessPx < options.minAspect) return false
   return band.fill >= options.minFillRatio
 }
 
@@ -908,7 +952,7 @@ function segmentsFromMask(
   mask: Uint8Array,
   width: number,
   height: number,
-  opts: typeof DEFAULT_DETECT_OPTIONS,
+  opts: typeof DEFAULT_DETECT_OPTIONS & { metresPerPixel?: number },
 ): PixelSegment[] {
   const horizontal: Oriented = { mask, along: width, across: height }
   const vertical: Oriented = {
@@ -917,17 +961,80 @@ function segmentsFromMask(
     across: width,
   }
 
-  const rough = [horizontal, vertical].map((o) =>
-    mergeCollinear(
+  /*
+   * The widest two thin strokes may be apart and still be one outlined wall.
+   * Null when the caller supplied no scale, which switches the whole
+   * outlined path off and leaves detection exactly as it was (see
+   * `DetectOptions.metresPerPixel`).
+   */
+  const maxFaceSeparationPx =
+    opts.metresPerPixel && opts.metresPerPixel > 0
+      ? Math.min(opts.maxThicknessPx, MAX_WALL_METRES / opts.metresPerPixel)
+      : null
+
+  const rough = [horizontal, vertical].map((o) => {
+    const bands = findBands(o, opts.minLengthPx)
+
+    const solid = mergeCollinear(
       o,
-      findBands(o, opts.minLengthPx).filter(
+      bands.filter(
         (b) =>
           b.thickness >= opts.minThicknessPx &&
           b.thickness <= opts.maxThicknessPx,
       ),
       opts.gapThicknessFactor,
-    ).filter((b) => keep(b, opts)),
-  )
+    ).filter((b) => keep(b, opts))
+
+    /*
+     * ── B41: the faces of an OUTLINED wall, admitted as pairing candidates ──
+     *
+     * The thickness floor above (and again inside `keep`) discards any band
+     * thinner than `minThicknessPx`, which floors at 2 px however small the
+     * drawing is. An outlined wall at 26 px/m has 1 px faces, so BOTH of
+     * them were thrown away here — before `mergeWallFaces` below, which
+     * exists precisely to pair them, ever saw the case. B40 measured the
+     * consequence: an outlined plan detected as ZERO segments where the same
+     * plan drawn solid read 7 of 7. See ADR 0004.
+     *
+     * These bands are candidates ONLY. They carry no thickness floor here,
+     * so they must earn their place by PAIRING: after `mergeWallFaces` the
+     * floor is applied to the fused result, and a thin band that found no
+     * partner is dropped exactly as before. That is what keeps this from
+     * being "lower the threshold", which B40 measured and rejected — it
+     * admitted unpaired 1 px noise alongside bands twice the shell's width.
+     */
+    if (maxFaceSeparationPx === null) return solid
+
+    const faces = mergeCollinear(
+      o,
+      bands.filter((b) => b.thickness > 0 && b.thickness < opts.minThicknessPx),
+      opts.gapThicknessFactor,
+    ).filter((b) => keepAsFaceCandidate(b, opts))
+
+    /*
+     * Thin candidates are paired AMONG THEMSELVES, with a ceiling taken from
+     * the real world rather than from the image.
+     *
+     * Both halves matter. Pairing them separately leaves the solid path
+     * byte-identical — `mergeWallFaces(solid, maxThicknessPx)` below sees
+     * exactly the bands it always saw. And the tighter ceiling is what stops
+     * a dimension chain fusing with the wall face it runs beside: measured
+     * on the outlined fixture at 26 px/m, the chain paired with the shell's
+     * outer face 19 px away and reported a 19 px "wall" on a drawing whose
+     * shell is 6 px. A 1 px chain and a 1 px wall face are indistinguishable
+     * by width, and pairing alone cannot separate them — only a plausible
+     * SEPARATION can, and that needs the scale.
+     */
+    const pairedFaces = mergeWallFaces(faces, maxFaceSeparationPx).filter(
+      // Earn it: a face that found no partner is still its own 1 px and is
+      // dropped exactly as it was before B41. That is what makes admitting
+      // them safe, and what distinguishes this from lowering the floor —
+      // which B40 measured and rejected.
+      (b) => b.thickness >= opts.minThicknessPx,
+    )
+
+    return [...solid, ...pairedFaces]
+  })
 
   // Fuse outlined walls before anything measures thickness: left as pairs, the
   // "typical wall" of a hatched drawing would be the weight of its pen rather

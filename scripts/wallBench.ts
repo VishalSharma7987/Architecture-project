@@ -35,7 +35,11 @@ const SCALES: FixtureScale[] = ['generous', 'middle', 'critical']
 
 /** The detector as it stands — the baseline every approach must beat. */
 const baseline = (fixture: PlanFixture): PixelSegment[] =>
-  detectWallSegments(fixture.image, { rasterScale: 1 })
+  detectWallSegments(fixture.image, {
+    rasterScale: 1,
+    // B41: the outlined path needs a scale. The fixture knows its own.
+    metresPerPixel: 1 / fixture.pixelsPerMetre,
+  })
 
 /** B39's addition: the same detection, then the structural filter. */
 const structural = (fixture: PlanFixture): PixelSegment[] =>
