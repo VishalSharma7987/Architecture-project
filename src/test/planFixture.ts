@@ -40,9 +40,14 @@ export type TruthWall = {
   y1: number
   x2: number
   y2: number
-  /** Wall thickness in image pixels. */
+  /** Wall FOOTPRINT across its axis, in image pixels — the same whether the
+   * wall is filled or outlined. */
   thickness: number
   kind: 'shell' | 'partition'
+  /** What was actually drawn — an outline too thin to hold a gap falls back. */
+  renderedAs: WallRendering
+  /** Inked pixels at each face. Equals `thickness` when solid. */
+  stroke: number
 }
 
 export type TruthBox = { x1: number; y1: number; x2: number; y2: number; kind: string }
@@ -86,8 +91,26 @@ export type FixtureScale = keyof typeof FIXTURE_SCALES
  * difference between a fixture that validates an approach and a fixture that
  * can fail one.
  */
+/**
+ * How the walls are DRAWN. B39 measured only `solid`; finding 59 named the
+ * rest as what the corpus files carry and the fixture did not.
+ *
+ * `outlined` is the important one: half the reference drawings use it,
+ * `mergeWallFaces` exists specifically to pair its two faces back into one
+ * wall, and until B40 no fixture in this project had ever contained one.
+ */
+export type WallRendering = 'solid' | 'outlined' | 'hatched'
+
 export type FixtureOptions = {
   degraded?: boolean
+  /** Defaults to `solid` — B39's fixture, so its numbers stay reproducible. */
+  rendering?: WallRendering
+  /**
+   * Put a room name ACROSS a wall rather than clear of it. Real drawings do
+   * it constantly (a label overflowing a narrow room), and it welds a text
+   * blob onto the wall's ink where no thickness rule can separate them.
+   */
+  textCrossesWall?: boolean
 }
 
 /** Finding 40's measurement: the darkest ink in a real failing file. */
@@ -124,8 +147,9 @@ export function buildPlanFixture(
 
   const shellPx = Math.max(1, Math.round(m(PLAN.shellThickness)))
   const partPx = Math.max(1, Math.round(m(PLAN.partitionThickness)))
-  /** Annotation stroke: 1 px at the critical scale, 2 px above it. */
+  /** Annotation stroke, and the face stroke of an outlined wall. */
   const hairline = ppm <= 30 ? 1 : 2
+  const rendering = options.rendering ?? 'solid'
 
   // Building centrelines, in pixels.
   const left = margin
@@ -137,10 +161,26 @@ export function buildPlanFixture(
   const annotation: TruthBox[] = []
 
   /**
-   * A solid (poché) wall band centred on its centreline — the convention two
-   * of the four reference drawings use, and the one this fixture covers.
-   * OUTLINED walls (two thin parallel faces) are a second convention and are
-   * deliberately NOT modelled here; see STATE.md finding 59.
+   * A wall, drawn in the requested convention.
+   *
+   * ── The three numbers that must agree (the B39 lesson) ──
+   * FOOTPRINT is `thickness` pixels, whatever the convention: the wall
+   * occupies exactly the same ground whether it is filled or outlined, so
+   * one ground truth describes both and a detector's answer is comparable
+   * across them. STROKE is how much of that footprint is inked at each face.
+   * FACE SEPARATION follows from the two — the distance between the stroke
+   * CENTRES is `thickness - stroke`, and it is recorded rather than implied.
+   *
+   * B39's off-by-one came from exactly this class of disagreement, so
+   * `checkFixture` re-measures all three off the rendered pixels.
+   *
+   * ── When an outline cannot be drawn ──
+   * An outlined wall needs ink, gap, ink: at least `2 * stroke + 1` pixels.
+   * A 3 px partition with a 1 px stroke is the boundary; below it the
+   * convention is not expressible and the wall renders SOLID, with
+   * `renderedAs` saying so. That is not a fixture limitation — at that size a
+   * real outlined wall is not distinguishable from a solid one either, which
+   * is itself a finding.
    */
   const wall = (
     id: string,
@@ -164,16 +204,68 @@ export function buildPlanFixture(
         ]
       : [[runFrom, runTo]]
 
+    const stroke = hairline
+    const canOutline = thickness >= 2 * stroke + 1
+    const renderedAs: WallRendering =
+      rendering === 'solid' || !canOutline ? 'solid' : rendering
+
+    /** Ink across the wall, from `lo` to `hi` inclusive, in the run's frame. */
+    const across = (a: number, b: number, lo: number, hi: number) => {
+      if (horizontal) fill(a, y1 + lo, b, y1 + hi)
+      else fill(x1 + lo, a, x1 + hi, b)
+    }
+
     for (const [a, b] of spans) {
       if (b <= a) continue
-      // `fill` is inclusive at both ends, so the band runs to `+ half - 1`:
-      // a 12 px wall must occupy 12 pixels, or the ground truth describes a
-      // drawing the fixture did not draw and every measurement against it is
-      // off by one.
-      if (horizontal) fill(a, y1 - half, b, y1 + half - 1)
-      else fill(x1 - half, a, x1 + half - 1, b)
+
+      if (renderedAs === 'solid') {
+        // `fill` is inclusive at both ends, so the band runs to `+ half - 1`:
+        // a 12 px wall must occupy 12 pixels, or the ground truth describes a
+        // drawing the fixture did not draw and every measurement against it
+        // is off by one.
+        across(a, b, -half, half - 1)
+        continue
+      }
+
+      // Two faces: `stroke` pixels at each edge of the same footprint.
+      across(a, b, -half, -half + stroke - 1)
+      across(a, b, half - stroke, half - 1)
+
+      if (renderedAs === 'hatched') {
+        // 45° hatch between the faces — the brick convention. Drawn as single
+        // pixels so it cannot be mistaken for a face by width alone, which is
+        // the property that makes hatch hard: it is ink INSIDE the wall that
+        // is neither face nor void.
+        // A clear pixel is left inside each face, so a cross-section still
+        // reads face / gap / face and `checkFixture` can measure the stroke.
+        // Hatch that touches its own face is indistinguishable from a
+        // thicker face, which would make the instrument lie about what it
+        // drew — the B39 hazard.
+        const pitch = Math.max(2, Math.round(thickness * 0.6))
+        const lo = -half + stroke + 1
+        const hi = half - stroke - 1
+        for (let t = Math.round(a); t <= Math.round(b); t += pitch) {
+          for (let k = lo; k < hi; k++) {
+            const along = t + (k - lo)
+            if (along < a || along > b) continue
+            if (horizontal) fill(along, y1 + k, along, y1 + k)
+            else fill(x1 + k, along, x1 + k, along)
+          }
+        }
+      }
     }
-    truth.push({ id, x1, y1, x2, y2, thickness, kind })
+
+    truth.push({
+      id,
+      x1,
+      y1,
+      x2,
+      y2,
+      thickness,
+      kind,
+      renderedAs,
+      stroke: renderedAs === 'solid' ? thickness : stroke,
+    })
   }
 
   /* ── the building: shell, three partitions ─────────────────────────────── */
@@ -282,6 +374,96 @@ export function buildPlanFixture(
   if (options.degraded) degrade(data, width, height)
 
   return { image: { data, width, height }, pixelsPerMetre: ppm, truth, annotation }
+}
+
+/**
+ * Does the fixture draw what it claims to draw?
+ *
+ * ── Why this exists ──
+ * B39's first fixture rendered a 12 px wall as 13 px, and the detector
+ * measured against it appeared to collapse seven walls into one at high
+ * resolution while reading them perfectly at low. That "resolution
+ * inversion" was three paragraphs from being written up as a finding, with a
+ * mechanism attached. It was an off-by-one in the INSTRUMENT.
+ *
+ * Outlined walls make the hazard worse, because footprint, stroke and face
+ * separation are three numbers that must agree rather than one. So the
+ * fixture is now re-measured off its own rendered pixels: a cross-section is
+ * cut through every wall and compared with what the ground truth promised.
+ *
+ * Returns the disagreements. An empty array is the only acceptable result,
+ * and `planFixture.test.ts` asserts it for every variant.
+ */
+export function checkFixture(fixture: PlanFixture): string[] {
+  const { image, truth } = fixture
+  const problems: string[] = []
+  const inkAt = (x: number, y: number): boolean => {
+    if (x < 0 || y < 0 || x >= image.width || y >= image.height) return false
+    // Mid-grey: the degraded render has no true black, so a "is it 0" test
+    // would report every degraded fixture as empty.
+    return image.data[(y * image.width + x) * 4] < 170
+  }
+
+  for (const wall of truth) {
+    const horizontal = wall.y1 === wall.y2
+    // A cross-section one quarter along, which misses the door and window
+    // gaps at the middle and the junctions at the ends.
+    const along = Math.round(
+      horizontal
+        ? wall.x1 + (wall.x2 - wall.x1) * 0.25
+        : wall.y1 + (wall.y2 - wall.y1) * 0.25,
+    )
+    const centre = horizontal ? wall.y1 : wall.x1
+    const reach = wall.thickness + 4
+
+    const runs: Array<[number, number]> = []
+    let start: number | null = null
+    for (let d = -reach; d <= reach; d++) {
+      const on = horizontal ? inkAt(along, centre + d) : inkAt(centre + d, along)
+      if (on && start === null) start = d
+      if (!on && start !== null) {
+        runs.push([start, d - 1])
+        start = null
+      }
+    }
+    if (start !== null) runs.push([start, reach])
+
+    if (runs.length === 0) {
+      problems.push(`${wall.id}: no ink at its own centreline`)
+      continue
+    }
+
+    const footprint = runs[runs.length - 1][1] - runs[0][0] + 1
+    if (footprint !== wall.thickness) {
+      problems.push(
+        `${wall.id}: footprint ${footprint} px, ground truth says ${wall.thickness}`,
+      )
+    }
+
+    if (wall.renderedAs === 'solid') {
+      if (runs.length !== 1) {
+        problems.push(`${wall.id}: solid wall drew ${runs.length} runs, expected 1`)
+      }
+      continue
+    }
+
+    // Outlined and hatched both put ink at BOTH faces with a gap between.
+    if (runs.length < 2) {
+      problems.push(
+        `${wall.id}: ${wall.renderedAs} wall drew ${runs.length} run(s) — no gap between faces`,
+      )
+      continue
+    }
+    const first = runs[0][1] - runs[0][0] + 1
+    const last = runs[runs.length - 1][1] - runs[runs.length - 1][0] + 1
+    if (first !== wall.stroke || last !== wall.stroke) {
+      problems.push(
+        `${wall.id}: faces ${first}/${last} px, ground truth says ${wall.stroke}`,
+      )
+    }
+  }
+
+  return problems
 }
 
 /**

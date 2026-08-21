@@ -16,6 +16,7 @@ import { writeFileSync } from 'node:fs'
 import { PNG } from 'pngjs'
 import {
   buildPlanFixture,
+  checkFixture,
   FIXTURE_SCALES,
   type FixtureScale,
   type PlanFixture,
@@ -102,30 +103,40 @@ function overlay(fixture: PlanFixture, segments: PixelSegment[], file: string) {
 
 console.log('B39 wall-graph benchmark — SYNTHETIC FIXTURE, not a corpus result\n')
 
-const DEGRADED = process.argv.includes('--degraded')
-console.log(
-  DEGRADED
-    ? 'DEGRADED fixture: box resample + no true black (findings 39, 40)\n'
-    : 'CRISP fixture: black on white, no resampling\n',
-)
+const RENDERING = (process.argv.find((a) => a.startsWith('--rendering='))?.split('=')[1] ??
+  'solid') as 'solid' | 'outlined' | 'hatched'
+const ONLY_BASELINE = process.argv.includes('--baseline')
 
-for (const approach of APPROACHES) {
+for (const approach of ONLY_BASELINE ? APPROACHES.slice(0, 1) : APPROACHES) {
   console.log(approach.name)
+  for (const degraded of [false, true]) {
   for (const scale of SCALES) {
-    const fixture = buildPlanFixture(scale, { degraded: DEGRADED })
+    const fixture = buildPlanFixture(scale, { degraded, rendering: RENDERING })
+    const problems = checkFixture(fixture)
     const partitionPx = 0.115 * fixture.pixelsPerMetre
     const started = Date.now()
     const segments = approach.run(fixture)
     const ms = Date.now() - started
     const score = scoreWallGraph(segments, fixture.truth, fixture.annotation)
+    const drawn = [...new Set(fixture.truth.map((w) => w.renderedAs))].join('+')
     console.log(
-      `  ${scale.padEnd(9)} ${String(FIXTURE_SCALES[scale]).padStart(3)} px/m  ` +
-        `(partition ${partitionPx.toFixed(1)} px, ${fixture.image.width}x${fixture.image.height})  ` +
+      `  ${(degraded ? 'degraded' : 'crisp').padEnd(9)} ${scale.padEnd(9)} ` +
+        `${String(FIXTURE_SCALES[scale]).padStart(3)} px/m  ` +
+        `(part ${partitionPx.toFixed(1)}px, drawn ${drawn})  ` +
         `${scoreLine(score)}  ${ms} ms`,
     )
     const missed = score.perWall.filter((w) => w.hits === 0).map((w) => w.id)
     if (missed.length > 0) console.log(`${''.padEnd(13)}missed: ${missed.join(', ')}`)
-    overlay(fixture, segments, `${OUT}/b39-${approach.name.slice(0, 2)}-${scale}.png`)
+    // The instrument checks itself before its numbers are believed (B39).
+    if (problems.length > 0) {
+      console.log(`${''.padEnd(13)}⚠ FIXTURE: ${problems.slice(0, 2).join(' | ')}`)
+    }
+    overlay(
+      fixture,
+      segments,
+      `${OUT}/b40-${RENDERING}-${approach.name.slice(0, 2)}-${scale}-${degraded ? 'deg' : 'crisp'}.png`,
+    )
+  }
   }
   console.log('')
 }

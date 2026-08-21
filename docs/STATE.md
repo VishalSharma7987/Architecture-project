@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B39 — COMPLETE as a DESIGN + PROTOTYPE session.** Image→wall is NOT solved. A fixture, a graph-scoring harness and a measured baseline exist; the one prototype filter measured NET NEGATIVE and is not wired in (finding 59) |
-| Before that | **B38** — assisted scale (finding 58); **B37** — visible-bay coverage (finding 57); **B36** — the ingest weld (finding 56) |
-| Next task | **The corpus email.** B39 established that the synthetic fixture cannot reproduce the real failure, so detection work has nothing to aim at until real drawings arrive. It is now the blocker for Stage 1 exit, OCR (B38) AND detection |
+| Last completed task | **B40 — COMPLETE. THE REAL FAILURE IS REPRODUCED SYNTHETICALLY.** An OUTLINED drawing at 26 px/m detects as **completely empty**, where the same plan drawn solid reads 7/7. A convention failure, not a resolution failure (finding 60) |
+| Before that | **B39** — wall-graph benchmark + negative result (finding 59); **B38** — assisted scale (finding 58); **B37** — visible-bay coverage (finding 57) |
+| Next task | **B41 — make the detector read outlined walls.** It now has a failing fixture to aim at, which it did not before. The corpus email stays the Stage 1 / OCR blocker but is no longer the detection blocker |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B39, at `dffff90`+:
+Verified after B40, at `a441a40`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **765 passing / 765** · 50 files / 50 |
+| `npm test` | **773 passing / 773** · 51 files / 51 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1271,6 +1271,79 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 60. OUTLINED WALLS — THE REAL FAILURE, REPRODUCED `MEASURED 2026-08-18 by B40`
+
+**An outlined drawing at 26 px/m detects as completely empty — zero
+segments — where the same plan drawn solid reads 7 of 7.** The plan is
+perfectly legible to a human in the rendered overlay: shell, three
+partitions, rooms. The detector returns nothing.
+
+**This is a CONVENTION failure, not a resolution failure**, and that
+distinction is what B39 could not make, because B39's fixture had no
+outlined variant to compare against. Half the reference drawings use this
+convention (finding 23), and `mergeWallFaces` — which exists specifically to
+pair its two faces — had never been run against a fixture containing one.
+
+#### The matrix · ⚠ SYNTHETIC (§10 rule 6) — matched walls out of 7
+
+| rendering | 104 px/m | 52 px/m | 26 px/m |
+|---|---|---|---|
+| **solid** crisp / degraded | 7 / 7 | 7 / 7 | 7 / 7 |
+| **outlined** crisp | 5 (+1 spurious) | 6 (+1) | **0** |
+| **outlined** degraded | 5 (+1) | 7 (+4) | 7 (+6), 4 thickness-ok |
+| **hatched** crisp | 5 (+1) | 6 (+1) | **0** |
+| **hatched** degraded | 5 (+1) | 7 (+4) | 7 (+6), 4 thickness-ok |
+
+#### The three questions the brief asked, answered
+
+| Question | Answer |
+|---|---|
+| **Does `mergeWallFaces` fuse an outlined wall into one, or produce two?** | **One, correctly — at 104 px/m.** `doubled` is 0 at every scale and every wall it matches comes back at its true FOOTPRINT (24 px and 12 px, not 2 px), so pairing works and the ★ test for it is a **pin, not a discovery**. The failure is elsewhere. |
+| **At what face separation does it stop, and does that track resolution or absolute pixels?** | **Absolute pixels, and it is the STROKE not the separation.** `minThicknessPx` floors at 2 (`Math.max(2, sourceFloor, 3 * k)`) however small the drawing gets. At 26 px/m the faces are 1 px, no band is ever formed, and the plan reads as blank paper. Lowering the floor to 1 is not the fix: the faces then appear individually at 1 px, unpaired, mixed with bands over 12 px on a 6 px shell. |
+| **Does it interact with B39's `annotationInk` families?** | **It destroys them.** Solid gives families `[2, 12, 24]` — annotation cleanly separable from walls. Outlined gives `[2, 8]`: the 12 and 24 families are *gone*, because no ink is that wide any more, and the wall FACES now sit in the 2 px family **with the annotation**. A stroke-width split cannot separate structure from annotation on an outlined drawing even in principle. **B39's `annotationInk` is structurally inapplicable to half of all real drawings** — that line of work is retired, not merely bruised. |
+
+#### Two secondary observations
+
+- **Degradation HELPS an outlined drawing.** Blur fills the gap between the
+  two faces, turning them back into a solid band: outlined+degraded reads 7/7
+  at 52 and 26 px/m where crisp reads 6 and 0. The readings come with 4–6
+  spurious detections and half the thicknesses wrong, so it is not a route to
+  anything — but it explains why real degraded scans sometimes behave better
+  than expected, and it is the second time this project has found the
+  detector succeeding for the wrong reason.
+- **From the overlay, not the numbers:** at 104 px/m the detections ride the
+  wall FACES rather than the centrelines, and `shell-w` carries no detection
+  at all while `shell-n` is found only in the fragment right of its window
+  opening. The window gap splits the north wall and the fragment fails the
+  50% overlap the scorer requires. Ninth session running that the first
+  rendered frame showed something the score line did not.
+
+#### The instrument now checks itself
+
+`checkFixture` cuts a cross-section through every wall and re-measures
+footprint, face stroke and the gap between faces against the declared ground
+truth. Outlined walls made this necessary rather than merely prudent —
+footprint, stroke and separation are three numbers that must agree where
+solid had one. **Demonstrated red by restoring B39's off-by-one: `shell-n:
+footprint 25 px, ground truth says 24`.** That is the exact defect which
+manufactured B39's false "resolution inversion" finding, and it is now
+caught by a test.
+
+Honest limits recorded rather than hidden: an outline needs ink/gap/ink, so
+where the footprint cannot hold one the fixture renders SOLID and says so in
+`renderedAs`. And a 1 px face does not survive the degradation kernel at all
+— `outlined`/`hatched` at 26 px/m degraded is asserted ILLEGIBLE rather than
+quietly measured, which is finding 40's "a drawing rendered below its own
+line weight" reproduced exactly.
+
+**Not modelled, with reasons:** multi-panel sheets (finding 36 already
+records that the detector has no crop step at all, so a multi-panel fixture
+would measure a known refusal rather than discover anything) and skew (every
+stage from `findBands` onward is axis-aligned by construction, so a skewed
+fixture would measure the same known limitation). Text-crossing-a-wall is
+plumbed as a fixture option but **left unmeasured** — the brief says to stop
+at the reproduced failure, and outlined reproduced it.
+
 ### 59. IMAGE → WALL NETWORK `MEASURED BASELINE + RECOMMENDED PATH 2026-08-18 by B39` · NOT SOLVED
 
 **The honest outcome: a measured baseline and a recommended path, not
@@ -1304,6 +1377,12 @@ correct — at ALL THREE resolutions, crisp AND degraded.**
 | A0 baseline, degraded | 7/7, 0 | 7/7, 0 | 7/7, 0 |
 | A2 + annotation strip, crisp | 7/7, 0 | 7/7, 0 | 7/7, 0 |
 | **A2 + annotation strip, degraded** | 7/7, 0 | 7/7, 0 | **4/7 — all three partitions lost** |
+
+> **Superseded in part by B40 (finding 60):** the fixture did not reproduce
+> the failure because it drew only SOLID walls. Rendered outlined, the same
+> plan at 26 px/m detects as completely empty. The paragraph below was right
+> that the fixture was the limitation and right about which conventions were
+> missing; it was wrong to imply real drawings were out of reach.
 
 **So the fixture does not reproduce the real failure, and that is the most
 useful thing this session established.** The detector reads a clean
