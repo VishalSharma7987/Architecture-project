@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B42 — COMPLETE. Outlined at 26 px/m now reads 7/7** at true footprints. The under-measure was NOT in `mergeWallFaces` — `mergeCollinear` swallowed the pair first (finding 62, ADR 0005) |
-| Before that | **B41** — outlined faces reach the pairing step (finding 61); **B40** — outlined reproduces the real failure (finding 60); **B39** — the benchmark (finding 59) |
-| Next task | **`shell-w` at 52 and 104 px/m**, the last unexplained miss — pre-existing, on the ordinary solid path, untouched by B41/B42. Or **the corpus email**, still the Stage 1 / OCR blocker |
+| Last completed task | **B43 — COMPLETE. Every wall, every convention, every legible resolution: 7/7 at true footprints.** Annotation was STEALING wall faces via first-partner pairing — the THIRD instance of one pattern (finding 63, ADR 0006) |
+| Before that | **B42** — collinear means end-to-end (finding 62); **B41** — outlined faces reach the pairing step (finding 61); **B40** — the failure reproduced (finding 60) |
+| Next task | **The scorer question**, left open deliberately: how to score a wall found in two correctly-positioned pieces either side of an opening. Or **the corpus email**, still the Stage 1 / OCR blocker — and now the only thing between a synthetic pass and a real claim |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B42, at `a03011c`+:
+Verified after B43, at `50678c4`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **780 passing / 780** · 52 files / 52 |
+| `npm test` | **783 passing / 783** · 52 files / 52 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1270,6 +1270,97 @@ it is a redirect to manual calibration (rank 1, two picks and a typed length);
 for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
+
+### 63. ANNOTATION WAS STEALING WALL FACES `SHIPPED 2026-08-18 by B43` · ADR 0006 · **the third instance**
+
+**Every wall of every convention is now found at every legible resolution,
+at its true footprint.** Outlined crisp goes 5/6/7 → **7/7/7**; hatched
+matches; solid unmoved.
+
+**The brief's grouping was wrong, and measuring instead of accepting it is
+this finding.** B43 was briefed as "walls split by openings are lost as
+fragments". But `shell-w` **has no opening at all**, so openings cannot
+explain it — and a bare outlined rectangle with no openings and no
+annotation reads perfectly.
+
+Adding ONE hairline parallel to the west wall, at varying distance outside
+its outer face (`maxThicknessPx` is 73.7 at this image size):
+
+| chain offset | west wall | reported instead |
+|---|---|---|
+| none / 100 px / 80 px | found, t=24 | — |
+| **68 px** | **LOST** | a 70 px band at x=101, in open paper |
+| **60 px** | **LOST** | a 62 px band at x=105 |
+| **40 px** | **LOST** | a 42 px band at x=115 |
+
+`mergeWallFaces` paired each band with the **first** acceptable partner in
+centre order. A dimension chain sorts earlier than the wall it annotates,
+reaches the wall's outer face first, and **consumes it**; the wall's own
+inner face is then left alone at 2 px and dropped by the thickness floor.
+The plan loses a whole wall and gains an impossible one.
+
+It explains `shell-n` without reference to its window: the top chain pairs
+with the LEFT fragment (594 of 936 px — ratio 0.63, just over the required
+0.6) and takes it; the RIGHT fragment is 229 px, ratio 0.24, too short for
+the chain to accept, so it survives and is the only piece reported. **The
+opening decided WHICH fragment was stolen, not THAT one was.**
+
+**The fix:** collect every acceptable pairing, take them **nearest span
+first**. Ties break on position so identical drawings pair identically (L6).
+Nothing about which pairings are *acceptable* changed — every existing test
+is unmoved — so this is a **narrowing**, and cannot create a pair the old
+code would have refused. That mattered: the brief warned that widening
+`mergeCollinear` was close to the defect B42 had just fixed.
+
+#### The third instance of one pattern — now worth naming
+
+| | the step that consumed the input | the step that needed it |
+|---|---|---|
+| B41 | `minThicknessPx`, applied twice | `mergeWallFaces` |
+| B42 | `mergeCollinear` absorbing a parallel pair | `mergeWallFaces` |
+| **B43** | **an annotation band pairing first** | **the wall's own second face** |
+
+Three sessions, three defects, one shape: **a step upstream consuming the
+input of the step designed to handle it.** It is also SD4(b) a second time —
+`mergeWallFaces` fusing a partition with a door's swing arc at 0.64 m — the
+same greedy-first-partner defect with a different neighbour. Worth checking
+for a fourth before assuming the detector is sound.
+
+#### The matrix · ⚠ SYNTHETIC (§10 rule 6) — matched of 7, spurious in brackets
+
+| | 104 px/m | 52 px/m | 26 px/m |
+|---|---|---|---|
+| solid crisp / degraded | 7 (0) / 7 (0) | 7 (0) / 7 (0) | 7 (0) / 7 (0) |
+| outlined crisp, B42 | 5 (1) | 6 (1) | 7 (1) |
+| outlined crisp, **B43** | **7 (2)** | **7 (1)** | **7 (1)** |
+| hatched crisp, **B43** | **7 (2)** | **7 (1)** | **7 (1)** |
+
+`thickness-ok` is 7 in every cell and `doubled` 0 throughout.
+
+**The leftover detections are not false walls.** Every one lands on a real
+wall — they are the two pieces either side of an opening (`shell-n` 62% +
+24%, `part-a` 34% + 53%). The rendered overlay confirms it: the only ink not
+traced red is the window and door openings themselves, which are correctly
+not wall.
+
+**A side effect worth recording:** B42 measured a 19 px band surviving on a
+6 px-shell drawing with the floor relaxed and no scale, and attributed it to
+the loose scale-blind ceiling. It is gone — not because the ceiling moved,
+but because the chain now loses to the wall's own face whatever the ceiling
+allows. B41's scale gate and B43's nearest-first rule address the same
+hazard from two directions, and the second does not need the first.
+
+#### The scorer question is OPEN, deliberately
+
+The brief's option (b) — relax the 50% overlap rule so a wall found in two
+correctly-positioned pieces scores as found rather than as one miss plus one
+spurious — was **not** done. Two fragments totalling 86% of a wall *are* a
+better reading of reality than "missed", so it is a real question. But a
+scorer change retroactively moves every number in every previous session's
+matrix, and the honest order is to fix the instrument's subject before the
+instrument. With B43 the detector misses no wall at all, so the question is
+now purely how to *describe* a fragmented wall — a much safer decision to
+take alone, with the whole matrix recomputed and the moved figures named.
 
 ### 62. THE MISSING PIXEL WAS NOT IN `mergeWallFaces` `SHIPPED 2026-08-18 by B42` · ADR 0005
 

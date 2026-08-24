@@ -738,16 +738,39 @@ function mergeWallFaces(bands: Band[], maxThicknessPx: number): Band[] {
   if (bands.length < 2) return bands
 
   const order = [...bands].sort((a, b) => a.centre - b.centre)
-  const used = new Array<boolean>(order.length).fill(false)
-  const out: Band[] = []
+
+  /*
+   * ── B43: pair with the NEAREST acceptable partner, not the first one ──
+   *
+   * This loop used to take the first partner it met while scanning outward
+   * from each band in centre order, and pair with it immediately. That makes
+   * the result depend on where a band happens to sit in the sort rather than
+   * on which two bands are actually the two faces of one wall.
+   *
+   * Measured: a dimension chain running 68 px outside the west wall of a
+   * plan whose walls are 24 px thick is scanned BEFORE that wall, pairs with
+   * the wall's outer face because the span (70 px) is under the ceiling, and
+   * consumes it. The wall's own inner face is then left alone at 2 px and
+   * dropped by the thickness floor. The plan loses a whole wall and gains a
+   * 70 px "wall" centred in open paper. Below the ceiling the same thing
+   * happens at 60 px (a 62 px band) and 40 px (42 px); at 80 px, outside the
+   * ceiling, the wall is read correctly.
+   *
+   * So every acceptable pairing is collected first and then taken NEAREST
+   * SPAN FIRST. The real pair — two faces 24 px apart — is chosen before the
+   * chain's 70 px one, and the chain is left unpaired, which is what it is.
+   *
+   * Nothing about which pairings are ACCEPTABLE changed; every test below is
+   * the one that was already there. Only the choice among them is different,
+   * and it is a narrowing rather than a widening — this cannot create a pair
+   * the previous code would have refused.
+   */
+  const pairs: Array<{ i: number; j: number; span: number }> = []
 
   for (let i = 0; i < order.length; i++) {
-    if (used[i]) continue
     const a = order[i]
-    let merged: Band | null = null
 
     for (let j = i + 1; j < order.length; j++) {
-      if (used[j]) continue
       const b = order[j]
 
       // Outer face to outer face. Past the ceiling there is no wall thick
@@ -782,25 +805,51 @@ function mergeWallFaces(bands: Band[], maxThicknessPx: number): Band[] {
       // A wall that wrong flows straight into the 3D model and the cost sheet.
       if (shorter < Math.max(aLength, bLength) * FACE_LENGTH_RATIO) continue
 
-      const vMin = Math.min(a.vMin, b.vMin)
-      const vMax = Math.max(a.vMax, b.vMax)
-      merged = {
-        uMin: Math.min(a.uMin, b.uMin),
-        uMax: Math.max(a.uMax, b.uMax),
-        vMin,
-        vMax,
-        centre: (vMin + vMax + 1) / 2,
-        thickness: span,
-        // The pair describes a solid wall, whatever the drawing put between the
-        // faces — hatching, a tint, or nothing at all.
-        fill: 1,
-      }
-      used[j] = true
-      break
+      pairs.push({ i, j, span })
+    }
+  }
+
+  // Nearest first. Ties break on position so two identical drawings always
+  // pair identically (L6) — a Map iteration or an unstable sort would make
+  // the reading depend on the engine.
+  pairs.sort((p, q) => p.span - q.span || p.i - q.i || p.j - q.j)
+
+  const partner = new Int32Array(order.length).fill(-1)
+  const taken = new Array<boolean>(order.length).fill(false)
+  for (const pair of pairs) {
+    if (taken[pair.i] || taken[pair.j]) continue
+    taken[pair.i] = true
+    taken[pair.j] = true
+    partner[pair.i] = pair.j
+  }
+
+  // Emitted in centre order, as before, so a caller that relied on the old
+  // ordering of the output sees the same sequence.
+  const out: Band[] = []
+  for (let i = 0; i < order.length; i++) {
+    const a = order[i]
+    const j = partner[i]
+    if (j < 0) {
+      // Consumed as somebody else's partner — it is already in a wall.
+      if (taken[i]) continue
+      out.push(a)
+      continue
     }
 
-    used[i] = true
-    out.push(merged ?? a)
+    const b = order[j]
+    const vMin = Math.min(a.vMin, b.vMin)
+    const vMax = Math.max(a.vMax, b.vMax)
+    out.push({
+      uMin: Math.min(a.uMin, b.uMin),
+      uMax: Math.max(a.uMax, b.uMax),
+      vMin,
+      vMax,
+      centre: (vMin + vMax + 1) / 2,
+      thickness: Math.max(a.vMax, b.vMax) - Math.min(a.vMin, b.vMin) + 1,
+      // The pair describes a solid wall, whatever the drawing put between the
+      // faces — hatching, a tint, or nothing at all.
+      fill: 1,
+    })
   }
 
   return out

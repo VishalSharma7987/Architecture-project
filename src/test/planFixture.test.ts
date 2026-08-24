@@ -183,13 +183,20 @@ describe('★ B40 — outlined walls', () => {
    *   B40: min thickness 1 — bare, unpaired faces
    *   B42: min thickness 3 — every face is paired into a real wall
    *
-   * The over-fused monster SURVIVES, and that is worth keeping visible: a
-   * 19 px band still appears on a drawing whose shell is 6 px. This call
-   * passes no `metresPerPixel`, so the thin bands go down the SOLID path
-   * where the pairing ceiling is `maxThicknessPx` (24) rather than the
-   * scale-derived 13 — and at 24 the dimension chain reaches the shell's
-   * outer face. It is the measurement behind B41's decision to gate the
-   * outlined path on a known scale, reproduced here rather than argued.
+   * ── B43 removed the monster too, and by a different route ──
+   * B42 recorded that a 19 px band survived here on a drawing whose shell is
+   * 6 px: with no `metresPerPixel` the thin bands take the solid path, whose
+   * ceiling is `maxThicknessPx` (24), and at 24 the dimension chain reached
+   * the shell's outer face and fused with it.
+   *
+   * B43 made pairing choose the NEAREST acceptable partner rather than the
+   * first one in centre order (finding 63), so the chain loses to the wall's
+   * own second face whatever the ceiling allows. The monster is gone without
+   * the ceiling moving — max is now the 6 px shell itself.
+   *
+   * That is the strongest available evidence that B41's scale gate and B43's
+   * nearest-first rule address the same hazard from two directions, and that
+   * the second one does not need the first.
    */
   it('a relaxed floor now yields paired walls, not unpaired faces', () => {
     const fixture = buildPlanFixture('critical', { rendering: 'outlined' })
@@ -200,8 +207,8 @@ describe('★ B40 — outlined walls', () => {
     expect(relaxed.length).toBeGreaterThan(0)
     // No bare face survives: they are all paired into walls now.
     expect(Math.min(...relaxed.map((s) => s.thickness))).toBe(3)
-    // …but without a scale the loose ceiling still admits the chain.
-    expect(Math.max(...relaxed.map((s) => s.thickness))).toBe(19)
+    // …and no band is thicker than the shell it belongs to.
+    expect(Math.max(...relaxed.map((s) => s.thickness))).toBe(6)
   })
 
   /**
@@ -258,8 +265,19 @@ describe('B40 — convention × resolution, measured', () => {
 
     for (const scale of SCALES) expect(matched('solid', scale), scale).toBe(7)
 
-    expect(matched('outlined', 'generous')).toBe(5)
-    expect(matched('outlined', 'middle')).toBe(6)
+    /*
+     * B43 moved the two upper cells: 5 → 7 at 104 px/m and 6 → 7 at 52,
+     * because nearest-first pairing stopped the dimension chains stealing
+     * the shell faces (finding 63). Those walls were never lost to the
+     * missing scale — they were lost to a pairing choice, which is why they
+     * recover here on the SCALE-BLIND path.
+     *
+     * 26 px/m is still 0 without a scale, and that is B41's safety property
+     * intact: at that size the faces are 1 px, below `minThicknessPx`, and
+     * only the scale-gated path admits them at all.
+     */
+    expect(matched('outlined', 'generous')).toBe(7)
+    expect(matched('outlined', 'middle')).toBe(7)
     expect(matched('outlined', 'critical')).toBe(0)
     expect(FIXTURE_SCALES.critical).toBe(26)
   })

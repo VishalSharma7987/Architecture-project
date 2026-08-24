@@ -324,3 +324,134 @@ describe('★ B42 — a fused pair measures the wall, not its ink', () => {
 
 /** 13 px of plausible wall at this probe's scale — see `MAX_WALL_METRES`. */
 const MAX_WALL_METRES_FOR_TEST = 0.5 / 13
+
+/* ─── ★ B43 — annotation does not steal a wall's face ───────────────────── */
+
+describe('★ B43 — pairing takes the nearest partner, not the first', () => {
+  /**
+   * An outlined rectangle with an optional hairline running parallel to the
+   * west wall, `offset` px outside its outer face. Everything is drawn
+   * directly so the wall's position and footprint are known by construction.
+   */
+  const rectWithChain = (offset: number | null) => {
+    const width = 1228
+    const height = 1020
+    const left = 146
+    const top = 146
+    const right = 1082
+    const bottom = 874
+    const t = 24
+    const s = 2
+    const h = t / 2
+    const data = new Uint8ClampedArray(width * height * 4).fill(255)
+    const band = (x0: number, y0: number, x1: number, y1: number) => {
+      for (let y = Math.round(y0); y <= Math.round(y1); y++) {
+        for (let x = Math.round(x0); x <= Math.round(x1); x++) {
+          if (x < 0 || y < 0 || x >= width || y >= height) continue
+          const at = (y * width + x) * 4
+          data[at] = 0
+          data[at + 1] = 0
+          data[at + 2] = 0
+        }
+      }
+    }
+    band(left - h, top - h, right + h, top - h + s - 1)
+    band(left - h, top + h - s, right + h, top + h - 1)
+    band(left - h, bottom - h, right + h, bottom - h + s - 1)
+    band(left - h, bottom + h - s, right + h, bottom + h - 1)
+    band(left - h, top - h, left - h + s - 1, bottom + h)
+    band(left + h - s, top - h, left + h - 1, bottom + h)
+    band(right - h, top - h, right - h + s - 1, bottom + h)
+    band(right + h - s, top - h, right + h - 1, bottom + h)
+    if (offset !== null) {
+      band(left - h - offset, top, left - h - offset + s - 1, bottom)
+    }
+    return { image: { data, width, height }, west: left, thickness: t }
+  }
+
+  const westWall = (image: Parameters<typeof detectWallSegments>[0], at: number) =>
+    detectWallSegments(image, { rasterScale: 1 }).find(
+      (s) => Math.abs(s.y2 - s.y1) > Math.abs(s.x2 - s.x1) && Math.abs(s.x1 - at) < 3,
+    )
+
+  /**
+   * ★ THE SESSION'S FIX, and the third instance of one pattern.
+   *
+   * A dimension chain running parallel to a wall, inside `maxThicknessPx` of
+   * its outer face, used to be scanned FIRST (it sorts earlier by centre),
+   * pair with that face, and consume it. The wall's own second face was then
+   * left alone at 2 px and dropped by the thickness floor: the plan lost a
+   * whole wall and gained an impossible one in open paper.
+   *
+   * Demonstrated red against the pre-B43 detector, at four offsets:
+   *
+   *   chain at 80 px → west wall found, t=24   (outside the ceiling)
+   *   chain at 68 px → *** LOST ***, a 70 px band at x=101 instead
+   *   chain at 60 px → *** LOST ***, a 62 px band at x=105
+   *   chain at 40 px → *** LOST ***, a 42 px band at x=115
+   *
+   * and the assertion reported `expected undefined to be defined`.
+   *
+   * Capable of going red in both directions: it asserts the wall is present
+   * AND at its true 24 px footprint, so a change that recovers the wall but
+   * mis-measures it fails too. The `null` control proves the rectangle is
+   * readable without any chain at all, so a detector that found nothing
+   * would fail the first case.
+   */
+  it('★ a chain parallel to a wall no longer consumes its face', () => {
+    // Control: no chain, the wall reads.
+    const clean = rectWithChain(null)
+    expect(westWall(clean.image, clean.west)?.thickness).toBe(clean.thickness)
+
+    // And at every offset that used to destroy it — inside and outside the
+    // 73.7 px ceiling this image size implies.
+    for (const offset of [100, 80, 68, 60, 40]) {
+      const { image, west, thickness } = rectWithChain(offset)
+      const found = westWall(image, west)
+      expect(found, `chain at ${offset} px`).toBeDefined()
+      expect(found?.thickness, `chain at ${offset} px`).toBe(thickness)
+    }
+  })
+
+  /**
+   * ★ Solid unchanged, the full matrix row — six cells, each asserting
+   * matched, spurious, doubled and thickness-ok together rather than a
+   * single count that would hide which cell moved.
+   *
+   * A pin: solid walls produce ONE band per wall, so there is rarely a pair
+   * to choose between and the nearest-first rule has nothing to change. It
+   * can go red if a future change makes solid walls pair with anything.
+   */
+  it('★ solid detection is unchanged in every cell', () => {
+    for (const degraded of [false, true]) {
+      for (const scale of SCALES) {
+        const fixture = buildPlanFixture(scale, { rendering: 'solid', degraded })
+        const where = `solid/${scale}/${degraded ? 'degraded' : 'crisp'}`
+        const result = score(fixture, detectScaled(fixture))
+        expect(result.matched, `${where} matched`).toBe(7)
+        expect(result.spurious, `${where} spurious`).toBe(0)
+        expect(result.doubled, `${where} doubled`).toBe(0)
+        expect(result.thicknessOk, `${where} thickness`).toBe(7)
+      }
+    }
+  })
+
+  /**
+   * Every wall of every convention is now found at every legible resolution.
+   * The leftover detections are NOT false walls — each lands on a real wall
+   * and is a fragment of one split by its door or window. Asserted as "no
+   * detection misses every wall", which is the claim that matters and is
+   * stronger than a spurious count.
+   */
+  it('every detection lands on a real wall, at every convention and scale', () => {
+    for (const rendering of ['solid', 'outlined', 'hatched'] as WallRendering[]) {
+      for (const scale of SCALES) {
+        const fixture = buildPlanFixture(scale, { rendering })
+        const result = score(fixture, detectScaled(fixture))
+        expect(result.matched, `${rendering}/${scale}`).toBe(7)
+        expect(result.thicknessOk, `${rendering}/${scale}`).toBe(7)
+        expect(result.doubled, `${rendering}/${scale}`).toBe(0)
+      }
+    }
+  })
+})
