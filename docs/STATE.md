@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B41 — PARTIAL SUCCESS, measured.** Outlined walls at 26 px/m go from **0/7 to 4/7 with zero spurious** — the whole shell, on centrelines. Solid unchanged in every cell. The three partitions still fail, on a located one-pixel defect (finding 61, ADR 0004) |
-| Before that | **B40** — outlined walls reproduce the real failure (finding 60); **B39** — wall-graph benchmark (finding 59); **B38** — assisted scale (finding 58) |
-| Next task | **B42 — the fused-thickness under-measure in `mergeWallFaces`.** Precisely located: a minimal ink/gap/ink pair reports 2 px where the drawing is 3 px, and `thicknessFloorRatio` then drops it. Recovering it recovers the outlined partitions |
+| Last completed task | **B42 — COMPLETE. Outlined at 26 px/m now reads 7/7** at true footprints. The under-measure was NOT in `mergeWallFaces` — `mergeCollinear` swallowed the pair first (finding 62, ADR 0005) |
+| Before that | **B41** — outlined faces reach the pairing step (finding 61); **B40** — outlined reproduces the real failure (finding 60); **B39** — the benchmark (finding 59) |
+| Next task | **`shell-w` at 52 and 104 px/m**, the last unexplained miss — pre-existing, on the ordinary solid path, untouched by B41/B42. Or **the corpus email**, still the Stage 1 / OCR blocker |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B41, at `4ac4655`+:
+Verified after B42, at `a03011c`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **778 passing / 778** · 52 files / 52 |
+| `npm test` | **780 passing / 780** · 52 files / 52 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -1271,6 +1271,79 @@ for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
 
+### 62. THE MISSING PIXEL WAS NOT IN `mergeWallFaces` `SHIPPED 2026-08-18 by B42` · ADR 0005
+
+**Outlined at 26 px/m: 4/7 → 7/7, at true footprints, centrelines within
+0.5 px.** Hatched matches it. Solid does not move in any cell.
+
+**B41's attribution was wrong, and measuring instead of trusting it is the
+content of this finding.** B41 recorded the under-measure as living "inside
+`mergeWallFaces`". A controlled probe — two parallel faces at a known stroke
+and separation, footprint known by construction — says otherwise:
+
+| stroke | gap | footprint | reported before B42 |
+|---|---|---|---|
+| 1 | 1 | 3 | **2** ← the only wrong cell in the table |
+| 1 | 2–10 | 4–12 | exact |
+| 2 | 1–8 | 5–12 | exact |
+
+`mergeWallFaces` never saw the minimal pair. **`mergeCollinear` ran first
+and absorbed it.** Its centre test is
+`Math.abs(a.centre - b.centre) > Math.max(2, thin / 2)` — two 1 px faces
+with a 1 px gap sit exactly **2** apart, and `2 > 2` is false. The pair was
+unioned as one band, `measure` re-measured the union, and it reported the
+**ink count down each column** (2 px of ink) rather than the **3 px span**
+the wall occupies. The reported centre, 60.5, was the giveaway all along: the
+true centre of a 3-row footprint carrying a 2-row measurement.
+
+The deeper defect: `mergeCollinear` exists to rejoin **one line broken along
+its length** — a wall interrupted by a door — but had no test that the two
+bands are end-to-end. Two bands running side by side for their whole length
+were eligible to be "rejoined", and its gap term is hugely negative for a
+fully overlapping pair, which *passes* its ceiling rather than failing it.
+
+**The fix is one `continue`:** bands overlapping by more than
+`FACE_OVERLAP_RATIO` of the shorter are not collinear fragments and are left
+for `mergeWallFaces`. The constant is reused, not invented — it already
+encodes "these two run together", asked here with the opposite intent.
+
+**Same shape as B41's defect, one step earlier.** B41: the thickness floor
+consumed the case before the pairing could act. B42: `mergeCollinear` does.
+Twice now the bug has been *a step upstream eating the input of the step
+designed for it* — worth watching for a third time.
+
+#### The matrix · ⚠ SYNTHETIC (§10 rule 6) — matched of 7, spurious in brackets
+
+| | 104 px/m | 52 px/m | 26 px/m |
+|---|---|---|---|
+| solid crisp / degraded | 7 (0) / 7 (0) | 7 (0) / 7 (0) | 7 (0) / 7 (0) |
+| outlined crisp, B41 | 5 (1) | 6 (1) | 4 (0) |
+| outlined crisp, **B42** | 5 (1) | 6 (1) | **7 (1)**, thickness-ok 7 |
+
+- The remaining "spurious" at 26 px/m is **not a false wall**: it is the
+  second fragment of the door-split partition, counted spurious because it
+  covers under half its wall. Asserted exactly rather than claimed as zero.
+- `shell-n` is now found **whole** at 26 and 52 px/m (span 100%); at 104 px/m
+  it is still only the 24% right of its window.
+
+#### The brief's hypothesis, refuted by measurement
+
+The brief proposed that solid footprints were **also** off by one and merely
+masked by a generous floor — "the more important half of the finding".
+Measured across nine thicknesses from 2 px to 40 px: **every one reports
+exactly what was drawn.** Solid was never wrong. The defect was specific to
+`mergeCollinear` mis-classifying parallel faces, and there is no span
+arithmetic error anywhere. The negative is pinned by test so the solid path
+cannot drift silently.
+
+#### Still failing, pre-existing and untouched
+
+`shell-w` at 52 and 104 px/m, and `shell-n`'s window fragment at 104 px/m.
+At those resolutions the faces are 2 px — **at** `minThicknessPx`, not below
+it — so they take the ordinary solid path and neither B41's nor B42's change
+is involved. A separate defect at a separate resolution, wanting its own
+measured session. Nothing was adjusted to close it.
+
 ### 61. OUTLINED WALL FACES REACH THE PAIRING STEP `SHIPPED 2026-08-18 by B41` · partial, measured · ADR 0004
 
 Finding 60's failure, read. **Outlined at 26 px/m: 0/7 → 4/7 with ZERO
@@ -1321,6 +1394,14 @@ independently refuses to build from an unmeasured one.
   path and the window opening splits it.
 
 #### What still fails, located to one pixel — this is B42
+
+> ⚠ **B42 measured this and the attribution below is WRONG.** The pair never
+> reached `mergeWallFaces` at all: `mergeCollinear` absorbed it first, and
+> `measure` then reported ink count rather than span. See finding 62 and
+> ADR 0005. Kept rather than rewritten, because it located the defect to the
+> right PIXEL and the wrong FUNCTION — the kind of carried claim finding 14
+> warns about, believed because it was precise rather than because it was
+> checked.
 
 The three outlined partitions at 26 px/m. Their faces **do** pair, but the
 fused band reports **2 px** where the drawn footprint is **3 px**, and

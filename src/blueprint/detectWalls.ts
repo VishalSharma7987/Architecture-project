@@ -590,6 +590,32 @@ function mergeCollinear(
       if (thin / thick < 0.5) continue
       if (Math.abs(a.centre - b.centre) > Math.max(2, thin / 2)) continue
 
+      /*
+       * ── B42: collinear means END-TO-END, not side-by-side ──
+       *
+       * Two bands that run ALONGSIDE each other for their whole length are
+       * not one line broken by a door; they are the two FACES of an outlined
+       * wall, and `mergeWallFaces` below is the step that exists for them.
+       *
+       * Without this guard the centre test above admits them, because the
+       * floor of `Math.max(2, thin / 2)` is exactly the separation of the
+       * minimal case: two 1 px faces with a 1 px gap sit 2 apart, and 2 > 2
+       * is false. The pair is then re-measured by `measure`, which reports
+       * the INK COUNT down each column — 2 px of ink — rather than the 3 px
+       * SPAN the wall occupies. B41 saw the 2 and attributed it to
+       * `mergeWallFaces`; the pair never reached it.
+       *
+       * Measured: footprint 3 was the ONLY case that mis-reported. Every
+       * other stroke/gap combination already went to `mergeWallFaces` and
+       * came back exact, which is why this had never shown before an
+       * outlined fixture at 26 px/m existed.
+       */
+      const aLength = a.uMax - a.uMin + 1
+      const bLength = b.uMax - b.uMin + 1
+      const shared =
+        Math.min(a.uMax, b.uMax) - Math.max(a.uMin, b.uMin) + 1
+      if (shared > Math.min(aLength, bLength) * FACE_OVERLAP_RATIO) continue
+
       const gap = Math.max(b.uMin - a.uMax, a.uMin - b.uMax) - 1
       if (gap > gapThicknessFactor * thick) continue
 

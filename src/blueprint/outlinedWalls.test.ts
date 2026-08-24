@@ -63,11 +63,22 @@ describe('★ B41 — an outlined plan at 26 px/m is no longer blank paper', () 
 
     const result = score(fixture, detectScaled(fixture))
 
-    expect(result.matched).toBe(4)
-    expect(result.spurious).toBe(0)
+    // B41 read 4 of 7 here — the shell only. B42 removed the last defect
+    // (see finding 62) and the partitions came with it.
+    expect(result.matched).toBe(7)
     expect(result.doubled).toBe(0)
-    // Every wall it found, it measured: 6 px footprint, not a 1 px face.
-    expect(result.thicknessOk).toBe(4)
+    // Every wall it found, it measured: true footprints, not 1 px faces.
+    expect(result.thicknessOk).toBe(7)
+
+    /*
+     * One detection is left over, and it is NOT a false wall: it is the
+     * second fragment of `part-a`, which the door opening splits in two.
+     * The scorer counts a fragment covering under half its wall as spurious
+     * — see `scoreWallGraph` — so this is a scorer convention, not ink that
+     * was invented. Asserted exactly rather than as "0 spurious", because
+     * claiming a clean sheet here would be false.
+     */
+    expect(result.spurious).toBe(1)
 
     // The control that makes this B41's doing: blind detection still reads
     // nothing at all, which is exactly what B40 measured.
@@ -178,22 +189,138 @@ describe('B41 — the outlined partitions are still missed, and why', () => {
    * wants its own argued session.
    *
    * Goes red when B42 fixes it — which is the intended outcome.
+   *
+   * ── B42 FIXED IT, and this pin went red exactly as promised ──
+   * The under-measure was NOT inside `mergeWallFaces`. The pair never
+   * reached it: `mergeCollinear` ran first and absorbed the two faces as
+   * one line, then `measure` reported the INK COUNT down each column (2 px
+   * of ink) instead of the 3 px SPAN. See finding 62 and ADR 0005. The
+   * assertions below now state the fixed behaviour.
    */
-  it('pairs them at 2 px where the drawing is 3 px, and the floor drops them', () => {
+  it('now report their true 3 px footprint and clear the floor unaided', () => {
     const fixture = buildPlanFixture('critical', { rendering: 'outlined' })
     const mpp = 1 / fixture.pixelsPerMetre
     for (const wall of fixture.truth.filter((w) => w.kind === 'partition')) {
       expect(wall.thickness).toBe(3)
     }
 
-    // With the relative floor removed, the partitions appear — at 2 px.
-    const unfloored = detectWallSegments(fixture.image, {
+    // No relaxed floor, no adjusted threshold: the partitions arrive at 3 px
+    // and 3/6 = 0.5 clears `thicknessFloorRatio`'s 0.4 on its own.
+    const segments = detectWallSegments(fixture.image, {
       rasterScale: 1,
       metresPerPixel: mpp,
-      thicknessFloorRatio: 0,
     })
-    expect(unfloored.filter((s) => s.thickness === 2).length).toBeGreaterThanOrEqual(3)
-    // The shells, by contrast, are measured exactly right.
-    expect(unfloored.filter((s) => s.thickness === 6).length).toBe(4)
+    expect(segments.filter((s) => s.thickness === 3).length).toBeGreaterThanOrEqual(3)
+    expect(segments.filter((s) => s.thickness === 6).length).toBe(4)
+    // Nothing reports the old 2 px any more.
+    expect(segments.filter((s) => s.thickness === 2)).toEqual([])
   })
 })
+
+/* ─── ★ B42 — the fused band reports its true footprint ─────────────────── */
+
+describe('★ B42 — a fused pair measures the wall, not its ink', () => {
+  /**
+   * Two parallel faces `gap` rows apart with `stroke` px of ink each, drawn
+   * directly so the footprint is known by construction rather than inferred:
+   * footprint = 2 * stroke + gap. A crossing pair satisfies `requireJunction`.
+   */
+  const twoFaces = (gap: number, stroke: number) => {
+    const width = 300
+    const height = 120
+    const data = new Uint8ClampedArray(width * height * 4).fill(255)
+    const ink = (x: number, y: number) => {
+      const at = (y * width + x) * 4
+      data[at] = 0
+      data[at + 1] = 0
+      data[at + 2] = 0
+    }
+    const top = 60 - Math.floor((gap + 2 * stroke) / 2)
+    for (let s = 0; s < stroke; s++) {
+      for (let x = 20; x < 280; x++) ink(x, top + s)
+      for (let x = 20; x < 280; x++) ink(x, top + stroke + gap + s)
+      for (let y = 20; y < 100; y++) ink(150 + s, y)
+      for (let y = 20; y < 100; y++) ink(150 + stroke + gap + s, y)
+    }
+    return { image: { data, width, height }, footprint: 2 * stroke + gap }
+  }
+
+  /**
+   * ★ THE SESSION'S FIX. Every stroke/gap combination must report the
+   * footprint the drawing actually occupies.
+   *
+   * Demonstrated red against the pre-B42 detector: **only** the minimal case
+   * failed — `stroke=1, gap=1, footprint 3` reported **2**, with
+   * `expected 2 to be 3`. Every other combination already passed, which is
+   * why the defect survived until an outlined fixture at 26 px/m existed to
+   * produce a 3 px partition.
+   *
+   * Capable of going red in both directions: it asserts equality against a
+   * footprint computed from the drawing parameters, not read back from the
+   * detector, so an over- or under-measure of any size fails.
+   */
+  it('★ reports the true footprint at every stroke and gap, including 3 px', () => {
+    for (const stroke of [1, 2]) {
+      for (const gap of [1, 2, 3, 4, 6, 10]) {
+        const { image, footprint } = twoFaces(gap, stroke)
+        const segments = detectWallSegments(image, {
+          rasterScale: 1,
+          minLengthPx: 40,
+          metresPerPixel: MAX_WALL_METRES_FOR_TEST,
+        })
+        const horizontal = segments.filter(
+          (s) => Math.abs(s.y2 - s.y1) <= Math.abs(s.x2 - s.x1),
+        )
+        expect(horizontal.length, `stroke=${stroke} gap=${gap}`).toBeGreaterThan(0)
+        for (const segment of horizontal) {
+          expect(segment.thickness, `stroke=${stroke} gap=${gap}`).toBe(footprint)
+        }
+      }
+    }
+  })
+
+  /**
+   * ★ The other half the brief asked for, and it is a NEGATIVE answer worth
+   * recording: SOLID footprints were never off by one. The hypothesis was
+   * that the same arithmetic error would be present for solid walls and
+   * merely masked by a generous floor. Measured across nine thicknesses from
+   * 2 px to 40 px, every one reports exactly what was drawn.
+   *
+   * So the defect was specific to `mergeCollinear` mis-classifying two
+   * parallel faces as one broken line — not a span-arithmetic error
+   * anywhere. This test pins that solid path so a future change to the
+   * fusion cannot quietly shift it.
+   */
+  it('★ solid walls were never off by one — pinned at nine thicknesses', () => {
+    for (const thickness of [2, 3, 4, 5, 6, 8, 12, 24, 40]) {
+      const width = 300
+      const height = 140
+      const data = new Uint8ClampedArray(width * height * 4).fill(255)
+      const ink = (x: number, y: number) => {
+        const at = (y * width + x) * 4
+        data[at] = 0
+        data[at + 1] = 0
+        data[at + 2] = 0
+      }
+      const top = 70 - Math.floor(thickness / 2)
+      for (let s = 0; s < thickness; s++) {
+        for (let x = 20; x < 280; x++) ink(x, top + s)
+        for (let y = 20; y < 120; y++) ink(150 + s, y)
+      }
+      const segments = detectWallSegments(
+        { data, width, height },
+        { rasterScale: 1, minLengthPx: 40, maxThicknessPx: 200 },
+      )
+      const horizontal = segments.filter(
+        (s) => Math.abs(s.y2 - s.y1) <= Math.abs(s.x2 - s.x1),
+      )
+      expect(horizontal.length, `solid ${thickness}`).toBeGreaterThan(0)
+      for (const segment of horizontal) {
+        expect(segment.thickness, `solid ${thickness}`).toBe(thickness)
+      }
+    }
+  })
+})
+
+/** 13 px of plausible wall at this probe's scale — see `MAX_WALL_METRES`. */
+const MAX_WALL_METRES_FOR_TEST = 0.5 / 13

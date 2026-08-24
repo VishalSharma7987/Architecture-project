@@ -168,16 +168,40 @@ describe('★ B40 — outlined walls', () => {
    * comes back is unpaired 1 px faces mixed with bands far thicker than any
    * wall, so lowering the floor is not the fix either.
    */
-  it('the 1 px faces exist — minThicknessPx is what discards them', () => {
+  /**
+   * B40 measured that lowering the floor to 1 px surfaced the faces as
+   * UNPAIRED 1 px bands beside monsters over 12 px — the evidence that
+   * lowering the floor was not the fix.
+   *
+   * **B42 changed what this measures, and the change is the point.** With
+   * `mergeCollinear` no longer absorbing parallel faces (finding 62), the
+   * same relaxed floor now yields properly paired walls at their true 3 px
+   * and 6 px footprints and no monsters at all. The original assertion is
+   * kept below as a comment so the before/after is legible rather than
+   * rewritten out of history.
+   *
+   *   B40: min thickness 1 — bare, unpaired faces
+   *   B42: min thickness 3 — every face is paired into a real wall
+   *
+   * The over-fused monster SURVIVES, and that is worth keeping visible: a
+   * 19 px band still appears on a drawing whose shell is 6 px. This call
+   * passes no `metresPerPixel`, so the thin bands go down the SOLID path
+   * where the pairing ceiling is `maxThicknessPx` (24) rather than the
+   * scale-derived 13 — and at 24 the dimension chain reaches the shell's
+   * outer face. It is the measurement behind B41's decision to gate the
+   * outlined path on a known scale, reproduced here rather than argued.
+   */
+  it('a relaxed floor now yields paired walls, not unpaired faces', () => {
     const fixture = buildPlanFixture('critical', { rendering: 'outlined' })
     const relaxed = detectWallSegments(fixture.image, {
       rasterScale: 1,
       minThicknessPx: 1,
     })
     expect(relaxed.length).toBeGreaterThan(0)
-    expect(Math.min(...relaxed.map((s) => s.thickness))).toBe(1)
-    // …and it is not a fix: the shell is 6 px, and bands far thicker appear.
-    expect(Math.max(...relaxed.map((s) => s.thickness))).toBeGreaterThan(12)
+    // No bare face survives: they are all paired into walls now.
+    expect(Math.min(...relaxed.map((s) => s.thickness))).toBe(3)
+    // …but without a scale the loose ceiling still admits the chain.
+    expect(Math.max(...relaxed.map((s) => s.thickness))).toBe(19)
   })
 
   /**
