@@ -71,14 +71,18 @@ describe('★ B41 — an outlined plan at 26 px/m is no longer blank paper', () 
     expect(result.thicknessOk).toBe(7)
 
     /*
-     * One detection is left over, and it is NOT a false wall: it is the
-     * second fragment of `part-a`, which the door opening splits in two.
-     * The scorer counts a fragment covering under half its wall as spurious
-     * — see `scoreWallGraph` — so this is a scorer convention, not ink that
-     * was invented. Asserted exactly rather than as "0 spurious", because
-     * claiming a clean sheet here would be false.
+     * ── B44 moved this number, and the move is the point ──
+     * Under the pre-B44 scorer this asserted `spurious === 1`: the second
+     * fragment of `part-a`, split in two by its door, counted as spurious
+     * because it covered under half the wall on its own.
+     *
+     * B44 scores fragments collectively (finding 64, ADR 0007), so the two
+     * pieces are now recognised as the one wall they always were and the
+     * count is 0. **No detector behaviour changed here — only what the
+     * benchmark calls it.** The old number remains reproducible via
+     * `scoreWallGraphLegacy`, which is why that function was kept.
      */
-    expect(result.spurious).toBe(1)
+    expect(result.spurious).toBe(0)
 
     // The control that makes this B41's doing: blind detection still reads
     // nothing at all, which is exactly what B40 measured.

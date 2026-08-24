@@ -33,9 +33,9 @@ with the work.
 | | |
 |---|---|
 | Stage | **Stage 1** — **not exited**, on ONE clause: the corpus (open question 4) |
-| Last completed task | **B43 — COMPLETE. Every wall, every convention, every legible resolution: 7/7 at true footprints.** Annotation was STEALING wall faces via first-partner pairing — the THIRD instance of one pattern (finding 63, ADR 0006) |
-| Before that | **B42** — collinear means end-to-end (finding 62); **B41** — outlined faces reach the pairing step (finding 61); **B40** — the failure reproduced (finding 60) |
-| Next task | **The scorer question**, left open deliberately: how to score a wall found in two correctly-positioned pieces either side of an opening. Or **the corpus email**, still the Stage 1 / OCR blocker — and now the only thing between a synthetic pass and a real claim |
+| Last completed task | **B44 — COMPLETE. Scorer only, no detector code touched.** The benchmark was calling a found wall missed: 90% of a wall in two pieces scored 0 matched, 2 spurious. Now collective coverage (finding 64, ADR 0007) |
+| Before that | **B43** — annotation stealing wall faces (finding 63); **B42** — collinear means end-to-end (finding 62); **B41** — outlined faces reach pairing (finding 61) |
+| Next task | **The corpus email.** With the detector reading every convention and the benchmark describing reality, a synthetic pass is now the ONLY thing standing between here and a real claim. It is the Stage 1 blocker, the OCR blocker and the detection-accuracy blocker at once |
 | Partially done | **B8** — spatial indexing deliberately NOT done (open question 6) |
 | Upcoming | B9 → B10 → B11 → B12 |
 
@@ -91,11 +91,11 @@ not need a human or a schema bump.**
 
 ## Gate
 
-Verified after B43, at `50678c4`+:
+Verified after B44, at `31457af`+:
 
 | Check | Result |
 |---|---|
-| `npm test` | **783 passing / 783** · 52 files / 52 |
+| `npm test` | **796 passing / 796** · 53 files / 53 |
 | `npm run build` | **pass** (exit 0) |
 | `npx tsc -b` | **clean** (exit 0) |
 | `npm run lint` | **0 errors** (exit 0), 5 warnings |
@@ -466,6 +466,44 @@ right belongs *on* the drawing.
 derived model state, and it sits beside the floor-area number that these
 defects are the reason for. The toolbar is seven tools wide and its own
 comments record an overflow that made Blueprint unreachable.
+
+### SD26 — an upstream stage keeps consuming the input of a later stage
+
+Three sessions, three defects in `detectWalls.ts`, one shape:
+
+| | the step that consumed the input | the step that needed it |
+|---|---|---|
+| **B41** | `minThicknessPx`, applied twice, before pairing | `mergeWallFaces` |
+| **B42** | `mergeCollinear` absorbing a parallel pair | `mergeWallFaces` |
+| **B43** | an annotation band pairing with a wall's outer face first | the wall's own second face |
+
+**B43 is also SD4(b) a second time** — greedy first-partner selection with a
+different neighbour, where the original was a door's swing arc fused into a
+partition at 0.64 m.
+
+Each time the symptom appeared at the LATER stage and the cause was at the
+earlier one, which is why each took a measurement to locate and why two of
+the three were first attributed to the wrong function (B41 blamed
+`mergeWallFaces` for what `mergeCollinear` did; B43's brief blamed openings
+for what annotation did).
+
+**The working rule for a fourth:** when a stage designed for a case appears
+not to handle it, first establish whether it ever RECEIVES the case. Three
+times out of three the answer has been no.
+
+#### Proposed §4 wording — NOT applied, for the owner to accept or refuse
+
+`MASTER_PROMPT.md` §4 is "The invariants a newcomer breaks". This is a
+candidate tenth entry. It is **not** edited into the specification here,
+because §4 is the owner's document and a pattern with three instances in one
+subsystem may not yet be a project-wide invariant:
+
+> **10. A pipeline stage can only handle a case it is given.** `detectWalls.ts`
+> has produced three defects of one shape — a threshold, a merge, and a
+> pairing each consumed input that a later stage existed to handle (B41, B42,
+> B43). When a stage that should handle a case appears not to, measure
+> whether it receives the case at all before changing it. Two of the three
+> were first attributed to the wrong function.
 
 ### SD25 — extension runs along the wall's own axis, never to the perpendicular foot
 
@@ -1270,6 +1308,118 @@ it is a redirect to manual calibration (rank 1, two picks and a typed length);
 for an undimensioned image whose real size the user does not know it is a
 genuine block — and there, every number the reconstruction would produce is
 meaningless anyway.
+
+### 64. THE BENCHMARK CALLED A FOUND WALL MISSED `SHIPPED 2026-08-18 by B44` · ADR 0007 · **scorer only**
+
+> ⚠ **This validates the scoring rule against controlled fixtures. It does
+> not establish detector performance on arbitrary real-world floor-plan
+> images.**
+
+**No detector code was touched this session.** B43 left the detector finding
+every wall; what remained were "spurious" detections that were not false
+walls but the two pieces of a wall split by a door or window.
+
+The old rule judged every detection independently against a 50%-of-the-wall
+test. On a 1000 px wall: fragments of **45% + 45% — ninety per cent of the
+wall, correctly placed, nothing invented — scored 0 matched and 2
+spurious.** The wall was found and the benchmark said it was not.
+
+#### The rejection criterion, fixed BEFORE implementing
+
+Because this changes the instrument that measured four previous sessions:
+
+> R1 40% collective still MISSED · R2 B43's chain-parallel artefact
+> contributes no coverage · R3 parallel neighbours never merged · R4
+> collinear walls with a gap never merged · R5 duplicates cannot
+> double-count · R6 solid stays 7/7 · R7 annotation cannot cover a wall ·
+> **R8 the PRE-B43 detector under the NEW rule must still score WORSE than
+> the post-B43 one.**
+
+All eight hold. **R8 is the one that matters** and it passes decisively:
+under the new rule the pre-B43 detector scores 4/6/7 on outlined against the
+post-B43 detector's 7/7/7. The scorer preserves the improvement B43 made
+rather than erasing it.
+
+#### The rule — one-to-many with interval-union coverage
+
+Each detection is assigned to **at most one** true wall (nearest centreline;
+ties on overlap then id). Each wall's coverage is the **union** of its
+fragments' intervals. Found when coverage ≥ **0.8**.
+
+| rejected alternative | why |
+|---|---|
+| **Group detections first, then match** | Must answer "do these belong together?" from detection geometry alone, which needs a GAP TOLERANCE — exactly the decision that can silently merge two real collinear walls. |
+| **Lower the 50% rule** | Per-segment, so it cannot tell "two pieces of one wall" from "one bad short detection". At 40% a single 40% detection becomes a correct wall. Gameable. |
+
+Three properties stop it being permissive: one detection can only ever be
+assigned to **one** wall (so an over-long detection spanning two collinear
+walls covers only one); coverage is a **union**, never a sum (so duplicates
+add nothing); and a detection on no wall is **still spurious**.
+
+**May the scorer use ground-truth openings?** It may — it is the scorer. **It
+does not**, deliberately: a rule depending on declared openings could never
+run against a real drawing. This rule is not fixture-only, and nothing needs
+to replace it when real images arrive.
+
+**The threshold is derived:** an opening costs a wall ~13% of itself, real
+fragmented walls measure 86–87%, the hard negative is 40%. Anything in
+0.45–0.85 separates them and the **top** is chosen — a stricter scorer risks
+calling a real wall missed, which is conservative and visible, rather than
+calling a wrong reading correct, which is how a benchmark lies.
+
+#### Every historical figure that moves · `matched(spurious)`, old → new
+
+Recomputed by checking out `detectWalls.ts` at each session's commit.
+
+| session | variant | 104 px/m | 52 px/m | 26 px/m |
+|---|---|---|---|---|
+| B40 | solid | 7(0) → 7(0) | 7(0) → 7(0) | 7(0) → 7(0) |
+| B40 | outlined | **5(1) → 4(0)** | 6(1) → **6(0)** | 0(0) → 0(0) |
+| B41 | solid | 7(0) → 7(0) | 7(0) → 7(0) | 7(0) → 7(0) |
+| B41 | outlined | **5(1) → 4(0)** | 6(1) → **6(0)** | 4(0) → 4(0) |
+| B42 | solid | 7(0) → 7(0) | 7(0) → 7(0) | 7(0) → 7(0) |
+| B42 | outlined | **5(1) → 4(0)** | 6(1) → **6(0)** | 7(1) → **7(0)** |
+| B43 | solid | 7(0) → 7(0) | 7(0) → 7(0) | 7(0) → 7(0) |
+| B43 | outlined | 7(2) → **7(0)** | 7(1) → **7(0)** | 7(1) → **7(0)** |
+
+Exactly two kinds of movement:
+
+1. **`spurious` falls to 0 in seven cells** — each was a legitimate fragment
+   counted as a false positive. **No detector behaviour changed; only what
+   the benchmark calls it.**
+2. **`matched` falls 5 → 4 at outlined/104 px/m for B40–B42** — the new rule
+   is STRICTER there. `shell-n` was one fragment covering 62%, which cleared
+   the old 50% test and fails the new 80% one. A wall two-thirds detected is
+   not a found wall.
+
+**`solid` does not move in any of its twelve cells.** And that the new rule
+made three historical numbers **worse** is the clearest evidence available
+that it is not merely permissive.
+
+`scoreWallGraphLegacy` is **kept and exported** — a benchmark whose old
+numbers cannot be reproduced is not auditable, and every figure in findings
+60–63 was computed with it.
+
+#### A measured limitation, recorded rather than hidden
+
+The rule counts coverage, not **coherence**. A wall "found" as twenty
+disconnected slivers totalling 85% scores exactly as well as one found in two
+clean pieces. Found by deliberately constructing a harder negative after the
+rule passed everything first time.
+
+**Not guarded, on principle:** no detector output has ever produced more than
+2 fragments for one wall, so a guard would be a constant invented against an
+imagined fixture — the failure §10 rule 6 names. The observed fragment count
+is **pinned by test** instead: if a detector change starts shattering walls,
+the pin moves and the limitation becomes live.
+
+#### Three other meanings changed
+
+`doubled` now means genuinely overlapping duplicates (a wall in two pieces is
+fragmented, not doubled). `thicknessOk` is stricter — EVERY fragment must be
+the right thickness, where the old rule read `found[0]` and could not see a
+mixed pair. `spurious` now means what its name always claimed: a detection
+lying on no true wall.
 
 ### 63. ANNOTATION WAS STEALING WALL FACES `SHIPPED 2026-08-18 by B43` · ADR 0006 · **the third instance**
 

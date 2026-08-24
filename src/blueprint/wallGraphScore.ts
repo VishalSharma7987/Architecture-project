@@ -1,4 +1,13 @@
 /**
+ * ── B44: `scoreWallGraphLegacy` is the PRE-B44 rule, kept deliberately ──
+ *
+ * A scorer change alters the meaning of every number in every previous
+ * session. Deleting the old rule would make B40-B43's matrices
+ * unreproducible and their reports unauditable, so it stays, is exported,
+ * and is what the historical comparison in finding 64 is computed with.
+ * Nothing in the app calls it; the benchmark and the tests do.
+ */
+/**
  * Scoring a detected wall graph against ground truth.
  *
  * "It looks about right" is not a result. This measures the GRAPH: how many
@@ -78,7 +87,7 @@ function onBox(segment: PixelSegment, box: TruthBox, slack: number): boolean {
   )
 }
 
-export function scoreWallGraph(
+export function scoreWallGraphLegacy(
   segments: PixelSegment[],
   truth: TruthWall[],
   annotation: TruthBox[],
@@ -139,3 +148,9 @@ export const scoreLine = (score: GraphScore): string =>
   `matched ${score.matched}/${score.truth}  detected ${score.detected}  ` +
   `spurious ${score.spurious} (${score.onAnnotation} on annotation)  ` +
   `doubled ${score.doubled}  thickness-ok ${score.thicknessOk}`
+
+// B44: the live scorer is `scoreWallCoverage` in `coverageScore.ts`. Callers
+// import `scoreWallGraph` from there via this alias so the historical rule
+// above stays reachable by its own name for the audit in finding 64.
+export { scoreWallCoverage as scoreWallGraph } from './coverageScore'
+export { COVERAGE_THRESHOLD, type CoverageScore } from './coverageScore'
